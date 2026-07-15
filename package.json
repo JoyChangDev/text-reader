@@ -6,10 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint --max-warnings=0",
     "lint:fix": "eslint --fix",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
+    "check": "npm run lint && npm run format:check",
     "prepare": "git config core.hooksPath .githooks"
   },
   "dependencies": {

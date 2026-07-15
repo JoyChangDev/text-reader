@@ -1,11 +1,11 @@
-"use client";
+'use client';
 
 import {
   ChakraProvider as Provider,
   createSystem,
   defaultConfig,
   defineConfig,
-} from "@chakra-ui/react";
+} from '@chakra-ui/react';
 
 export const system = createSystem(defaultConfig, defineConfig({}));
 
