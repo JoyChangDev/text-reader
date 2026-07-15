@@ -9,10 +9,6 @@ import {
 
 export const system = createSystem(defaultConfig, defineConfig({}));
 
-export default function ChakraProvider({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function ChakraProvider({ children }) {
   return <Provider value={system}>{children}</Provider>;
 }
