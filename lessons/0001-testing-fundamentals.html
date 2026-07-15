@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lesson 0001 · 測試基礎與 AAA 模式</title>
+<link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+
+<p class="kicker">Lesson 0001 · Testing Fundamentals</p>
+<h1>你的第一個測試：斷言與 Arrange-Act-Assert</h1>
+<p class="subtitle">
+  目標：看懂一個測試在做什麼、學會 AAA 這個思考框架，然後親手為
+  <code>text-reader</code> 寫下你的第一個測試案例。
+</p>
+
+<blockquote>
+  主要參考資料：<a href="https://vitest.dev/guide/" target="_blank" rel="noopener">Vitest — Getting Started Guide</a>（官方文件）。
+  這篇教你怎麼安裝、設定、跑 Vitest；今天這堂課只挑你現在需要的那一小部分講。
+</blockquote>
+
+<h2>什麼是「測試」？</h2>
+<p>
+  一個測試，就是一段<strong>會自動檢查你的程式碼行為是否符合預期</strong>的程式碼。
+  你寫一段輸入，跑你要測的程式碼，然後斷言（assert）結果應該長什麼樣子。
+  如果結果不符，測試框架會讓那個測試「變紅」，並告訴你哪裡不符合預期 —
+  這比自己手動在瀏覽器裡點來點去檢查快非常多，而且以後改 code 時還能重複執行。
+</p>
+
+<h2>解剖一個測試：Arrange, Act, Assert</h2>
+<p>幾乎所有的單元測試，都可以拆成三個步驟，簡稱 <strong>AAA</strong>：</p>
+<ul>
+  <li><strong>Arrange（準備）</strong> — 準備測試需要的輸入、初始狀態。</li>
+  <li><strong>Act（執行）</strong> — 呼叫你真正要測試的那個函式或行為，通常只有一行。</li>
+  <li><strong>Assert（斷言）</strong> — 用 <code>expect(...)</code> 斷言結果是你預期的樣子。</li>
+</ul>
+<p class="sidenote">
+  這個框架的價值在於：當你不知道怎麼下手寫一個測試時，先問自己「我的 Arrange 是什麼？Act 是什麼？Assert 是什麼？」，
+  三個問題想清楚了，測試也就寫完了。
+</p>
+
+<h2>讀懂專案裡現有的測試</h2>
+<p>
+  這個專案已經有一個測試檔了：
+  <a href="../app/page.test.jsx">app/page.test.jsx</a>。用 AAA 拆開來看：
+</p>
+<pre><code>test('renders the home page buttons', () => {
+  // Arrange + Act：把元件渲染到一個虛擬 DOM 裡
+  render(
+    &lt;ChakraProvider&gt;
+      &lt;Home /&gt;
+    &lt;/ChakraProvider&gt;,
+  );
+
+  // Assert：斷言畫面上有兩個名為「Click me」的按鈕
+  expect(screen.getAllByRole('button', { name: 'Click me' })).toHaveLength(2);
+});
+</code></pre>
+<p>
+  注意 <code>getAllByRole('button', { name: 'Click me' })</code> 這個查詢方式 —
+  它是在問「一個使用者會怎麼在畫面上找到這個按鈕？」而不是去戳元件內部的 state 或 props。
+  這是 Testing Library 的核心精神：
+  <a href="https://testing-library.com/docs/react-testing-library/intro/" target="_blank" rel="noopener">
+    「你的測試越像使用者實際使用軟體的方式，它就能給你越多信心。」
+  </a>
+  下一堂課會更深入這一塊；今天先记住這個查詢方式存在就好。
+</p>
+<p>親自跑一次看看，感受一下「綠色代表通過」是什麼感覺：</p>
+<pre><code>npm test</code></pre>
+
+<div class="win-box">
+  <p class="kicker">動手做 · 今天的目標</p>
+  <p>
+    幫 <code>text-reader</code> 寫一個之後播放器會用到的小工具函式：
+    <code>formatDuration(totalSeconds)</code> — 把秒數轉成 <code>"mm:ss"</code> 格式的字串
+    （例如 <code>65</code> 秒 → <code>"01:05"</code>），用來顯示播放進度。
+  </p>
+  <p>兩個檔案已經幫你建好骨架：</p>
+  <ul>
+    <li><a href="../app/_lib/formatDuration.js">app/_lib/formatDuration.js</a> — 函式本體是空的，等你實作。</li>
+    <li><a href="../app/_lib/formatDuration.test.js">app/_lib/formatDuration.test.js</a> — 已經有一個完整的 AAA 範例測試（0 秒 → <code>"00:00"</code>），還留了兩個 <code>TODO</code> 給你自己寫。</li>
+  </ul>
+  <p><strong>步驟：</strong></p>
+  <ol>
+    <li>先在終端機開一個監看視窗：<code>npm run test:watch</code>（改檔案存檔就會自動重跑，馬上看到紅/綠）。</li>
+    <li>照著 <code>formatDuration.test.js</code> 裡第一個測試的 AAA 寫法，把兩個 <code>TODO</code> 換成真正的 <code>test(...)</code>：
+      <ul>
+        <li>5 秒 → <code>"00:05"</code></li>
+        <li>65 秒 → <code>"01:05"</code></li>
+      </ul>
+    </li>
+    <li>這時候測試應該是紅的（因為 <code>formatDuration</code> 還沒實作）— 這是預期的，繼續下一步。</li>
+    <li>回到 <code>formatDuration.js</code>，把函式寫完，讓三個測試都變綠。</li>
+  </ol>
+  <p class="sidenote">
+    這個練習範圍刻意縮小：不用處理超過一小時的情況（沒有 <code>hh:</code> 前綴），也不用處理負數。
+    先把 AAA 寫熟，之後真正要用在播放器上時再擴充。
+  </p>
+</div>
+
+<h2>小測驗</h2>
+
+<div class="quiz">
+  <p class="quiz-q">1. 在 <code>expect(result).toBe('00:00')</code> 這行程式碼裡，這個動作本身叫做什麼？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">the arrange step</button>
+    <button class="quiz-choice" data-correct="true">the assert step</button>
+    <button class="quiz-choice" data-correct="false">the render step</button>
+    <button class="quiz-choice" data-correct="false">the import step</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="沒錯，expect(...) 就是斷言（assert）— 檢查結果是否符合預期。"
+     data-incorrect-feedback="再想想：expect(...) 是三步驟裡的哪一步？"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">2. AAA 模式的三個步驟依序是？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="true">arrange, act, assert</button>
+    <button class="quiz-choice" data-correct="false">import, mock, cleanup</button>
+    <button class="quiz-choice" data-correct="false">setup, run, verify</button>
+    <button class="quiz-choice" data-correct="false">build, call, check</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="正確 — 準備、執行、斷言，這三步驟幾乎能拆解任何單元測試。"
+     data-incorrect-feedback="正確答案是三個以 a 開頭的英文字，代表準備、執行、斷言。"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">3. 根據這個專案 spec 的 Testing Decisions，Audio Generation Service 的測試應該斷言什麼？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="true">observable behavior</button>
+    <button class="quiz-choice" data-correct="false">internal request shape</button>
+    <button class="quiz-choice" data-correct="false">exact function calls</button>
+    <button class="quiz-choice" data-correct="false">private state values</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="對 — 斷言在「外部可觀察的行為」上（例如：重複請求同一個 chunk 會回傳快取結果），而不是內部實作細節。"
+     data-incorrect-feedback="再看看 specs/phase-1-audiobook-reader.md 裡的 Testing Decisions 段落。"></p>
+</div>
+
+<p class="ask-agent">
+  卡住了、或想知道「為什麼」不只「怎麼做」？隨時回來問我 — 我是你的教學助教，
+  可以解釋任何看不懂的地方，或幫你 review 你寫的測試。
+</p>
+
+<div class="nav-footer">
+  <span>下一步：<a href="../reference/vitest-basics.html">Vitest 基礎速查表</a>（把今天學到的 API 收進口袋，之後隨時查）</span>
+  <span><a href="../MISSION.md">MISSION.md</a></span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

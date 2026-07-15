@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vitest 基礎速查表</title>
+<link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+
+<p class="kicker">參考文件 · Reference</p>
+<h1>Vitest 基礎速查表</h1>
+<p class="subtitle">來自 <a href="../lessons/0001-testing-fundamentals.html">Lesson 0001</a> 的精華，供之後隨時查閱。</p>
+
+<h2>執行測試</h2>
+<pre><code>npm run test         # 監看模式，改檔案自動重跑
+npm run test -- run  # 或用 package.json 裡的 "test" script 跑一次就結束
+</code></pre>
+<p>這個專案的 <code>package.json</code> 已經把 <code>npm test</code> 設成 <code>vitest run</code>（跑一次），<code>npm run test:watch</code> 設成監看模式。</p>
+
+<h2>測試檔案的骨架</h2>
+<pre><code>import { describe, expect, test } from 'vitest';
+
+describe('某個功能', () => {
+  test('在某種情況下應該怎樣', () => {
+    // Arrange 準備
+    // Act    執行
+    // Assert 斷言
+  });
+});
+</code></pre>
+<ul>
+  <li><code>describe</code> — 把相關的測試分組，純粹是給人看的組織單位，非必要。</li>
+  <li><code>test</code>（別名 <code>it</code>）— 一個獨立的測試案例，描述文字要說清楚「在什麼情況下、預期什麼結果」。</li>
+  <li><code>expect</code> — 斷言 API 的入口，後面接一個 matcher。</li>
+</ul>
+
+<h2>AAA 模式</h2>
+<table>
+  <tr><td><strong>Arrange</strong></td><td>準備輸入、初始狀態</td></tr>
+  <tr><td><strong>Act</strong></td><td>執行你要測試的那一個行為</td></tr>
+  <tr><td><strong>Assert</strong></td><td>斷言結果符合預期</td></tr>
+</table>
+
+<h2>常用 Matchers（純函式 / 邏輯）</h2>
+<pre><code>expect(value).toBe(3)              // 嚴格相等（===），數字、字串、布林用這個
+expect(obj).toEqual({ a: 1 })      // 深層相等，物件、陣列用這個
+expect(fn).toThrow()               // 呼叫 fn 時應該拋出錯誤
+expect(array).toHaveLength(2)      // 陣列/字串長度
+</code></pre>
+
+<h2>常用 Matchers（React Testing Library，來自 jest-dom）</h2>
+<pre><code>expect(element).toBeInTheDocument()
+expect(element).toBeDisabled()
+expect(element).toHaveTextContent('Hello')
+</code></pre>
+<p class="sidenote">這些是 <code>@testing-library/jest-dom</code> 提供的擴充 matcher，已經在這個專案的 <code>vitest.setup.js</code> 裡註冊好了，不用額外 import。</p>
+
+<h2>查詢優先順序（RTL）</h2>
+<p>依照 <a href="https://testing-library.com/docs/queries/about/#priority" target="_blank" rel="noopener">Testing Library 官方優先順序</a>，由上到下優先使用：</p>
+<ol>
+  <li><code>getByRole</code> — 最優先，貼近使用者/無障礙工具怎麼找元素</li>
+  <li><code>getByLabelText</code> / <code>getByPlaceholderText</code> — 表單元素</li>
+  <li><code>getByText</code> — 非互動的文字內容</li>
+  <li><code>getByTestId</code> — 最後手段，前面都不適用時才用</li>
+</ol>
+
+<div class="nav-footer">
+  <span>← <a href="../lessons/0001-testing-fundamentals.html">回到 Lesson 0001</a></span>
+  <span><a href="../MISSION.md">MISSION.md</a></span>
+</div>
+</body>
+</html>
