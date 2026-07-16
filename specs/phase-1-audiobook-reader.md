@@ -57,7 +57,7 @@ This is Phase 1 of a larger plan: a later phase adds more file formats, voice se
 
 ## Out of Scope
 
-- **Phase 1.5** (a follow-up spec once Phase 1 ships): additional file formats (EPUB, PDF), a user-facing voice picker, jump-to-any-sentence seeking, auto-scroll sentence highlighting synced to playback, adjustable playback speed control, and finalizing the concrete visual design/color palette.
+- **Phase 1.5** (a follow-up spec once Phase 1 ships): additional file formats (EPUB, PDF), a user-facing voice picker, jump-to-any-sentence seeking, auto-scroll sentence highlighting synced to playback, adjustable playback speed control, finalizing the concrete visual design/color palette, and a reader-facing theme picker (e.g. light/dark or multiple palette presets, persisted per device alongside the existing library store) built on top of the semantic token scaffold from Phase 1.
 - **Phase 2** (a follow-up spec once Phase 1.5 ships): wrapping the app with Capacitor for iOS/Android native packaging and app store publishing, an explicit "download whole audiobook" action for on-device offline storage, and native background/lock-screen audio playback (media session integration, Android foreground service).
 - User accounts, authentication, and cross-device library/progress sync are not planned for the current roadmap.
 - Automatic fallback to a secondary TTS engine (e.g. the browser's native Web Speech API) if `edge-tts` repeatedly fails.

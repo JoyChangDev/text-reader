@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] A test runner (e.g. Vitest) is installed and configured to work with this Next.js/React project
-- [ ] A `test` script exists in package.json and is wired into the existing `check` script (or documented as a separate step) so tests run alongside lint/format checks
-- [ ] At least one trivial passing test exists to prove the runner works end-to-end
-- [ ] Running the test command locally exits successfully with no errors
+- [x] A test runner (e.g. Vitest) is installed and configured to work with this Next.js/React project
+- [x] A `test` script exists in package.json and is wired into the existing `check` script (or documented as a separate step) so tests run alongside lint/format checks
+- [x] At least one trivial passing test exists to prove the runner works end-to-end
+- [x] Running the test command locally exits successfully with no errors
