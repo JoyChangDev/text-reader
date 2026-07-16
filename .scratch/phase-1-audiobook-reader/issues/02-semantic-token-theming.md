@@ -6,7 +6,7 @@
 
 **Status:** ready-for-agent
 
-- [ ] The Chakra provider's `defineConfig` includes a custom semantic token set (at minimum background/foreground/accent-style names)
-- [ ] At least one component in the app is updated to consume a semantic token name rather than a raw color value, demonstrating the pattern
-- [ ] Swapping a semantic token's value in the config visibly changes that component's rendered color, with no other code changes required
-- [ ] The app's visual appearance is otherwise unchanged from Chakra's defaults
+- [x] The Chakra provider's `defineConfig` includes a custom semantic token set (at minimum background/foreground/accent-style names)
+- [x] At least one component in the app is updated to consume a semantic token name rather than a raw color value, demonstrating the pattern
+- [x] Swapping a semantic token's value in the config visibly changes that component's rendered color, with no other code changes required
+- [x] The app's visual appearance is otherwise unchanged from Chakra's defaults

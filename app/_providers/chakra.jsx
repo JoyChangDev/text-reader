@@ -7,7 +7,19 @@ import {
   defineConfig,
 } from '@chakra-ui/react';
 
-export const system = createSystem(defaultConfig, defineConfig({}));
+const config = defineConfig({
+  theme: {
+    semanticTokens: {
+      colors: {
+        background: { value: '{colors.bg}' },
+        foreground: { value: '{colors.fg}' },
+        accent: { value: '{colors.blue.500}' },
+      },
+    },
+  },
+});
+
+export const system = createSystem(defaultConfig, config);
 
 export default function ChakraProvider({ children }) {
   return <Provider value={system}>{children}</Provider>;
