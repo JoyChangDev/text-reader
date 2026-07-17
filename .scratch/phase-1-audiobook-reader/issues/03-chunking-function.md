@@ -6,8 +6,8 @@
 
 **Status:** ready-for-agent
 
-- [ ] Given a sample Chinese paragraph, the function returns an ordered list of chunks, each ending on a sentence boundary
-- [ ] No chunk exceeds the configured maximum character count
-- [ ] Chunks are grouped in batches of roughly 2–4 sentences, not strictly one sentence per chunk
-- [ ] Edge cases are handled and unit-tested: text shorter than one full chunk, text with no terminal punctuation at the very end, and consecutive punctuation marks (e.g. `。」`)
-- [ ] The function is unit tested in isolation, with no dependency on the TTS pipeline or storage
+- [x] Given a sample Chinese paragraph, the function returns an ordered list of chunks, each ending on a sentence boundary
+- [x] No chunk exceeds the configured maximum character count
+- [x] Chunks are grouped in batches of roughly 2–4 sentences, not strictly one sentence per chunk
+- [x] Edge cases are handled and unit-tested: text shorter than one full chunk, text with no terminal punctuation at the very end, and consecutive punctuation marks (e.g. `。」`)
+- [x] The function is unit tested in isolation, with no dependency on the TTS pipeline or storage
