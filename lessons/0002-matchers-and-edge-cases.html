@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lesson 0002 · 新的 Matcher：toEqual、toMatch、數字邊界</title>
+<link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+
+<p class="kicker">Lesson 0002 · New Matchers</p>
+<h1>讀一份真正的測試檔，學會 toBe 以外的 Matcher</h1>
+<p class="subtitle">
+  目標：看懂 <strong>ticket 03</strong>（中文斷句 chunking 函式）已經幫你寫好的測試檔，
+  學會 <code>toEqual</code>、<code>toMatch</code>、數字邊界 matcher，然後親手替它補上一個還沒被涵蓋的邊界案例。
+</p>
+
+<blockquote>
+  主要參考資料：<a href="https://vitest.dev/api/expect.html" target="_blank" rel="noopener">Vitest — expect API 文件</a>（官方文件）。
+  這篇列出所有 matcher；今天只挑 <code>chunkText.test.js</code> 裡實際用到的那幾個講。
+</blockquote>
+
+<h2>先複習：AAA 沒變，變的是 Assert 那一步</h2>
+<p>
+  <a href="0001-testing-fundamentals.html">Lesson 0001</a> 學過 Arrange-Act-Assert，也用過
+  <code>toBe</code> 和 <code>toHaveLength</code>。今天的重點是：<code>toBe</code> 只適合數字、字串、布林這種「原始值」，
+  一旦要斷言<strong>陣列或物件</strong>，<code>toBe</code> 會出問題 —— 這是幾乎每個測試新手都會踩到的坑。
+</p>
+
+<h2>踩一次這個坑</h2>
+<p>假設你想斷言一個函式回傳空陣列，直覺會寫：</p>
+<pre><code>expect(chunkText('')).toBe([]);  // ❌ 這會失敗！</code></pre>
+<p>
+  這會失敗，即使兩邊「看起來一樣」。原因是 <code>toBe</code> 用 <code>Object.is</code>（本質上是 <code>===</code>）比較，
+  對陣列和物件來說，這是在問「是不是記憶體裡同一個東西」，不是「內容看起來是不是一樣」。
+  兩個獨立建立的空陣列，內容相同但不是同一個東西，所以 <code>toBe</code> 會說不相等。
+</p>
+<p>正確寫法是用 <code>toEqual</code>，它做「深層比較」（deep equality）—— 逐一比對內容，不管是不是同一個記憶體位置：</p>
+<pre><code>expect(chunkText('')).toEqual([]);  // ✅ 比較內容，不是記憶體位置</code></pre>
+<p class="sidenote">
+  經驗法則：數字、字串、布林用 <code>toBe</code>；陣列、物件用 <code>toEqual</code>。
+  不確定的時候，先猜 <code>toEqual</code>，通常不會錯。
+</p>
+
+<h2>讀真正的測試檔：chunkText.test.js</h2>
+<p>
+  <a href="../app/_lib/chunkText.js">chunkText.js</a> 是 ticket 03 的成果 —— 把一段中文段落切成一個個「唸起來剛好」的段落，
+  依照句尾標點（<code>。！？</code>）斷句，每個 chunk 大約 2–4 句、不超過字數上限。
+  <a href="../app/_lib/chunkText.test.js">chunkText.test.js</a> 已經幫它寫好測試了。挑三個代表性案例來看：
+</p>
+
+<pre><code>// 陣列的深層比較
+test('returns a single chunk for text shorter than one full chunk', () => {
+  const text = '你好。';
+  const chunks = chunkText(text);
+  expect(chunks).toEqual(['你好。']);  // toEqual，不是 toBe
+});
+
+// 用正規表達式比對「格式對不對」
+test('splits a paragraph into chunks that each end on a sentence boundary', () => {
+  const chunks = chunkText(text);
+  for (const chunk of chunks) {
+    expect(chunk).toMatch(/[。！？]$/);  // 每個 chunk 必須以句尾標點結束
+  }
+});
+
+// 數字邊界
+test('no chunk exceeds the configured maximum character count', () => {
+  const chunks = chunkText(text, { maxChars: 20 });
+  for (const chunk of chunks) {
+    expect(chunk.length).toBeLessThanOrEqual(20);  // 小於等於，不是完全等於
+  }
+});
+</code></pre>
+
+<table>
+  <tr><td><code>toEqual(value)</code></td><td>深層比較內容 —— 陣列、物件都用這個</td></tr>
+  <tr><td><code>toMatch(regex)</code></td><td>字串符合某個正規表達式（格式對不對）</td></tr>
+  <tr><td><code>toBeGreaterThan(n)</code></td><td>數字大於 n</td></tr>
+  <tr><td><code>toBeLessThanOrEqual(n)</code></td><td>數字小於等於 n（上限用這個，不是 <code>toBe</code>）</td></tr>
+</table>
+
+<p class="sidenote">
+  注意每個測試案例的名字都直接對應
+  <a href="../.scratch/phase-1-audiobook-reader/issues/03-chunking-function.md">ticket 03 的驗收清單</a>
+  （例如「no chunk exceeds the configured maximum character count」就是清單上的第二項）。
+  這是個好習慣：測試名稱就是需求清單的翻譯。
+</p>
+
+<div class="win-box">
+  <p class="kicker">動手做 · 今天的目標</p>
+  <p>
+    ticket 03 的驗收清單全部打勾了，但有一個輸入從來沒被測過：<strong>空字串</strong>。
+    <code>chunkText('')</code> 應該回傳什麼？追一下 <code>chunkText.js</code> 的邏輯：
+    沒有任何句子可以切，所以應該回傳一個<strong>空陣列</strong> <code>[]</code>。
+  </p>
+  <p><strong>步驟：</strong></p>
+  <ol>
+    <li>開一個監看視窗：<code>npm run test:watch</code>。</li>
+    <li>打開 <a href="../app/_lib/chunkText.test.js">chunkText.test.js</a>，在 <code>describe('chunkText', ...)</code> 區塊裡新增一個測試案例，
+      名字取類似 <code>'returns an empty array for empty input'</code>。</li>
+    <li>照 AAA 寫：Arrange 一個空字串、Act 呼叫 <code>chunkText</code>、Assert 用<strong>今天學到的正確 matcher</strong>斷言結果是空陣列。</li>
+    <li>存檔確認測試變綠。想一下：如果你手滑寫成 <code>toBe([])</code> 會發生什麼事？可以先故意寫錯，看一次失敗訊息，再改回來 —— 這是很有用的直覺養成。</li>
+  </ol>
+  <p class="sidenote">
+    這個測試會留在專案裡，跟其他七個案例一起保護 <code>chunkText</code> 未來不被改壞 —— 這不是丟掉的練習題。
+  </p>
+</div>
+
+<h2>小測驗</h2>
+
+<div class="quiz">
+  <p class="quiz-q">1. 斷言「兩個陣列內容相同」，該用哪個 matcher？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">toBe，比對記憶位置</button>
+    <button class="quiz-choice" data-correct="true">toEqual，比對深層內容</button>
+    <button class="quiz-choice" data-correct="false">toMatch，比對正規表達式</button>
+    <button class="quiz-choice" data-correct="false">toThrow，比對是否拋錯</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="沒錯 —— 陣列即使內容相同，也不是同一個記憶體位置，toBe 會失敗，要用 toEqual 做深層比較。"
+     data-incorrect-feedback="再想想：陣列不是原始值，比較的是「同一個東西」還是「內容一樣」？"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">2. 斷言「這段字串必須以句尾標點結束」，該用哪個 matcher？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">toBe，比對是否全等</button>
+    <button class="quiz-choice" data-correct="false">toEqual，比對深層內容</button>
+    <button class="quiz-choice" data-correct="true">toMatch，比對正規表達式</button>
+    <button class="quiz-choice" data-correct="false">toThrow，比對是否拋錯</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="對 —— 「格式對不對」這種情境，用正規表達式配合 toMatch 最直接。"
+     data-incorrect-feedback="再想想：這不是比對「完全等於某個字串」，而是比對「符合某種格式」。"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">3. 斷言「chunk 字數不可以超過上限 20」，該用哪個 matcher？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">toBeGreaterThan(20)，大於門檻</button>
+    <button class="quiz-choice" data-correct="true">toBeLessThanOrEqual(20)，小於等於門檻</button>
+    <button class="quiz-choice" data-correct="false">toHaveLength(20)，長度剛好等於</button>
+    <button class="quiz-choice" data-correct="false">toBe(20)，數值完全相等</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="正確 —— 「上限」代表可以等於，也可以更小，所以是「小於等於」。"
+     data-incorrect-feedback="再想想：「不可以超過 20」代表結果可以是 20 或更小，不是剛好等於 20。"></p>
+</div>
+
+<p class="ask-agent">
+  卡住了、或想知道「為什麼」不只「怎麼做」？隨時回來問我 —— 我是你的教學助教，
+  可以解釋任何看不懂的地方，或幫你 review 你寫的測試。
+</p>
+
+<div class="nav-footer">
+  <span>← <a href="0001-testing-fundamentals.html">Lesson 0001</a> ・ <a href="../reference/vitest-basics.html">Vitest 基礎速查表</a>（已更新今天學到的 matcher）</span>
+  <span><a href="../MISSION.md">MISSION.md</a></span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

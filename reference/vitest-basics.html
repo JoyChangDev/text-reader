@@ -10,7 +10,7 @@
 
 <p class="kicker">參考文件 · Reference</p>
 <h1>Vitest 基礎速查表</h1>
-<p class="subtitle">來自 <a href="../lessons/0001-testing-fundamentals.html">Lesson 0001</a> 的精華，供之後隨時查閱。</p>
+<p class="subtitle">來自 <a href="../lessons/0001-testing-fundamentals.html">Lesson 0001</a> 與 <a href="../lessons/0002-matchers-and-edge-cases.html">Lesson 0002</a> 的精華，供之後隨時查閱。</p>
 
 <h2>執行測試</h2>
 <pre><code>npm run test         # 監看模式，改檔案自動重跑
@@ -43,11 +43,19 @@ describe('某個功能', () => {
 </table>
 
 <h2>常用 Matchers（純函式 / 邏輯）</h2>
-<pre><code>expect(value).toBe(3)              // 嚴格相等（===），數字、字串、布林用這個
-expect(obj).toEqual({ a: 1 })      // 深層相等，物件、陣列用這個
-expect(fn).toThrow()               // 呼叫 fn 時應該拋出錯誤
-expect(array).toHaveLength(2)      // 陣列/字串長度
+<pre><code>expect(value).toBe(3)                  // 嚴格相等（===），數字、字串、布林用這個
+expect(obj).toEqual({ a: 1 })          // 深層相等，物件、陣列用這個 —— 不要用 toBe！
+expect(fn).toThrow()                   // 呼叫 fn 時應該拋出錯誤
+expect(array).toHaveLength(2)          // 陣列/字串長度
+expect(str).toMatch(/[。！？]$/)        // 字串符合正規表達式（格式對不對）
+expect(n).toBeGreaterThan(0)           // 數字大於
+expect(n).toBeLessThanOrEqual(20)      // 數字小於等於（上限用這個）
 </code></pre>
+<p class="sidenote">
+  <strong>toBe vs toEqual：</strong>陣列/物件即使內容相同也不是同一個記憶體位置，
+  <code>toBe</code> 會誤判失敗。經驗法則：原始值（數字/字串/布林）用 <code>toBe</code>，陣列/物件一律用 <code>toEqual</code>。
+  來自 <a href="../lessons/0002-matchers-and-edge-cases.html">Lesson 0002</a>。
+</p>
 
 <h2>常用 Matchers（React Testing Library，來自 jest-dom）</h2>
 <pre><code>expect(element).toBeInTheDocument()
