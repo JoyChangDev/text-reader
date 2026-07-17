@@ -10,7 +10,7 @@
 
 <p class="kicker">參考文件 · Reference</p>
 <h1>Vitest 基礎速查表</h1>
-<p class="subtitle">來自 <a href="../lessons/0001-testing-fundamentals.html">Lesson 0001</a> 與 <a href="../lessons/0002-matchers-and-edge-cases.html">Lesson 0002</a> 的精華，供之後隨時查閱。</p>
+<p class="subtitle">來自 <a href="../lessons/0001-testing-fundamentals.html">Lesson 0001</a>、<a href="../lessons/0002-matchers-and-edge-cases.html">Lesson 0002</a> 與 <a href="../lessons/0003-fakes-at-a-boundary.html">Lesson 0003</a> 的精華，供之後隨時查閱。</p>
 
 <h2>執行測試</h2>
 <pre><code>npm run test         # 監看模式，改檔案自動重跑
@@ -64,6 +64,27 @@ expect(element).toHaveTextContent('Hello')
 </code></pre>
 <p class="sidenote">這些是 <code>@testing-library/jest-dom</code> 提供的擴充 matcher，已經在這個專案的 <code>vitest.setup.js</code> 裡註冊好了，不用額外 import。</p>
 
+<h2>假物件與依賴注入（Mocking）</h2>
+<pre><code>const storageClient = {
+  get: vi.fn().mockResolvedValue(cachedResult), // async 函式回傳值 → mockResolvedValue
+  put: vi.fn(),                                  // 不用管回傳值，就留空
+};
+
+expect(ttsClient.synthesize).not.toHaveBeenCalled();          // 完全沒被呼叫
+expect(storageClient.put).toHaveBeenCalledWith(key, value);   // 有被呼叫，而且參數對
+</code></pre>
+<ul>
+  <li><code>vi.fn()</code> — 建立一個假函式，記錄呼叫次數與參數。</li>
+  <li><code>.mockResolvedValue(x)</code> — 呼叫時回傳 resolve 成 <code>x</code> 的 Promise（<code>async</code> 函式用這個）。</li>
+  <li><code>.mockReturnValue(x)</code> — 呼叫時直接回傳 <code>x</code>（同步函式用這個）。</li>
+</ul>
+<p class="sidenote">
+  <strong>依賴注入：</strong>把外部依賴（<code>edge-tts</code> client、儲存空間 client）當函式參數傳入，
+  而不是在檔案頂端 <code>import</code>，測試才能用假物件替換掉它們，不會打真的網路請求。
+  來自 <a href="../lessons/0003-fakes-at-a-boundary.html">Lesson 0003</a>，範例見
+  <a href="../app/_lib/audioGenerationService.js">audioGenerationService.js</a>。
+</p>
+
 <h2>查詢優先順序（RTL）</h2>
 <p>依照 <a href="https://testing-library.com/docs/queries/about/#priority" target="_blank" rel="noopener">Testing Library 官方優先順序</a>，由上到下優先使用：</p>
 <ol>
@@ -74,7 +95,7 @@ expect(element).toHaveTextContent('Hello')
 </ol>
 
 <div class="nav-footer">
-  <span>← <a href="../lessons/0001-testing-fundamentals.html">回到 Lesson 0001</a></span>
+  <span>← <a href="../lessons/0003-fakes-at-a-boundary.html">回到 Lesson 0003</a></span>
   <span><a href="../MISSION.md">MISSION.md</a></span>
 </div>
 </body>

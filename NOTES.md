@@ -4,6 +4,8 @@
 - Complete testing beginner (never written any test, in any language) as of 2026-07-15 — do not assume prior exposure to assertions, mocking, or test runners in general.
 - Already fluent in React/JS/Next.js from building this project — never needs React fundamentals re-taught.
 - Wants dual value from every lesson where possible: (1) transferable testing skill, (2) real progress on `text-reader`'s actual test suite. Prefer exercises that produce code the project will actually keep, not throwaway toy examples, when a real one fits the lesson's scope.
+- As of 2026-07-17: Lesson 0002's exercise (empty-array test for `chunkText.test.js`) was still outstanding when Lesson 0003 started. Folded a 2-minute callback into Lesson 0003's opening as spaced retrieval practice rather than blocking on it — confirm it's actually done next session, and log the Lesson 0002 learning record then if so.
+- Will sometimes name the exact ticket/topic to teach next (e.g. "/teach ticket 04") rather than leaving it to inferred ZPD — when given, honor it directly instead of picking a different next-topic.
 
 ---
 
