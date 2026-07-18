@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lesson 0003 · 假物件與模組邊界：vi.fn()</title>
+<link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+
+<p class="kicker">Lesson 0003 · Fakes at a Boundary</p>
+<h1>用假物件測試一個「邊界」：<code>vi.fn()</code> 與依賴注入</h1>
+<p class="subtitle">
+  目標：學會怎麼在測試裡「替換掉」一個模組會呼叫的外部依賴（網路、儲存空間），
+  然後把這個技巧用在 <strong>ticket 04</strong>（Audio Generation Service）真正的程式碼上。
+</p>
+
+<blockquote>
+  主要參考資料：<a href="https://vitest.dev/api/mock.html" target="_blank" rel="noopener">Vitest — Mock Functions API</a>（官方文件）。
+  這篇涵蓋 <code>vi.fn()</code> 的完整用法；今天只挑今天會用到的 <code>mockResolvedValue</code> 和 <code>toHaveBeenCalledWith</code> 講。
+</blockquote>
+
+<div class="win-box">
+  <p class="kicker">先收個尾 · 2 分鐘暖身</p>
+  <p>
+    在進新東西之前，先把 <a href="0002-matchers-and-edge-cases.html">Lesson 0002</a> 留下的尾巴接上：
+    幫 <a href="../app/_lib/chunkText.test.js">chunkText.test.js</a> 補上
+    <code>chunkText('')</code> 應該回傳空陣列 <code>[]</code> 的測試（用 <code>toEqual</code>，不是 <code>toBe</code> —
+    還記得為什麼嗎？）。這是刻意的複習，不是新內容。寫完再往下讀。
+  </p>
+</div>
+
+<h2>為什麼 <code>toBe</code>/<code>toEqual</code> 還不夠</h2>
+<p>
+  <a href="0001-testing-fundamentals.html">Lesson 0001</a> 和 <a href="0002-matchers-and-edge-cases.html">Lesson 0002</a>
+  測的都是「純函式」—— 給定輸入，回傳輸出，沒有任何副作用。<code>formatDuration</code> 和 <code>chunkText</code> 都是這樣。
+</p>
+<p>
+  但 ticket 04 的 <a href="../.scratch/phase-1-audiobook-reader/issues/04-audio-generation-service.md">Audio Generation Service</a>
+  不是純函式 —— 它要呼叫 <code>edge-tts</code>（真的網路請求）和物件儲存空間（真的雲端服務）。
+  如果測試真的打這些請求，會很慢、不穩定（今天過、明天可能因為網路問題失敗），而且會產生真的費用。
+  這正是 <a href="../MISSION.md">MISSION.md</a> 裡點名的那個模式：
+  「能在模組邊界替換掉假物件/mock，讓測試永遠不會真的打網路請求。」
+</p>
+
+<h2>解法：依賴注入 + 假物件</h2>
+<p>
+  看一下已經幫你寫好的 <a href="../app/_lib/audioGenerationService.js">audioGenerationService.js</a>：
+</p>
+<pre><code>export async function getOrGenerateAudio({ storageClient, ttsClient }, { bookId, chunkIndex, voice, text }) {
+  const key = cacheKey({ bookId, chunkIndex, voice });
+
+  const cached = await storageClient.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const generated = await ttsClient.synthesize(text, voice);
+  await storageClient.put(key, generated);
+  return generated;
+}</code></pre>
+<p>
+  注意 <code>storageClient</code> 和 <code>ttsClient</code> 是<strong>參數</strong>，不是在檔案頂端 <code>import</code> 進來的。
+  這個寫法叫<strong>依賴注入（dependency injection）</strong>：函式不自己決定要用哪個真的
+  client，而是由呼叫它的人（正式環境的 API route，或測試）決定要傳什麼東西進去。
+</p>
+<p class="sidenote">
+  這正是 ticket 04 驗收清單上的那一條：「the edge-tts client and storage client are not called from anywhere
+  else」—— 依賴注入就是達成「單一邊界」的具體做法。之後 API route 會傳真的
+  client 進來；測試會傳假的進去。函式本身完全不知道差別。
+</p>
+<p>
+  「假的」client 長什麼樣？就是一個形狀對得上的普通物件，方法用 <code>vi.fn()</code> 建立：
+</p>
+<pre><code>const storageClient = {
+  get: vi.fn().mockResolvedValue(cachedResult), // 呼叫時回傳一個 Promise，resolve 成 cachedResult
+  put: vi.fn(),                                  // 呼叫時什麼都不用回傳
+};
+const ttsClient = {
+  synthesize: vi.fn(),
+};</code></pre>
+<table>
+  <tr><td><code>vi.fn()</code></td><td>建立一個假函式，可以被呼叫、記錄「有沒有被呼叫、被什麼參數呼叫」</td></tr>
+  <tr><td><code>.mockResolvedValue(x)</code></td><td>呼叫這個假函式時，回傳一個 resolve 成 <code>x</code> 的 Promise（給 <code>async</code> 函式用）</td></tr>
+  <tr><td><code>.mockReturnValue(x)</code></td><td>呼叫這個假函式時，直接回傳 <code>x</code>（同步、非 Promise 的情況用這個）</td></tr>
+  <tr><td><code>expect(fn).toHaveBeenCalledWith(...)</code></td><td>斷言這個假函式有被呼叫過，而且參數符合預期</td></tr>
+  <tr><td><code>expect(fn).not.toHaveBeenCalled()</code></td><td>斷言這個假函式從頭到尾沒被呼叫過</td></tr>
+</table>
+
+<h2>讀一個完整案例：cache hit</h2>
+<p>
+  <a href="../app/_lib/audioGenerationService.test.js">audioGenerationService.test.js</a> 裡已經有一個寫好的測試，
+  測「快取已經有這個 chunk」的情況：
+</p>
+<pre><code>test('returns the cached result without calling ttsClient on a cache hit', async () => {
+  // Arrange
+  const cachedResult = { url: 'https://blob.example/cached.mp3', boundaries: [] };
+  const storageClient = {
+    get: vi.fn().mockResolvedValue(cachedResult),
+    put: vi.fn(),
+  };
+  const ttsClient = {
+    synthesize: vi.fn(),
+  };
+
+  // Act
+  const result = await getOrGenerateAudio(
+    { storageClient, ttsClient },
+    { bookId: 'book-1', chunkIndex: 0, voice: 'zh-TW-default', text: '你好。' },
+  );
+
+  // Assert
+  expect(result).toEqual(cachedResult);
+  expect(ttsClient.synthesize).not.toHaveBeenCalled();
+});</code></pre>
+<p>
+  注意兩件事：第一，<code>test</code> 的回呼函式是 <code>async</code>，因為 <code>getOrGenerateAudio</code> 回傳 Promise，
+  要用 <code>await</code> 才能拿到真正的結果。第二，最後一個斷言不是在測「回傳值對不對」，
+  而是在測「<code>ttsClient.synthesize</code> 完全沒被呼叫」—— 這就是 cache hit 的重點：
+  快取有東西的話，不應該再去呼叫 <code>edge-tts</code>。
+</p>
+
+<div class="win-box">
+  <p class="kicker">動手做 · 今天的目標</p>
+  <p>
+    打開 <a href="../app/_lib/audioGenerationService.test.js">audioGenerationService.test.js</a>，
+    把 <code>test.todo('calls ttsClient and persists the result on a cache miss')</code> 換成一個真正的測試。
+  </p>
+  <p><strong>要測的情境：</strong>快取<em>沒有</em>這個 chunk（<code>storageClient.get</code> resolve 成 <code>undefined</code>），
+  應該發生什麼事？</p>
+  <ol>
+    <li>開監看視窗：<code>npm run test:watch</code>。</li>
+    <li>Arrange：這次 <code>storageClient.get</code> 要 <code>mockResolvedValue(undefined)</code>；
+      <code>ttsClient.synthesize</code> 要 <code>mockResolvedValue(生成的結果)</code>（自己決定一個假的 <code>{ url, boundaries }</code> 物件）；
+      <code>storageClient.put</code> 保留原樣的 <code>vi.fn()</code> 就好。</li>
+    <li>Act：跟上面的例子一樣呼叫 <code>getOrGenerateAudio</code>。</li>
+    <li>Assert 三件事：
+      <ul>
+        <li>回傳值等於你 mock 的生成結果（<code>toEqual</code>）。</li>
+        <li><code>ttsClient.synthesize</code> 有被呼叫，而且參數是 <code>(text, voice)</code>（<code>toHaveBeenCalledWith</code>）。</li>
+        <li><code>storageClient.put</code> 有被呼叫，把生成結果存進快取（<code>toHaveBeenCalledWith</code>，key 是
+          <code>`${bookId}/${chunkIndex}/${voice}`</code>）。</li>
+      </ul>
+    </li>
+  </ol>
+  <p class="sidenote">
+    這個檔案是真的專案程式碼，不是丟掉的練習 —— 它就是 ticket 04 驗收清單上
+    「Unit tests exercise the service module's behavior (cache hit, cache miss, generation failure)」
+    這條的前兩項。真正的 <code>edge-tts</code> 移植和 Vercel Blob 串接還沒做，之後才會接上；
+    今天先把「快取邏輯本身是對的」這件事鎖住。
+  </p>
+</div>
+
+<h2>小測驗</h2>
+
+<div class="quiz">
+  <p class="quiz-q">1. 為什麼 <code>getOrGenerateAudio</code> 把 <code>storageClient</code> 和 <code>ttsClient</code> 當參數傳入，而不是直接 <code>import</code>？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">import 語法在這個專案不能用</button>
+    <button class="quiz-choice" data-correct="true">讓測試可以換成假物件，不用打真的網路請求</button>
+    <button class="quiz-choice" data-correct="false">這樣函式執行速度會變快</button>
+    <button class="quiz-choice" data-correct="false">Vitest 規定所有函式都要這樣寫</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="沒錯 —— 依賴注入讓測試可以決定要傳真的還是假的 client 進去，這是能替換假物件的前提。"
+     data-incorrect-feedback="再想想：測試的時候，我們不想真的打電話給 edge-tts。要做到這件事，函式需要什麼條件？"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">2. <code>ttsClient.synthesize</code> 是一個 <code>async</code> 函式，假物件要用哪個方法設定它的回傳值？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">.mockReturnValue(x)</button>
+    <button class="quiz-choice" data-correct="true">.mockResolvedValue(x)</button>
+    <button class="quiz-choice" data-correct="false">.mockImplementation(x)</button>
+    <button class="quiz-choice" data-correct="false">.toEqual(x)</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="對 —— 真正的函式回傳 Promise，假物件也要回傳 Promise，mockResolvedValue 做的正是這件事。"
+     data-incorrect-feedback="再想想：真正的 synthesize 是 async 的，代表它回傳的是什麼型別？假物件也要回傳同樣的型別。"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">3. 斷言「這個假函式完全沒被呼叫過」，該用哪個寫法？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">expect(fn).toBe(undefined)</button>
+    <button class="quiz-choice" data-correct="false">expect(fn).toHaveBeenCalledWith()</button>
+    <button class="quiz-choice" data-correct="true">expect(fn).not.toHaveBeenCalled()</button>
+    <button class="quiz-choice" data-correct="false">expect(fn).toHaveLength(0)</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="正確 —— cache hit 測試就是這樣斷言 ttsClient.synthesize 完全沒被呼叫。"
+     data-incorrect-feedback="再想想：我們是在斷言「這個假函式的呼叫次數是零」，不是在比對回傳值。"></p>
+</div>
+
+<p class="ask-agent">
+  卡住了、或想知道「為什麼」不只「怎麼做」？隨時回來問我 —— 我是你的教學助教，
+  可以解釋任何看不懂的地方，或幫你 review 你寫的測試。
+</p>
+
+<div class="nav-footer">
+  <span>← <a href="0002-matchers-and-edge-cases.html">Lesson 0002</a> ・ <a href="../reference/vitest-basics.html">Vitest 基礎速查表</a>（已更新今天學到的 mock API）</span>
+  <span><a href="../MISSION.md">MISSION.md</a></span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

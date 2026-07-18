@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lesson 0004 · 整個模組換成假的：vi.mock()</title>
+<link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+
+<p class="kicker">Lesson 0004 · Mocking a Whole Module</p>
+<h1>依賴注入不夠用的時候：用 <code>vi.mock()</code> 換掉整個模組</h1>
+<p class="subtitle">
+  目標：看懂 <strong>ticket 04</strong>（Audio Generation Service）的 API route 測試裡已經用到的
+  <code>vi.mock()</code>，搞懂為什麼這裡不能用 <a href="0003-fakes-at-a-boundary.html">Lesson 0003</a> 的依賴注入，
+  然後獨立幫它多補一個還沒被涵蓋的邊界案例。
+</p>
+
+<blockquote>
+  主要參考資料：<a href="https://vitest.dev/api/vi.html#vi-mock" target="_blank" rel="noopener">Vitest — <code>vi.mock()</code> API 文件</a>（官方文件）。
+  這篇說明 hoisting（提升）行為和 mock factory 的寫法；今天只挑 <code>route.test.js</code> 裡實際用到的部分講。
+</blockquote>
+
+<h2>先恭喜一下：ticket 04 已經全部完成了</h2>
+<p>
+  <a href="../.scratch/phase-1-audiobook-reader/issues/04-audio-generation-service.md">ticket 04</a>
+  驗收清單上的六項，現在全部打勾了：真的 <code>edge-tts</code> Node 移植
+  （<a href="../app/_lib/edgeTtsClient.js">edgeTtsClient.js</a>）、真的 Vercel Blob 持久化
+  （<a href="../app/_lib/blobStorageClient.js">blobStorageClient.js</a>）、cache hit/miss 邏輯，
+  還有一個真正的 API route（<a href="../app/api/audio-chunks/route.js">route.js</a>）。
+  這些都已經合併進 <code>feature/audio-generation</code> 分支了。
+</p>
+<p>
+  但這個 route 的測試檔——<a href="../app/api/audio-chunks/route.test.js">route.test.js</a>——用了一個
+  Lesson 0003 沒教過的技巧：<code>vi.mock()</code>。今天把這個補上。
+</p>
+
+<h2>新問題：這次沒有參數可以傳假物件</h2>
+<p>回想一下 Lesson 0003 的 <code>getOrGenerateAudio</code>：</p>
+<pre><code>export async function getOrGenerateAudio({ storageClient, ttsClient }, { ... }) {
+  // storageClient、ttsClient 是參數 → 測試可以直接傳假物件進去
+}</code></pre>
+<p>
+  但 <a href="../app/api/audio-chunks/route.js">route.js</a> 呼叫的是
+  <code>generateAudioForChunk</code>——ticket 04 刻意設計的「公開入口」，
+  固定用預設的 zh-TW 語音，<strong>不接受</strong> client 參數：
+</p>
+<pre><code>import { generateAudioForChunk } from '@/app/_lib/audioGenerationService';
+
+export async function POST(request) {
+  // ...
+  const result = await generateAudioForChunk({ bookId, chunkIndex, text });
+  // ...
+}</code></pre>
+<p>
+  route.js 在檔案頂端直接 <code>import</code> 它，呼叫的時候也沒有 <code>storageClient</code>/<code>ttsClient</code> 這種參數可以塞假的進去。
+  依賴注入這招在這裡用不上——測試需要一個新方法，能在<strong>不改 route.js 呼叫方式</strong>的前提下，
+  讓 <code>generateAudioForChunk</code> 變成假的。
+</p>
+
+<h2>解法：<code>vi.mock()</code> 把整條 import 路徑換掉</h2>
+<p>
+  <a href="../app/api/audio-chunks/route.test.js">route.test.js</a> 開頭是這樣寫的：
+</p>
+<pre><code>import { generateAudioForChunk } from '@/app/_lib/audioGenerationService';
+
+vi.mock('@/app/_lib/audioGenerationService', () => ({
+  generateAudioForChunk: vi.fn(),
+}));
+
+const { POST } = await import('./route');</code></pre>
+<p>
+  <code>vi.mock(路徑, factory)</code> 告訴 Vitest：「這個測試檔案裡，任何人 <code>import</code>
+  這個路徑，都給他 <code>factory</code> 回傳的假模組」——包括 <code>route.js</code> 自己在檔案頂端做的那個
+  <code>import</code>。它換掉的是<strong>整個模組</strong>，不是傳一個參數。
+</p>
+<p class="sidenote">
+  <strong>Hoisting（提升）：</strong>Vitest 會把 <code>vi.mock()</code> 呼叫提升到檔案最上面，
+  比任何 <code>import</code> 都早執行。這就是為什麼上面那段程式碼裡，
+  第一行先 <code>import { generateAudioForChunk }</code>，但實際拿到的已經是 mock 版本——
+  因為等這行真正執行時，<code>vi.mock()</code> 早就先跑過了。也是為什麼最後用
+  <code>const { POST } = await import('./route')</code>（動態 import）而不是寫在檔案頂端：
+  確保 <code>route.js</code> 一定是在 mock 註冊完成之後才被載入、才會用到假的
+  <code>generateAudioForChunk</code>。
+</p>
+
+<table>
+  <tr><td><strong>Lesson 3 · 依賴注入</strong></td><td><code>getOrGenerateAudio</code> 把 client 當參數接收 → 測試直接傳假物件呼叫</td></tr>
+  <tr><td><strong>今天 · <code>vi.mock()</code></strong></td><td><code>route.js</code> 直接 <code>import</code> 函式，沒有參數可傳 → 把整個模組換成假的</td></tr>
+</table>
+
+<h2>為什麼要用 <code>mockResolvedValueOnce</code>，不是 <code>mockResolvedValue</code></h2>
+<p>
+  這個檔案的三個測試共用<strong>同一個</strong> <code>generateAudioForChunk</code> 假函式
+  ——它是 <code>vi.mock()</code> 在檔案載入時建立一次，不會在每個 <code>test</code> 之間自動重設
+  （這個專案的 <a href="../vitest.config.js">vitest.config.js</a> 沒有設定 <code>clearMocks</code>）。
+  如果第二個測試用 <code>mockResolvedValue(persisted)</code>（沒有 <code>Once</code>），
+  這個回傳值會一直留著，變成第三個測試沒設定時的預設行為，可能讓「production 應該要失敗」的那個測試
+  意外收到一個成功結果。
+</p>
+<pre><code>generateAudioForChunk.mockResolvedValueOnce(persisted);   // 只影響下一次呼叫
+generateAudioForChunk.mockRejectedValueOnce(new Error(...)); // 用完就消失，不會留到下一個測試</code></pre>
+<p class="sidenote">
+  經驗法則：同一個 mock 函式如果會被多個測試共用（尤其是 <code>vi.mock()</code> 這種模組層級的 mock），
+  設定回傳值時預設就用 <code>Once</code> 版本，除非你確定要讓它一路延續到後面的測試。
+</p>
+
+<div class="win-box">
+  <p class="kicker">動手做 · 今天的目標</p>
+  <p>
+    <a href="../app/api/audio-chunks/route.test.js">route.test.js</a> 裡的 400 測試只驗證了「缺少 <code>text</code> 欄位」，
+    但 route.js 的驗證邏輯是 <code>!text</code>——這代表<strong>空字串</strong> <code>text: ''</code> 也應該被擋下來，
+    這個情況目前還沒有專屬的測試鎖住它。
+  </p>
+  <p><strong>步驟：</strong></p>
+  <ol>
+    <li>開監看視窗：<code>npm run test:watch</code>。</li>
+    <li>在 <code>describe('POST /api/audio-chunks', ...)</code> 區塊裡新增一個測試案例，
+      名字取類似 <code>'rejects a request with an empty text string with 400'</code>。</li>
+    <li>照現有 400 測試的樣子寫：
+      Arrange 用 <code>jsonRequest({ bookId: 'book-1', chunkIndex: 0, text: '' })</code>；
+      Act 呼叫 <code>POST</code>；
+      Assert <code>response.status</code> 是 <code>400</code>，而且
+      <code>generateAudioForChunk</code> <code>not.toHaveBeenCalled()</code>。</li>
+    <li>存檔確認測試變綠——不需要改 <code>route.js</code>，這條行為它已經做對了，
+      今天只是把它鎖進測試套件裡。</li>
+  </ol>
+  <p class="sidenote">
+    這個測試會留在專案裡，跟其他兩個 route 測試一起保護 <code>/api/audio-chunks</code> 的驗證邏輯——不是丟掉的練習題。
+  </p>
+</div>
+
+<h2>小測驗</h2>
+
+<div class="quiz">
+  <p class="quiz-q">1. 為什麼 Lesson 3 的依賴注入沒辦法用在 <code>route.test.js</code> 測 <code>generateAudioForChunk</code>？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">因為 <code>generateAudioForChunk</code> 不是 async 函式</button>
+    <button class="quiz-choice" data-correct="true">因為 route.js 直接 import 它，呼叫時沒有 client 參數可傳假物件</button>
+    <button class="quiz-choice" data-correct="false">因為 Next.js route 不允許依賴注入這種寫法</button>
+    <button class="quiz-choice" data-correct="false">因為依賴注入只能用在同步函式上</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="沒錯——依賴注入需要函式接受 client 參數，但 route.js 是直接 import，沒有這個入口。"
+     data-incorrect-feedback="再想想：依賴注入的前提是函式要「接受」某個東西當參數。route.js 呼叫 generateAudioForChunk 的方式符合這個前提嗎？"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">2. <code>vi.mock('路徑', factory)</code> 實際做的事情是什麼？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">刪除這個路徑底下的檔案，直到測試結束</button>
+    <button class="quiz-choice" data-correct="true">讓這個測試檔案裡任何 import 這個路徑的地方，都拿到 factory 回傳的假模組</button>
+    <button class="quiz-choice" data-correct="false">只把某一個函式參數換成假物件，其他不變</button>
+    <button class="quiz-choice" data-correct="false">讓真正的模組執行得更快</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="正確——它換掉的是整個模組在這個測試檔案裡的 import 結果，不是單一參數。"
+     data-incorrect-feedback="再想想：vi.mock 的第一個參數是「路徑」，代表它影響的範圍是什麼層級？"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">3. 為什麼 <code>route.test.js</code> 每個測試都用 <code>mockResolvedValueOnce</code>/<code>mockRejectedValueOnce</code>，不是不加 <code>Once</code> 的版本？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false"><code>Once</code> 版本執行速度比較快</button>
+    <button class="quiz-choice" data-correct="false">不加 <code>Once</code> 語法上會直接報錯</button>
+    <button class="quiz-choice" data-correct="true">同一個 mock 函式被多個測試共用，沒加 <code>Once</code> 的回傳值會一路留到下一個測試</button>
+    <button class="quiz-choice" data-correct="false"><code>Once</code> 只能搭配 <code>vi.mock()</code> 使用，不能搭配依賴注入</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="對——這個檔案沒有設定 clearMocks，mock 函式在測試之間不會自動重設，Once 讓每個測試的設定只影響自己。"
+     data-incorrect-feedback="再想想：這三個測試共用的是同一個 vi.fn()，還是各自獨立的？如果共用，沒清掉的設定會發生什麼事？"></p>
+</div>
+
+<p class="ask-agent">
+  卡住了、或想知道「為什麼」不只「怎麼做」？隨時回來問我——我是你的教學助教，
+  可以解釋任何看不懂的地方，或幫你 review 你寫的測試。
+</p>
+
+<div class="nav-footer">
+  <span>← <a href="0003-fakes-at-a-boundary.html">Lesson 0003</a> ・ <a href="../reference/vitest-basics.html">Vitest 基礎速查表</a>（已更新今天學到的 vi.mock）</span>
+  <span><a href="../MISSION.md">MISSION.md</a></span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

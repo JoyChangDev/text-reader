@@ -10,7 +10,7 @@
 
 <p class="kicker">參考文件 · Reference</p>
 <h1>Vitest 基礎速查表</h1>
-<p class="subtitle">來自 <a href="../lessons/0001-testing-fundamentals.html">Lesson 0001</a> 與 <a href="../lessons/0002-matchers-and-edge-cases.html">Lesson 0002</a> 的精華，供之後隨時查閱。</p>
+<p class="subtitle">來自 <a href="../lessons/0001-testing-fundamentals.html">Lesson 0001</a>、<a href="../lessons/0002-matchers-and-edge-cases.html">Lesson 0002</a> 與 <a href="../lessons/0003-fakes-at-a-boundary.html">Lesson 0003</a> 的精華，供之後隨時查閱。</p>
 
 <h2>執行測試</h2>
 <pre><code>npm run test         # 監看模式，改檔案自動重跑
@@ -64,6 +64,81 @@ expect(element).toHaveTextContent('Hello')
 </code></pre>
 <p class="sidenote">這些是 <code>@testing-library/jest-dom</code> 提供的擴充 matcher，已經在這個專案的 <code>vitest.setup.js</code> 裡註冊好了，不用額外 import。</p>
 
+<h2>假物件與依賴注入（Mocking）</h2>
+<pre><code>const storageClient = {
+  get: vi.fn().mockResolvedValue(cachedResult), // async 函式回傳值 → mockResolvedValue
+  put: vi.fn(),                                  // 不用管回傳值，就留空
+};
+
+expect(ttsClient.synthesize).not.toHaveBeenCalled();          // 完全沒被呼叫
+expect(storageClient.put).toHaveBeenCalledWith(key, value);   // 有被呼叫，而且參數對
+</code></pre>
+<ul>
+  <li><code>vi.fn()</code> — 建立一個假函式，記錄呼叫次數與參數。</li>
+  <li><code>.mockResolvedValue(x)</code> — 呼叫時回傳 resolve 成 <code>x</code> 的 Promise（<code>async</code> 函式用這個）。</li>
+  <li><code>.mockReturnValue(x)</code> — 呼叫時直接回傳 <code>x</code>（同步函式用這個）。</li>
+</ul>
+<p class="sidenote">
+  <strong>依賴注入：</strong>把外部依賴（<code>edge-tts</code> client、儲存空間 client）當函式參數傳入，
+  而不是在檔案頂端 <code>import</code>，測試才能用假物件替換掉它們，不會打真的網路請求。
+  來自 <a href="../lessons/0003-fakes-at-a-boundary.html">Lesson 0003</a>，範例見
+  <a href="../app/_lib/audioGenerationService.js">audioGenerationService.js</a>。
+</p>
+
+<h2>整個模組換成假的（<code>vi.mock()</code>）</h2>
+<pre><code>import { generateAudioForChunk } from '@/app/_lib/audioGenerationService';
+
+vi.mock('@/app/_lib/audioGenerationService', () => ({
+  generateAudioForChunk: vi.fn(),
+}));
+
+const { POST } = await import('./route'); // 動態 import，確保在 mock 註冊後才載入
+
+// ...在個別測試裡：
+generateAudioForChunk.mockResolvedValueOnce(persisted);
+generateAudioForChunk.mockRejectedValueOnce(new Error('...'));
+</code></pre>
+<ul>
+  <li><code>vi.mock(路徑, factory)</code> — 讓這個測試檔案裡任何 import 該路徑的地方（包括被測檔案自己）都拿到假模組。</li>
+  <li><strong>Hoisting：</strong><code>vi.mock()</code> 會被提升到檔案最上面，比 <code>import</code> 都早執行。</li>
+  <li>用 <code>mockResolvedValueOnce</code>/<code>mockRejectedValueOnce</code>，不是不加 <code>Once</code> 的版本——同一個 mock 函式被多個測試共用，沒加 <code>Once</code> 的設定會留到下一個測試（這個專案沒設定 <code>clearMocks</code>）。</li>
+</ul>
+<p class="sidenote">
+  <strong>依賴注入（Lesson 3） vs <code>vi.mock()</code>（Lesson 4）：</strong>
+  函式把依賴當「參數」接收時，用依賴注入直接傳假物件；函式在檔案頂端直接 <code>import</code> 依賴、沒有參數可傳時，用 <code>vi.mock()</code> 換掉整個模組。
+  範例見 <a href="../app/api/audio-chunks/route.test.js">route.test.js</a>。
+</p>
+
+<h2>測試 async 函式的失敗（<code>rejects.toThrow</code>）</h2>
+<pre><code>// ❌ 不會照你想的方式運作：async 函式呼叫當下不會同步拋錯
+expect(() => someAsyncFn()).toThrow();
+
+// ✅ 正確寫法：await + rejects
+await expect(someAsyncFn()).rejects.toThrow('錯誤訊息');
+</code></pre>
+<ul>
+  <li><code>expect(fn).toThrow()</code> — 同步函式：呼叫當下就要拋錯（Lesson 0002）。</li>
+  <li><code>await expect(promise).rejects.toThrow(msg)</code> — async 函式：等 Promise reject，斷言錯誤訊息（Lesson 0005）。</li>
+  <li>外層 <code>await</code> 不能漏——沒有它，測試可能在 Promise 真正 reject 之前就跑完了。</li>
+</ul>
+<p class="sidenote">
+  <strong>別搞混：</strong><code>vi.fn().mockRejectedValue(err)</code> 是設定「假物件」要 reject 什麼；
+  <code>expect(promise).rejects.toThrow(msg)</code> 是斷言「被測函式」有沒有正確把錯誤傳出來——一個是輸入，一個是輸出。
+  範例見 <a href="../app/_lib/audioGenerationService.test.js">audioGenerationService.test.js</a>。
+</p>
+
+<h2>⚠️ <code>test.todo</code> 的陷阱</h2>
+<pre><code>test.todo('之後要寫的測試', async () => {
+  expect(true).toBe(false); // 這一行永遠不會被執行！
+});
+</code></pre>
+<p class="sidenote">
+  <strong><code>test.todo</code> 就算傳了 callback 進去也不會執行它</strong>——它的用途是先佔位、
+  標記「這個測試之後要補」，不是拿來寫真正的測試內容。<code>npm test</code> 會顯示
+  <code>1 passed | 1 todo</code>，不會報錯、也不會失敗，所以斷言沒被執行這件事很容易被忽略。
+  要讓測試真的跑，把 <code>test.todo(</code> 換成 <code>test(</code> 就好。
+</p>
+
 <h2>查詢優先順序（RTL）</h2>
 <p>依照 <a href="https://testing-library.com/docs/queries/about/#priority" target="_blank" rel="noopener">Testing Library 官方優先順序</a>，由上到下優先使用：</p>
 <ol>
@@ -74,7 +149,7 @@ expect(element).toHaveTextContent('Hello')
 </ol>
 
 <div class="nav-footer">
-  <span>← <a href="../lessons/0001-testing-fundamentals.html">回到 Lesson 0001</a></span>
+  <span>← <a href="../lessons/0005-async-rejection-matchers.html">回到 Lesson 0005</a></span>
   <span><a href="../MISSION.md">MISSION.md</a></span>
 </div>
 </body>

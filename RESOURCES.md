@@ -14,6 +14,10 @@
   Explains _why_ RTL avoids testing internal component state/props. Use for: grounding the spec's instruction to assert on "external, observable behavior," not implementation shape.
 - [Testing Library — Async utilities (`findBy`, `waitFor`)](https://testing-library.com/docs/dom-testing-library/api-async/)
   Official async query docs. Use for: testing loading/error states in the audiobook player without flaky arbitrary timeouts.
+- [Vitest — `vi.mock()` API](https://vitest.dev/api/vi.html#vi-mock)
+  Official docs for replacing an entire module (vs. dependency-injection fakes). Use for: testing code that imports its dependency directly, like the `audio-chunks` API route.
+- [Vitest — `expect().rejects`](https://vitest.dev/api/expect.html#rejects)
+  Official docs for unwrapping a rejected Promise so a matcher like `toThrow` can assert on it. Use for: testing that an `async` function's failure path propagates correctly, as in `audioGenerationService`'s generation-failure test.
 
 ## Wisdom (Communities)
 
@@ -24,7 +28,7 @@
 
 ## Gaps
 
-- No resource yet on mocking fetch/network calls specifically for Next.js API routes (relevant once the Audio Generation Service tests start touching `edge-tts`/storage fakes) — revisit when that lesson comes up.
+- No community/resource yet specifically on testing Next.js Route Handlers (beyond calling the exported `POST`/`GET` function directly with a hand-built request object, as `route.test.js` does) — revisit if a route needs something the current approach can't cover (e.g. streaming responses, middleware).
 
 ---
 
@@ -44,6 +48,10 @@
   解釋為什麼 RTL 刻意避免測試元件內部的 state/props。用途：理解 spec 裡「斷言在外部可觀察的行為上」這個決策背後的原因。
 - [Testing Library — 非同步工具（`findBy`、`waitFor`）](https://testing-library.com/docs/dom-testing-library/api-async/)
   官方的非同步查詢文件。用途：測試有聲書播放器的讀取中/錯誤狀態，不用寫容易 flaky 的固定等待時間。
+- [Vitest — `vi.mock()` API](https://vitest.dev/api/vi.html#vi-mock)
+  官方文件，說明如何換掉整個模組（相對於依賴注入的假物件）。用途：測試直接 import 依賴的程式碼，例如 `audio-chunks` 這個 API route。
+- [Vitest — `expect().rejects`](https://vitest.dev/api/expect.html#rejects)
+  官方文件，說明如何「打開」一個 reject 的 Promise，讓 `toThrow` 這類 matcher 可以斷言它。用途：測試 `async` 函式的失敗路徑有沒有正確傳出去，例如 `audioGenerationService` 的生成失敗測試。
 
 ## 智慧類（社群）
 
@@ -54,4 +62,4 @@
 
 ## 缺口
 
-- 目前還沒有專門講「在 Next.js API route 裡 mock fetch/網路請求」的資源（等 Audio Generation Service 的測試開始碰 `edge-tts`/儲存空間的假物件時會用到）—— 到時候再補。
+- 目前還沒有專門講「測試 Next.js Route Handler」的社群/資源（現行做法是直接呼叫匯出的 `POST`/`GET` 函式，傳一個手刻的 request 物件，如 `route.test.js` 所做）—— 如果之後遇到現行做法處理不了的情境（例如串流回應、middleware）再補。
