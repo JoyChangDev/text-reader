@@ -25,19 +25,22 @@ describe('getOrGenerateAudio', () => {
     expect(ttsClient.synthesize).not.toHaveBeenCalled();
   });
 
-  // TODO (Lesson 0003): write a test asserting that on a cache miss —
-  // storageClient.get resolves to undefined — getOrGenerateAudio calls
-  // ttsClient.synthesize(text, voice), persists the result via storageClient.put,
-  // and returns the generated result. See lesson 0003 for the pattern.
   test('calls ttsClient and persists the result on a cache miss', async () => {
     // Arrange
-    const mockResponse = { url: 'https://blob.example/cached.mp3', boundaries: [] };
+    const synthesized = {
+      audio: new Blob(['fake-audio']),
+      boundaries: [{ text: '你好', offset: 0, duration: 1000 }],
+    };
+    const persisted = {
+      url: 'https://blob.example/generated.mp3',
+      boundaries: synthesized.boundaries,
+    };
     const storageClient = {
       get: vi.fn().mockResolvedValue(undefined),
-      put: vi.fn(),
+      put: vi.fn().mockResolvedValue(persisted),
     };
     const ttsClient = {
-      synthesize: vi.fn().mockResolvedValue(mockResponse),
+      synthesize: vi.fn().mockResolvedValue(synthesized),
     };
 
     // Act
@@ -47,8 +50,28 @@ describe('getOrGenerateAudio', () => {
     );
 
     // Assert
-    expect(result).toEqual(mockResponse);
-    expect(storageClient.put).toHaveBeenCalledWith('book-1/0/zh-TW-default', mockResponse);
+    expect(result).toEqual(persisted);
     expect(ttsClient.synthesize).toHaveBeenCalledWith('你好。', 'zh-TW-default');
+    expect(storageClient.put).toHaveBeenCalledWith('book-1/0/zh-TW-default', synthesized);
+  });
+
+  test('propagates the error and does not persist anything when generation fails', async () => {
+    // Arrange
+    const storageClient = {
+      get: vi.fn().mockResolvedValue(undefined),
+      put: vi.fn(),
+    };
+    const ttsClient = {
+      synthesize: vi.fn().mockRejectedValue(new Error('edge-tts request failed')),
+    };
+
+    // Act / Assert
+    await expect(
+      getOrGenerateAudio(
+        { storageClient, ttsClient },
+        { bookId: 'book-1', chunkIndex: 0, voice: 'zh-TW-default', text: '你好。' },
+      ),
+    ).rejects.toThrow('edge-tts request failed');
+    expect(storageClient.put).not.toHaveBeenCalled();
   });
 });
