@@ -106,4 +106,16 @@ describe('chunkText', () => {
     }
     expect(chunks.join('')).toBe(longSentence);
   });
+
+  test('returns an empty array for empty input', () => {
+    // Arrange
+    const emptySentence = '';
+
+    // Act
+    const chunks = chunkText(emptySentence);
+
+    // Assert
+    expect(chunks).toHaveLength(0);
+    expect(chunks).toEqual([]);
+  });
 });
