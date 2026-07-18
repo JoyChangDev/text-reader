@@ -13,6 +13,13 @@ function jsonRequest(body) {
 }
 
 describe('POST /api/audio-chunks', () => {
+  test('rejects a request with an empty text string with 400', async () => {
+    const response = await POST(jsonRequest({ bookId: 'book-1', chunkIndex: 0, text: '' }));
+
+    expect(response.status).toBe(400);
+    expect(generateAudioForChunk).not.toHaveBeenCalled();
+  });
+
   test('rejects a request missing bookId, chunkIndex, or text with 400', async () => {
     const response = await POST(jsonRequest({ bookId: 'book-1', chunkIndex: 0 }));
 

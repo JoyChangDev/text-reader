@@ -85,6 +85,48 @@ expect(storageClient.put).toHaveBeenCalledWith(key, value);   // 有被呼叫，
   <a href="../app/_lib/audioGenerationService.js">audioGenerationService.js</a>。
 </p>
 
+<h2>整個模組換成假的（<code>vi.mock()</code>）</h2>
+<pre><code>import { generateAudioForChunk } from '@/app/_lib/audioGenerationService';
+
+vi.mock('@/app/_lib/audioGenerationService', () => ({
+  generateAudioForChunk: vi.fn(),
+}));
+
+const { POST } = await import('./route'); // 動態 import，確保在 mock 註冊後才載入
+
+// ...在個別測試裡：
+generateAudioForChunk.mockResolvedValueOnce(persisted);
+generateAudioForChunk.mockRejectedValueOnce(new Error('...'));
+</code></pre>
+<ul>
+  <li><code>vi.mock(路徑, factory)</code> — 讓這個測試檔案裡任何 import 該路徑的地方（包括被測檔案自己）都拿到假模組。</li>
+  <li><strong>Hoisting：</strong><code>vi.mock()</code> 會被提升到檔案最上面，比 <code>import</code> 都早執行。</li>
+  <li>用 <code>mockResolvedValueOnce</code>/<code>mockRejectedValueOnce</code>，不是不加 <code>Once</code> 的版本——同一個 mock 函式被多個測試共用，沒加 <code>Once</code> 的設定會留到下一個測試（這個專案沒設定 <code>clearMocks</code>）。</li>
+</ul>
+<p class="sidenote">
+  <strong>依賴注入（Lesson 3） vs <code>vi.mock()</code>（Lesson 4）：</strong>
+  函式把依賴當「參數」接收時，用依賴注入直接傳假物件；函式在檔案頂端直接 <code>import</code> 依賴、沒有參數可傳時，用 <code>vi.mock()</code> 換掉整個模組。
+  範例見 <a href="../app/api/audio-chunks/route.test.js">route.test.js</a>。
+</p>
+
+<h2>測試 async 函式的失敗（<code>rejects.toThrow</code>）</h2>
+<pre><code>// ❌ 不會照你想的方式運作：async 函式呼叫當下不會同步拋錯
+expect(() => someAsyncFn()).toThrow();
+
+// ✅ 正確寫法：await + rejects
+await expect(someAsyncFn()).rejects.toThrow('錯誤訊息');
+</code></pre>
+<ul>
+  <li><code>expect(fn).toThrow()</code> — 同步函式：呼叫當下就要拋錯（Lesson 0002）。</li>
+  <li><code>await expect(promise).rejects.toThrow(msg)</code> — async 函式：等 Promise reject，斷言錯誤訊息（Lesson 0005）。</li>
+  <li>外層 <code>await</code> 不能漏——沒有它，測試可能在 Promise 真正 reject 之前就跑完了。</li>
+</ul>
+<p class="sidenote">
+  <strong>別搞混：</strong><code>vi.fn().mockRejectedValue(err)</code> 是設定「假物件」要 reject 什麼；
+  <code>expect(promise).rejects.toThrow(msg)</code> 是斷言「被測函式」有沒有正確把錯誤傳出來——一個是輸入，一個是輸出。
+  範例見 <a href="../app/_lib/audioGenerationService.test.js">audioGenerationService.test.js</a>。
+</p>
+
 <h2>⚠️ <code>test.todo</code> 的陷阱</h2>
 <pre><code>test.todo('之後要寫的測試', async () => {
   expect(true).toBe(false); // 這一行永遠不會被執行！
@@ -107,7 +149,7 @@ expect(storageClient.put).toHaveBeenCalledWith(key, value);   // 有被呼叫，
 </ol>
 
 <div class="nav-footer">
-  <span>← <a href="../lessons/0003-fakes-at-a-boundary.html">回到 Lesson 0003</a></span>
+  <span>← <a href="../lessons/0005-async-rejection-matchers.html">回到 Lesson 0005</a></span>
   <span><a href="../MISSION.md">MISSION.md</a></span>
 </div>
 </body>

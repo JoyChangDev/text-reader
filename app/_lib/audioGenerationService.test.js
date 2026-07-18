@@ -74,4 +74,27 @@ describe('getOrGenerateAudio', () => {
     ).rejects.toThrow('edge-tts request failed');
     expect(storageClient.put).not.toHaveBeenCalled();
   });
+
+  test('propagates the error when persisting the generated audio fails', async () => {
+    // Arrange
+    const synthesized = {
+      audio: new Blob(['fake-audio']),
+      boundaries: [{ text: '你好', offset: 0, duration: 1000 }],
+    };
+    const storageClient = {
+      get: vi.fn().mockResolvedValue(undefined),
+      put: vi.fn().mockRejectedValue(new Error('blob upload failed')),
+    };
+    const ttsClient = {
+      synthesize: vi.fn().mockResolvedValue(synthesized),
+    };
+
+    // Act / Assert
+    await expect(
+      getOrGenerateAudio(
+        { storageClient, ttsClient },
+        { bookId: 'book-1', chunkIndex: 0, voice: 'zh-TW-default', text: '你好。' },
+      ),
+    ).rejects.toThrow('blob upload failed');
+  });
 });

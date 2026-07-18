@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lesson 0005 · 測試會失敗的 async 函式：rejects.toThrow()</title>
+<link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+
+<p class="kicker">Lesson 0005 · Async Rejection</p>
+<h1>測試一個會失敗的 <code>async</code> 函式：<code>rejects.toThrow()</code></h1>
+<p class="subtitle">
+  目標：看懂 <code>commit ebb65cf</code>（<em>feat(audio): wire real edge-tts and Vercel Blob into the generation
+  service</em>）裡新增的「生成失敗」測試，學會 <code>toThrow</code>（Lesson 0002 教過的同步版本）在
+  <code>async</code> 函式上為什麼不能直接用，然後獨立幫一個還沒被涵蓋的失敗情境補一個測試。
+</p>
+
+<blockquote>
+  主要參考資料：<a href="https://vitest.dev/api/expect.html#rejects" target="_blank" rel="noopener">Vitest — <code>expect().rejects</code> 文件</a>（官方文件）。
+  這篇說明 <code>rejects</code> 怎麼「打開」一個 Promise 的失敗結果，讓後面接的 matcher（像 <code>toThrow</code>）可以斷言它。
+</blockquote>
+
+<h2>這次要看的程式碼</h2>
+<p>
+  <code>commit ebb65cf</code> 把真的 <code>edge-tts</code> 和 Vercel Blob 接進
+  <a href="../app/_lib/audioGenerationService.js">audioGenerationService.js</a>，也在
+  <a href="../app/_lib/audioGenerationService.test.js">audioGenerationService.test.js</a> 補了一個新測試：
+  如果 <code>edge-tts</code> 生成失敗，會發生什麼事？
+</p>
+<pre><code>test('propagates the error and does not persist anything when generation fails', async () => {
+  // Arrange
+  const storageClient = {
+    get: vi.fn().mockResolvedValue(undefined),
+    put: vi.fn(),
+  };
+  const ttsClient = {
+    synthesize: vi.fn().mockRejectedValue(new Error('edge-tts request failed')),
+  };
+
+  // Act / Assert
+  await expect(
+    getOrGenerateAudio(
+      { storageClient, ttsClient },
+      { bookId: 'book-1', chunkIndex: 0, voice: 'zh-TW-default', text: '你好。' },
+    ),
+  ).rejects.toThrow('edge-tts request failed');
+  expect(storageClient.put).not.toHaveBeenCalled();
+});</code></pre>
+
+<h2>為什麼不能直接用 Lesson 0002 的 <code>toThrow</code></h2>
+<p>
+  <a href="0002-matchers-and-edge-cases.html">Lesson 0002</a> 提過
+  <code>expect(fn).toThrow()</code>：呼叫 <code>fn</code>，如果它<strong>同步地</strong>拋出錯誤，斷言就通過。
+  直覺可能會想照樣寫：
+</p>
+<pre><code>// ❌ 這樣寫是錯的，而且不會告訴你哪裡錯
+expect(() => getOrGenerateAudio({ storageClient, ttsClient }, { ... })).toThrow();</code></pre>
+<p>
+  這行不會照你想的方式失敗（也不會照你想的方式成功）。原因是
+  <code>getOrGenerateAudio</code> 是 <code>async</code> 函式：呼叫它<strong>永遠立刻回傳一個 Promise</strong>，
+  不會同步拋出任何東西——就算 <code>ttsClient.synthesize</code> 最後會 reject，那也是之後才發生的事，
+  跟「呼叫當下有沒有同步拋錯」是兩件事。<code>toThrow</code> 只看得到「呼叫當下」，看不到「之後才 reject」。
+</p>
+<p class="sidenote">
+  這跟 <a href="0003-fakes-at-a-boundary.html">Lesson 0003</a> 提過的 <code>test.todo</code> 陷阱是同一種類型的坑：
+  程式碼「看起來」在測某件事，實際上斷言根本沒發生在對的時間點，而且不會報錯提醒你。
+</p>
+
+<h2>正確寫法：<code>await expect(promise).rejects.toThrow(...)</code></h2>
+<p>
+  把「呼叫函式拿到的 Promise」直接交給 <code>expect()</code>，再串上 <code>.rejects</code>，
+  告訴 Vitest「等這個 Promise 解決，然後把它 reject 的錯誤，交給後面的 matcher 斷言」：
+</p>
+<pre><code>await expect(
+  getOrGenerateAudio({ storageClient, ttsClient }, { ... }),
+).rejects.toThrow('edge-tts request failed');</code></pre>
+<table>
+  <tr><td><code>expect(fn).toThrow()</code></td><td>同步函式：呼叫的當下就要拋出錯誤（Lesson 0002）</td></tr>
+  <tr><td><code>await expect(promise).rejects.toThrow(msg)</code></td><td>async 函式：等 Promise reject，斷言錯誤訊息（今天）</td></tr>
+</table>
+<p>
+  外層的 <code>await</code> 不能漏掉——沒有它，測試在 Promise 真正 reject 之前就已經跑完了，
+  斷言可能根本來不及執行（跟 Lesson 0003 的 <code>test.todo</code> 一樣，是個「安靜地什麼都沒測到」的陷阱）。
+</p>
+
+<h2>別搞混：<code>mockRejectedValue</code> vs <code>rejects.toThrow</code></h2>
+<p>這個測試裡有兩個長得像、但做完全不同事情的東西：</p>
+<ul>
+  <li><code>ttsClient.synthesize: vi.fn().mockRejectedValue(new Error(...))</code>
+    ——設定<strong>假物件</strong>：假的 <code>synthesize</code> 被呼叫時要 reject 成什麼錯誤。</li>
+  <li><code>expect(getOrGenerateAudio(...)).rejects.toThrow(...)</code>
+    ——斷言<strong>被測函式本身</strong>（<code>getOrGenerateAudio</code>）回傳的 Promise 有沒有正確地把這個錯誤傳出來。</li>
+</ul>
+<p class="sidenote">
+  一個是「餵給假物件的輸入」，一個是「驗證真正程式碼的輸出」——這正是這個測試想確認的事：
+  <code>getOrGenerateAudio</code> 沒有用 <code>try/catch</code> 把錯誤吞掉，而是讓它繼續往外傳。
+  也因為這樣，最後一行 <code>expect(storageClient.put).not.toHaveBeenCalled()</code> 才成立：
+  生成失敗，就不該有東西被存進快取。
+</p>
+
+<div class="win-box">
+  <p class="kicker">動手做 · 今天的目標</p>
+  <p>
+    上面這個測試只涵蓋了「<code>ttsClient.synthesize</code> 失敗」的情況。但
+    <code>getOrGenerateAudio</code> 最後一步是 <code>storageClient.put</code>——如果<strong>它</strong>失敗
+    （例如 Vercel Blob 上傳失敗），目前完全沒有測試鎖住這個情境。
+  </p>
+  <p><strong>步驟：</strong></p>
+  <ol>
+    <li>開監看視窗：<code>npm run test:watch</code>。</li>
+    <li>在 <a href="../app/_lib/audioGenerationService.test.js">audioGenerationService.test.js</a> 裡新增一個測試，
+      名字取類似 <code>'propagates the error when persisting the generated audio fails'</code>。</li>
+    <li>Arrange：<code>storageClient.get</code> 一樣 <code>mockResolvedValue(undefined)</code>（cache miss）；
+      <code>ttsClient.synthesize</code> 正常成功，<code>mockResolvedValue</code> 一個你自己編的假生成結果；
+      但這次 <code>storageClient.put</code> 用 <code>mockRejectedValue(new Error('blob upload failed'))</code>。</li>
+    <li>Act/Assert：跟上面範例同樣的寫法，
+      <code>await expect(getOrGenerateAudio(...)).rejects.toThrow('blob upload failed')</code>。</li>
+    <li>存檔確認測試變綠——不需要改 <code>audioGenerationService.js</code>，
+      它本來就沒有吞掉錯誤，今天只是把這條路徑也鎖進測試套件。</li>
+  </ol>
+  <p class="sidenote">
+    這個測試會留在專案裡，跟其他三個 <code>getOrGenerateAudio</code> 測試一起涵蓋 cache hit、cache miss、
+    生成失敗、還有現在這條持久化失敗——不是丟掉的練習題。
+  </p>
+</div>
+
+<h2>小測驗</h2>
+
+<div class="quiz">
+  <p class="quiz-q">1. 為什麼 <code>expect(() => asyncFn()).toThrow()</code> 沒辦法正確測試一個 async 函式的失敗？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">async 函式永遠不可能拋出錯誤</button>
+    <button class="quiz-choice" data-correct="true">呼叫 async 函式會立刻回傳 Promise，不會同步拋錯，reject 是之後才發生的事</button>
+    <button class="quiz-choice" data-correct="false"><code>toThrow</code> 這個 matcher 已經被棄用了</button>
+    <button class="quiz-choice" data-correct="false">箭頭函式不能搭配 <code>toThrow</code> 使用</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="沒錯——toThrow 只看得到呼叫當下的同步拋錯，async 函式的失敗是之後透過 reject 傳出來的。"
+     data-incorrect-feedback="再想想：呼叫一個 async 函式，不管它最後成功還是失敗，「呼叫的當下」會立刻回傳什麼？"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">2. <code>rejects</code> 在 <code>await expect(promise).rejects.toThrow(msg)</code> 裡的作用是什麼？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">阻止測試繼續往下執行</button>
+    <button class="quiz-choice" data-correct="true">等 Promise 解決，把它 reject 的錯誤交給後面的 matcher 斷言</button>
+    <button class="quiz-choice" data-correct="false">把一個成功的 Promise 強制改成失敗</button>
+    <button class="quiz-choice" data-correct="false">跳過這個測試，不管結果如何</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="正確——rejects 等 Promise 解決後，把 reject 的錯誤「打開」，交給 toThrow 這類 matcher 檢查。"
+     data-incorrect-feedback="再想想：rejects 後面還接了一個 matcher（toThrow），它的工作是不是把某個東西準備好，讓後面可以斷言？"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">3. <code>ttsClient.synthesize.mockRejectedValue(...)</code> 和 <code>expect(...).rejects.toThrow(...)</code> 差在哪裡？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">兩者做的事完全一樣，只是寫法不同</button>
+    <button class="quiz-choice" data-correct="true">前者設定假物件要 reject 什麼，後者斷言被測函式的 Promise 有沒有正確傳出這個錯誤</button>
+    <button class="quiz-choice" data-correct="false">前者用在同步函式，後者只能用在 async 函式</button>
+    <button class="quiz-choice" data-correct="false">前者是 Vitest 的功能，後者是 Testing Library 的功能</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="沒錯——一個是「餵給假物件的輸入」，一個是「驗證真正程式碼的輸出」，這個測試兩者都需要。"
+     data-incorrect-feedback="再想想：一個發生在 Arrange 階段（設定假物件），一個發生在 Assert 階段（斷言結果）。"></p>
+</div>
+
+<p class="ask-agent">
+  卡住了、或想知道「為什麼」不只「怎麼做」？隨時回來問我——我是你的教學助教，
+  可以解釋任何看不懂的地方，或幫你 review 你寫的測試。
+</p>
+
+<div class="nav-footer">
+  <span>← <a href="0004-mocking-whole-modules.html">Lesson 0004</a> ・ <a href="../reference/vitest-basics.html">Vitest 基礎速查表</a>（已更新今天學到的 rejects.toThrow）</span>
+  <span><a href="../MISSION.md">MISSION.md</a></span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>
