@@ -85,6 +85,18 @@ expect(storageClient.put).toHaveBeenCalledWith(key, value);   // 有被呼叫，
   <a href="../app/_lib/audioGenerationService.js">audioGenerationService.js</a>。
 </p>
 
+<h2>⚠️ <code>test.todo</code> 的陷阱</h2>
+<pre><code>test.todo('之後要寫的測試', async () => {
+  expect(true).toBe(false); // 這一行永遠不會被執行！
+});
+</code></pre>
+<p class="sidenote">
+  <strong><code>test.todo</code> 就算傳了 callback 進去也不會執行它</strong>——它的用途是先佔位、
+  標記「這個測試之後要補」，不是拿來寫真正的測試內容。<code>npm test</code> 會顯示
+  <code>1 passed | 1 todo</code>，不會報錯、也不會失敗，所以斷言沒被執行這件事很容易被忽略。
+  要讓測試真的跑，把 <code>test.todo(</code> 換成 <code>test(</code> 就好。
+</p>
+
 <h2>查詢優先順序（RTL）</h2>
 <p>依照 <a href="https://testing-library.com/docs/queries/about/#priority" target="_blank" rel="noopener">Testing Library 官方優先順序</a>，由上到下優先使用：</p>
 <ol>
