@@ -57,12 +57,33 @@ expect(n).toBeLessThanOrEqual(20)      // 數字小於等於（上限用這個�
   來自 <a href="../lessons/0002-matchers-and-edge-cases.html">Lesson 0002</a>。
 </p>
 
+<h2>渲染元件並查詢畫面（React Testing Library）</h2>
+<pre><code>import { render, screen } from '@testing-library/react';
+
+render(&lt;ChakraProvider&gt;&lt;Home /&gt;&lt;/ChakraProvider&gt;);
+screen.getAllByRole('button', { name: 'Click me' }); // 回傳陣列
+screen.getByRole('heading', { name: '...' });         // 剛好一個，找不到/找到多個都失敗
+</code></pre>
+<ul>
+  <li><code>render()</code> — 把元件描述（JSX）掛載成真正的 DOM 樹，之後才有東西可以查詢/斷言。</li>
+  <li><code>screen</code> — 綁定到目前渲染結果的查詢工具，掛了整套 <code>getBy...</code>/<code>getAllBy...</code>。</li>
+  <li><code>getByRole</code> — 依照無障礙樹（accessibility tree）查詢，是官方查詢優先順序的第一位。</li>
+</ul>
+<p class="sidenote">
+  來自 <a href="../lessons/0006-rtl-render-screen-queries.html">Lesson 0006</a>，範例見
+  <a href="../app/page.test.jsx">page.test.jsx</a>。
+</p>
+
 <h2>常用 Matchers（React Testing Library，來自 jest-dom）</h2>
 <pre><code>expect(element).toBeInTheDocument()
-expect(element).toBeDisabled()
+expect(element).toBeEnabled()
 expect(element).toHaveTextContent('Hello')
 </code></pre>
-<p class="sidenote">這些是 <code>@testing-library/jest-dom</code> 提供的擴充 matcher，已經在這個專案的 <code>vitest.setup.js</code> 裡註冊好了，不用額外 import。</p>
+<p class="sidenote">
+  這些是 <code>@testing-library/jest-dom</code> 提供的擴充 matcher，已經在這個專案的 <code>vitest.setup.js</code> 裡註冊好了，不用額外 import。
+  找到元素（<code>getByRole</code>）不代表元素可以互動——<code>toBeEnabled()</code> 才鎖住「使用者按得下去」。
+  來自 <a href="../lessons/0006-rtl-render-screen-queries.html">Lesson 0006</a>。
+</p>
 
 <h2>假物件與依賴注入（Mocking）</h2>
 <pre><code>const storageClient = {
@@ -147,9 +168,10 @@ await expect(someAsyncFn()).rejects.toThrow('錯誤訊息');
   <li><code>getByText</code> — 非互動的文字內容</li>
   <li><code>getByTestId</code> — 最後手段，前面都不適用時才用</li>
 </ol>
+<p class="sidenote">來自 <a href="../lessons/0006-rtl-render-screen-queries.html">Lesson 0006</a>。</p>
 
 <div class="nav-footer">
-  <span>← <a href="../lessons/0005-async-rejection-matchers.html">回到 Lesson 0005</a></span>
+  <span>← <a href="../lessons/0006-rtl-render-screen-queries.html">回到 Lesson 0006</a></span>
   <span><a href="../MISSION.md">MISSION.md</a></span>
 </div>
 </body>

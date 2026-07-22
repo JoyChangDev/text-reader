@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lesson 0006 · React Testing Library 基礎：render、screen、getByRole</title>
+<link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+
+<p class="kicker">Lesson 0006 · RTL Fundamentals</p>
+<h1>第一次測「畫面」：<code>render</code>、<code>screen</code>、<code>getByRole</code></h1>
+<p class="subtitle">
+  目標：看懂這個專案從 ticket 01（測試基礎建設）就已經存在、但從來沒有一堂課解釋過的
+  <a href="../app/page.test.jsx">page.test.jsx</a>，搞懂 React Testing Library 怎麼「渲染」一個元件、
+  怎麼用 <code>getByRole</code> 找畫面上的東西，然後補一個 <code>jest-dom</code> 斷言，把它變得更扎實。
+</p>
+
+<blockquote>
+  主要參考資料：<a href="https://testing-library.com/docs/react-testing-library/intro/" target="_blank" rel="noopener">Testing Library — React Testing Library 官方文件</a>。
+  這篇文件的核心理念是：「你的測試越像使用者實際使用軟體的方式，就能給你越多信心」——今天會看到這句話具體長什麼樣子。
+</blockquote>
+
+<h2>跟前五課不一樣的地方</h2>
+<p>
+  <a href="0001-testing-fundamentals.html">Lesson 0001</a> 到
+  <a href="0005-async-rejection-matchers.html">Lesson 0005</a> 測的都是「函式」——
+  <code>formatDuration</code>、<code>chunkText</code>、<code>getOrGenerateAudio</code>、
+  <code>POST</code>——呼叫它、檢查回傳值或有沒有呼叫某個假物件。沒有一堂課碰過「畫面」。
+</p>
+<p>
+  但 <a href="../app/page.jsx">page.jsx</a> 是一個 React 元件，不是一個可以直接呼叫拿到回傳值的函式。
+  它回傳的是 JSX——「畫面應該長什麼樣子」的描述，不是最終結果。要測「使用者會看到什麼」，
+  得先把這個描述變成真正的 DOM 元素，才有東西可以斷言。這正是今天的主角
+  <code>render()</code> 要做的事。
+</p>
+
+<h2>今天要看的程式碼</h2>
+<p>
+  這個測試從這個專案第一次設定 Vitest（ticket 01）就已經存在，一直都在跑，只是還沒有一堂課
+  完整解釋過它在做什麼：
+</p>
+<pre><code>import { render, screen } from '@testing-library/react';
+import { expect, test } from 'vitest';
+
+import ChakraProvider from './_providers/chakra';
+import Home from './page';
+
+test('renders the home page buttons', () => {
+  render(
+    &lt;ChakraProvider&gt;
+      &lt;Home /&gt;
+    &lt;/ChakraProvider&gt;,
+  );
+
+  expect(screen.getAllByRole('button', { name: 'Click me' })).toHaveLength(2);
+});</code></pre>
+<p>對應的元件，<a href="../app/page.jsx">page.jsx</a>：</p>
+<pre><code>export default function Home() {
+  return (
+    &lt;HStack bg="background" color="foreground"&gt;
+      &lt;Button&gt;Click me&lt;/Button&gt;
+      &lt;Button&gt;Click me&lt;/Button&gt;
+    &lt;/HStack&gt;
+  );
+}</code></pre>
+
+<h2><code>render()</code>：把元件變成真的 DOM</h2>
+<p>
+  <code>render(&lt;Home /&gt;)</code> 會把 <code>Home</code> 這個元件實際「掛載」到一個虛擬的文件（由
+  <code>jsdom</code> 提供，已經在 <a href="../vitest.config.js">vitest.config.js</a> 的
+  <code>environment: 'jsdom'</code> 設定好）裡，變成一棵真正的 DOM 樹——跟瀏覽器裡使用者會看到的結構一樣。
+  這裡額外包了一層 <code>ChakraProvider</code>，是因為 <code>Home</code> 用了 Chakra 的
+  <code>&lt;Button&gt;</code>/<code>&lt;HStack&gt;</code>，這些元件需要 Chakra 的 context 才能正確渲染——
+  跟元件在真正的 app 裡被 <a href="../app/layout.jsx">layout.jsx</a> 包起來的方式一樣。
+</p>
+<p class="sidenote">
+  這也是為什麼這個測試檔案的副檔名是 <code>.jsx</code> 而不是 <code>.js</code>——檔案裡直接寫了 JSX 語法
+  （<code>&lt;ChakraProvider&gt;&lt;Home /&gt;&lt;/ChakraProvider&gt;</code>），需要 <code>.jsx</code> 讓建構工具正確解析。
+</p>
+
+<h2><code>screen</code> 與 <code>getByRole</code>：找畫面上的東西</h2>
+<p>
+  <code>render()</code> 執行完之後，畫面已經在虛擬 DOM 裡了，但測試要怎麼「看到」它？答案是
+  <code>screen</code>——一個綁定到目前渲染結果的查詢工具，上面掛了一整套 <code>getBy...</code>/
+  <code>getAllBy...</code> 方法。
+</p>
+<pre><code>screen.getAllByRole('button', { name: 'Click me' })</code></pre>
+<p>
+  這行的意思是：「找出畫面上所有 <strong>role 是 button</strong>、而且<strong>可存取名稱（accessible name）
+  是 'Click me'</strong> 的元素」。<code>role</code> 不是你自己標記的東西——瀏覽器和螢幕報讀軟體會自動
+  幫每個 HTML 元素推導出一個 role（<code>&lt;button&gt;</code> 就是 <code>button</code>，
+  <code>&lt;h1&gt;</code> 就是 <code>heading</code>），<code>getByRole</code> 查的正是這個無障礙樹（accessibility
+  tree），跟使用者用滑鼠點、或用螢幕報讀軟體聽到的是同一套資訊。
+</p>
+<table>
+  <tr><td><code>getByRole(role)</code></td><td>找<strong>剛好一個</strong>符合的元素；找不到或找到超過一個都會讓測試失敗</td></tr>
+  <tr><td><code>getAllByRole(role)</code></td><td>找<strong>所有</strong>符合的元素，回傳陣列——今天的例子用這個，因為畫面上有兩個按鈕</td></tr>
+  <tr><td><code>{ name: '...' }</code></td><td>用可存取名稱（通常就是看得到的文字內容）再篩選一次</td></tr>
+</table>
+<p class="sidenote">
+  <strong>為什麼優先用 <code>getByRole</code>：</strong>依照
+  <a href="https://testing-library.com/docs/queries/about/#priority" target="_blank" rel="noopener">Testing Library 官方查詢優先順序</a>，
+  <code>getByRole</code> 排第一位，因為它逼你的測試用「使用者/無障礙工具找元素的方式」去找元素，
+  而不是憑你自己知道的內部結構（像 class name 或 DOM 巢狀層級）。如果 <code>getByRole</code> 真的找不到
+  合適的 role，才依序退到 <code>getByLabelText</code>、<code>getByText</code>，最後手段才是
+  <code>getByTestId</code>。
+</p>
+
+<h2>只找到東西還不夠：<code>jest-dom</code> matcher</h2>
+<p>
+  <code>toHaveLength(2)</code> 只斷言「找到兩個元素」——但一個按鈕就算被 <code>disabled</code>，
+  一樣會被 <code>getAllByRole('button')</code> 找到。<strong>存在</strong>跟<strong>可以互動</strong>是兩件事。
+  這個專案已經裝了 <code>@testing-library/jest-dom</code>，並且在
+  <a href="../vitest.setup.js">vitest.setup.js</a> 裡註冊好了，所以任何測試檔案都能直接用這些額外的 matcher，
+  不用再手動 import：
+</p>
+<pre><code>expect(element).toBeInTheDocument()   // 元素真的在畫面上
+expect(element).toBeEnabled()          // 元素不是 disabled，使用者按得下去
+expect(element).toHaveTextContent('Hello')</code></pre>
+<p class="sidenote">
+  跟 <a href="0002-matchers-and-edge-cases.html">Lesson 0002</a> 的 <code>toBe</code>/<code>toEqual</code>
+  是同一種東西（<code>expect(x).matcher()</code> 的形狀），只是這批 matcher 專門看「DOM 元素」，
+  不是看數字、字串或陣列。
+</p>
+
+<div class="win-box">
+  <p class="kicker">動手做 · 今天的目標</p>
+  <p>
+    現在的測試只鎖住了「畫面上有兩個叫 'Click me' 的按鈕」，但沒鎖住「這兩個按鈕使用者真的按得下去」。
+    如果之後有人不小心讓 <code>Home</code> 渲染出 <code>disabled</code> 的按鈕，這個測試現在完全不會發現。
+  </p>
+  <p><strong>步驟：</strong></p>
+  <ol>
+    <li>開監看視窗：<code>npm run test:watch</code>。</li>
+    <li>打開 <a href="../app/page.test.jsx">page.test.jsx</a>，在既有的 <code>expect(...).toHaveLength(2)</code>
+      斷言下面，把 <code>getAllByRole</code> 的結果存進一個變數，然後對<strong>其中每一個</strong>按鈕加上
+      <code>expect(button).toBeEnabled()</code>。</li>
+    <li>提示：<code>getAllByRole(...)</code> 回傳的是陣列，陣列有 <code>.forEach</code>可以用，
+      對每個元素各自斷言一次。</li>
+    <li>存檔確認測試變綠——不需要改 <code>page.jsx</code>，這條行為它本來就是對的，
+      今天只是把它鎖進測試套件裡。</li>
+  </ol>
+  <p class="sidenote">
+    這個測試會留在專案裡，跟 <code>toHaveLength(2)</code> 一起保護 <code>Home</code> 頁面——不是丟掉的練習題。
+  </p>
+</div>
+
+<h2>小測驗</h2>
+
+<div class="quiz">
+  <p class="quiz-q">1. 為什麼測試 <code>Home</code> 元件之前要先呼叫 <code>render()</code>，而不是像前面幾課那樣直接呼叫函式看回傳值？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">因為 React 元件的回傳值永遠是 undefined</button>
+    <button class="quiz-choice" data-correct="true">元件回傳的是畫面描述，要先掛載成真正的 DOM 才有東西可以斷言</button>
+    <button class="quiz-choice" data-correct="false">因為 render 可以讓測試執行得比較快</button>
+    <button class="quiz-choice" data-correct="false">因為 Vitest 規定元件測試都要呼叫 render</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="沒錯——JSX 只是「畫面應該長什麼樣」的描述，render 把它變成真正的 DOM 樹，screen 才有東西可以查。"
+     data-incorrect-feedback="再想想：Home() 回傳的 JSX，跟瀏覽器裡使用者真正看到的 DOM，是同一種東西嗎？"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">2. 為什麼查詢優先順序把 <code>getByRole</code> 排在第一位？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">因為它是唯一能用在 Chakra 元件上的查詢方式</button>
+    <button class="quiz-choice" data-correct="true">因為它逼測試用使用者/無障礙工具找元素的方式，而不是內部結構</button>
+    <button class="quiz-choice" data-correct="false">因為它是這幾種查詢裡執行速度最快的</button>
+    <button class="quiz-choice" data-correct="false">因為它是唯一支援 name 篩選的查詢方式</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="正確——role 是瀏覽器和螢幕報讀軟體都看得到的無障礙資訊，貼近真實使用者的操作方式。"
+     data-incorrect-feedback="再想想：role 這個概念，除了測試以外，還有誰會用到（例如螢幕報讀軟體）？"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">3. <code>screen.getAllByRole('button')</code> 找到的按鈕陣列，跟 <code>expect(button).toBeEnabled()</code> 斷言的東西有什麼不同？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">兩者斷言的是完全一樣的事，只是寫法不同</button>
+    <button class="quiz-choice" data-correct="true">前者只確認元素存在於畫面上，後者確認元素目前可以被使用者互動</button>
+    <button class="quiz-choice" data-correct="false">前者用在同步元件，後者只能用在 async 元件</button>
+    <button class="quiz-choice" data-correct="false"><code>toBeEnabled</code> 是 Vitest 內建的，跟 jest-dom 無關</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="沒錯——找得到不代表按得下去，一個 disabled 按鈕一樣會被 getByRole 找到，toBeEnabled 才鎖住「可互動」這件事。"
+     data-incorrect-feedback="再想想：一個 disabled="true" 的 <button> 元素，還算不算 role 是 button？getAllByRole 找不找得到它？"></p>
+</div>
+
+<p class="ask-agent">
+  卡住了、或想知道「為什麼」不只「怎麼做」？隨時回來問我——我是你的教學助教，
+  可以解釋任何看不懂的地方，或幫你 review 你寫的測試。
+</p>
+
+<div class="nav-footer">
+  <span>← <a href="0005-async-rejection-matchers.html">Lesson 0005</a> ・ <a href="../reference/vitest-basics.html">Vitest 基礎速查表</a>（已更新今天學到的 render/screen/getByRole）</span>
+  <span><a href="../MISSION.md">MISSION.md</a></span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>
