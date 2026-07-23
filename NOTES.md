@@ -6,6 +6,7 @@
 - Wants dual value from every lesson where possible: (1) transferable testing skill, (2) real progress on `text-reader`'s actual test suite. Prefer exercises that produce code the project will actually keep, not throwaway toy examples, when a real one fits the lesson's scope.
 - Will sometimes name the exact ticket/topic to teach next (e.g. "/teach ticket 04") rather than leaving it to inferred ZPD - when given, honor it directly instead of picking a different next-topic.
 - 2026-07-18: confirmed both outstanding exercises done and merged - Lesson 0002's empty-array `chunkText` test (commit `998df89`) and Lesson 0003's cache-miss `audioGenerationService` test (on top of `b6c8b61`). See [[0002-chunktext-empty-input-recall]] and [[0003-test-todo-callback-gotcha]].
+- 2026-07-23: Lesson 0006 exercise (`toBeEnabled` on both Home buttons) done and green, not yet committed. Prefers real code over toy examples for the async findBy/waitFor lesson (last untaught mission item) - explicitly chose to wait until ticket 06 (upload/playback UI) exists rather than teach it against a throwaway example now. Don't propose that lesson again until ticket 06 lands.
 
 ---
 

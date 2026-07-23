@@ -11,5 +11,8 @@ test('renders the home page buttons', () => {
     </ChakraProvider>,
   );
 
-  expect(screen.getAllByRole('button', { name: 'Click me' })).toHaveLength(2);
+  const clickBtnsEl = screen.getAllByRole('button', { name: 'Click me' });
+
+  expect(clickBtnsEl).toHaveLength(2);
+  clickBtnsEl.forEach((el) => expect(el).toBeEnabled());
 });
