@@ -160,6 +160,36 @@ await expect(someAsyncFn()).rejects.toThrow('錯誤訊息');
   要讓測試真的跑，把 <code>test.todo(</code> 換成 <code>test(</code> 就好。
 </p>
 
+<h2>共用可變狀態：<code>vi.hoisted()</code></h2>
+<pre><code>const { blobStore, synthesizeCalls } = vi.hoisted(() => ({
+  blobStore: new Map(),
+  synthesizeCalls: [],
+}));
+
+vi.mock('@vercel/blob', () => ({
+  async get(pathname) { /* 讀 blobStore */ },
+  async put(pathname, data) { /* 寫 blobStore */ },
+}));
+
+vi.mock('edge-tts-universal', () => ({
+  EdgeTTS: class { async synthesize() { synthesizeCalls.push(/* ... */); } },
+}));
+
+beforeEach(() => {
+  blobStore.clear();          // 這兩個是整份檔案共用一次的可變狀態
+  synthesizeCalls.length = 0; // 不清空會留到下一個測試
+});
+</code></pre>
+<ul>
+  <li><code>vi.hoisted(factory)</code> — 讓 <code>factory</code> 回傳的東西跟著 <code>vi.mock()</code> 一起被提升，這樣 <code>vi.mock()</code> 的 factory 才能安全讀寫它。</li>
+  <li>直接用一般的 <code>const</code> 宣告會噴 <code>ReferenceError</code>：<code>vi.mock()</code> 被提升到最上面，但一般變數宣告不會跟著提升。</li>
+  <li>多個 <code>vi.mock()</code> 需要共用同一份假資料（例如假的雲端儲存空間）時用這招——單一 <code>vi.mock()</code> 自己造新假物件不需要。</li>
+</ul>
+<p class="sidenote">
+  來自 <a href="../lessons/0007-vi-hoisted-shared-state.html">Lesson 0007</a>，範例見
+  <a href="../app/api/audio-chunks/progressiveGeneration.test.js">progressiveGeneration.test.js</a>。
+</p>
+
 <h2>查詢優先順序（RTL）</h2>
 <p>依照 <a href="https://testing-library.com/docs/queries/about/#priority" target="_blank" rel="noopener">Testing Library 官方優先順序</a>，由上到下優先使用：</p>
 <ol>
@@ -171,7 +201,7 @@ await expect(someAsyncFn()).rejects.toThrow('錯誤訊息');
 <p class="sidenote">來自 <a href="../lessons/0006-rtl-render-screen-queries.html">Lesson 0006</a>。</p>
 
 <div class="nav-footer">
-  <span>← <a href="../lessons/0006-rtl-render-screen-queries.html">回到 Lesson 0006</a></span>
+  <span>← <a href="../lessons/0007-vi-hoisted-shared-state.html">回到 Lesson 0007</a></span>
   <span><a href="../MISSION.md">MISSION.md</a></span>
 </div>
 </body>
