@@ -1,18 +1,20 @@
-import { describe, expect, test, vi } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { getOrGenerateAudio } from './audioGenerationService';
 
 describe('getOrGenerateAudio', () => {
+  let storageClient;
+  let ttsClient;
+
+  beforeEach(() => {
+    storageClient = { get: vi.fn(), put: vi.fn() };
+    ttsClient = { synthesize: vi.fn() };
+  });
+
   test('returns the cached result without calling ttsClient on a cache hit', async () => {
     // Arrange: fake storageClient already has this chunk cached
     const cachedResult = { url: 'https://blob.example/cached.mp3', boundaries: [] };
-    const storageClient = {
-      get: vi.fn().mockResolvedValue(cachedResult),
-      put: vi.fn(),
-    };
-    const ttsClient = {
-      synthesize: vi.fn(),
-    };
+    storageClient.get.mockResolvedValue(cachedResult);
 
     // Act
     const result = await getOrGenerateAudio(
@@ -35,13 +37,9 @@ describe('getOrGenerateAudio', () => {
       url: 'https://blob.example/generated.mp3',
       boundaries: synthesized.boundaries,
     };
-    const storageClient = {
-      get: vi.fn().mockResolvedValue(undefined),
-      put: vi.fn().mockResolvedValue(persisted),
-    };
-    const ttsClient = {
-      synthesize: vi.fn().mockResolvedValue(synthesized),
-    };
+    storageClient.get.mockResolvedValue(undefined);
+    storageClient.put.mockResolvedValue(persisted);
+    ttsClient.synthesize.mockResolvedValue(synthesized);
 
     // Act
     const result = await getOrGenerateAudio(
@@ -57,13 +55,8 @@ describe('getOrGenerateAudio', () => {
 
   test('propagates the error and does not persist anything when generation fails', async () => {
     // Arrange
-    const storageClient = {
-      get: vi.fn().mockResolvedValue(undefined),
-      put: vi.fn(),
-    };
-    const ttsClient = {
-      synthesize: vi.fn().mockRejectedValue(new Error('edge-tts request failed')),
-    };
+    storageClient.get.mockResolvedValue(undefined);
+    ttsClient.synthesize.mockRejectedValue(new Error('edge-tts request failed'));
 
     // Act / Assert
     await expect(
@@ -81,13 +74,9 @@ describe('getOrGenerateAudio', () => {
       audio: new Blob(['fake-audio']),
       boundaries: [{ text: '你好', offset: 0, duration: 1000 }],
     };
-    const storageClient = {
-      get: vi.fn().mockResolvedValue(undefined),
-      put: vi.fn().mockRejectedValue(new Error('blob upload failed')),
-    };
-    const ttsClient = {
-      synthesize: vi.fn().mockResolvedValue(synthesized),
-    };
+    storageClient.get.mockResolvedValue(undefined);
+    storageClient.put.mockRejectedValue(new Error('blob upload failed'));
+    ttsClient.synthesize.mockResolvedValue(synthesized);
 
     // Act / Assert
     await expect(

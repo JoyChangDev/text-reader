@@ -190,6 +190,33 @@ beforeEach(() => {
   <a href="../app/api/audio-chunks/progressiveGeneration.test.js">progressiveGeneration.test.js</a>。
 </p>
 
+<h2>用 <code>beforeEach</code> 收斂重複的 Arrange</h2>
+<pre><code>describe('getOrGenerateAudio', () => {
+  let storageClient;
+  let ttsClient;
+
+  beforeEach(() => {
+    storageClient = { get: vi.fn(), put: vi.fn() }; // 每個測試都重建，全新乾淨
+    ttsClient = { synthesize: vi.fn() };
+  });
+
+  test('...', async () => {
+    storageClient.get.mockResolvedValue(cachedResult); // 只設定這個測試在意的行為
+    // ...
+  });
+});
+</code></pre>
+<ul>
+  <li><code>beforeEach(fn)</code> — 同一個 <code>describe</code> 裡，每個 <code>test</code> 開始前都重新執行一次 <code>fn</code>。</li>
+  <li>共用變數要用 <code>let</code> 在 <code>describe</code> 區塊宣告、在 <code>beforeEach</code> 裡賦值——直接 <code>const</code> 只會建立一次，呼叫紀錄會跨測試殘留。</li>
+</ul>
+<p class="sidenote">
+  <strong>跟 <code>vi.hoisted()</code>（Lesson 0007）的差別：</strong>
+  那次的 <code>beforeEach</code> 是清空整份檔案共用、只建立一次的狀態；今天的 <code>beforeEach</code> 是每個測試都重建全新的假物件——同一個 hook，方向相反。
+  來自 <a href="../lessons/0008-shared-setup-beforeeach.html">Lesson 0008</a>，範例見
+  <a href="../app/_lib/audioGenerationService.test.js">audioGenerationService.test.js</a>。
+</p>
+
 <h2>查詢優先順序（RTL）</h2>
 <p>依照 <a href="https://testing-library.com/docs/queries/about/#priority" target="_blank" rel="noopener">Testing Library 官方優先順序</a>，由上到下優先使用：</p>
 <ol>
@@ -201,7 +228,7 @@ beforeEach(() => {
 <p class="sidenote">來自 <a href="../lessons/0006-rtl-render-screen-queries.html">Lesson 0006</a>。</p>
 
 <div class="nav-footer">
-  <span>← <a href="../lessons/0007-vi-hoisted-shared-state.html">回到 Lesson 0007</a></span>
+  <span>← <a href="../lessons/0008-shared-setup-beforeeach.html">回到 Lesson 0008</a></span>
   <span><a href="../MISSION.md">MISSION.md</a></span>
 </div>
 </body>

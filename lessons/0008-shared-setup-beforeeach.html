@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lesson 0008 · 用 beforeEach 收斂重複的 Arrange</title>
+<link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+
+<p class="kicker">Lesson 0008 · Shared Setup</p>
+<h1>用 <code>beforeEach</code> 收斂重複的 Arrange</h1>
+<p class="subtitle">
+  目標：<a href="../app/_lib/audioGenerationService.test.js">audioGenerationService.test.js</a> 裡的四個測試,
+  每一個都手刻一次幾乎一樣的 <code>storageClient</code>/<code>ttsClient</code> 假物件。今天學會用
+  <code>beforeEach</code> 把「每個測試都要有」的部分收斂起來,只留下「這個測試特別在意」的部分,
+  然後親手把這個重構套用到真正的檔案上。
+</p>
+
+<blockquote>
+  主要參考資料：<a href="https://vitest.dev/api/#beforeeach" target="_blank" rel="noopener">Vitest — Test Hooks API 文件（<code>beforeEach</code>）</a>（官方文件）。
+</blockquote>
+
+<h2>先看看現在重複了什麼</h2>
+<p>
+  <a href="../app/_lib/audioGenerationService.test.js">audioGenerationService.test.js</a> 目前有四個測試,
+  每一個的 Arrange 開頭都長這樣:
+</p>
+<pre><code>const storageClient = {
+  get: vi.fn()<em>/* ...每個測試不同的行為 */</em>,
+  put: vi.fn()<em>/* ...每個測試不同的行為 */</em>,
+};
+const ttsClient = {
+  synthesize: vi.fn()<em>/* ...每個測試不同的行為 */</em>,
+};</code></pre>
+<p>
+  還有呼叫 <code>getOrGenerateAudio</code> 時傳的第二個參數,四個測試裡完全一模一樣:
+</p>
+<pre><code>{ bookId: 'book-1', chunkIndex: 0, voice: 'zh-TW-default', text: '你好。' }</code></pre>
+<p>
+  真正因測試而異的,其實只有 <code>storageClient.get</code>/<code>put</code> 和
+  <code>ttsClient.synthesize</code> 各自 resolve/reject 什麼值——物件的骨架本身每次都一樣。
+</p>
+
+<h2>問題出在哪</h2>
+<p>
+  骨架重複本身不會讓測試變紅,但代價是「改動成本」:如果 <code>getOrGenerateAudio</code> 的介面以後
+  多一個依賴(例如加一個 <code>logger</code>),就要記得去四個地方各補一次
+  <code>logger: vi.fn()</code>——漏改一個,那個測試看起來還是能跑,只是不小心少測到了新行為。
+  更麻煩的是,讀測試的人得先在腦中「消掉」四份幾乎相同的樣板,才找得到這個測試真正在斷言什麼。
+</p>
+
+<h2><code>beforeEach</code>:每個測試之前都先跑一次</h2>
+<p>
+  Vitest 的 <code>beforeEach(fn)</code> 註冊一個 hook,在<strong>同一個 <code>describe</code> 區塊裡,
+  每一個 <code>test</code> 開始前都會重新執行一次</strong> <code>fn</code>。把共用的骨架搬進去,
+  兩個測試改寫後長這樣:
+</p>
+<pre><code>import { beforeEach, describe, expect, test, vi } from 'vitest';
+
+describe('getOrGenerateAudio', () => {
+  let storageClient;
+  let ttsClient;
+
+  beforeEach(() => {
+    storageClient = { get: vi.fn(), put: vi.fn() };
+    ttsClient = { synthesize: vi.fn() };
+  });
+
+  test('returns the cached result without calling ttsClient on a cache hit', async () => {
+    // Arrange：只設定這個測試在意的行為
+    const cachedResult = { url: 'https://blob.example/cached.mp3', boundaries: [] };
+    storageClient.get.mockResolvedValue(cachedResult);
+
+    // Act
+    const result = await getOrGenerateAudio(
+      { storageClient, ttsClient },
+      { bookId: 'book-1', chunkIndex: 0, voice: 'zh-TW-default', text: '你好。' },
+    );
+
+    // Assert
+    expect(result).toEqual(cachedResult);
+    expect(ttsClient.synthesize).not.toHaveBeenCalled();
+  });
+
+  test('calls ttsClient and persists the result on a cache miss', async () => {
+    // Arrange
+    const synthesized = {
+      audio: new Blob(['fake-audio']),
+      boundaries: [{ text: '你好', offset: 0, duration: 1000 }],
+    };
+    const persisted = { url: 'https://blob.example/generated.mp3', boundaries: synthesized.boundaries };
+    storageClient.get.mockResolvedValue(undefined);
+    storageClient.put.mockResolvedValue(persisted);
+    ttsClient.synthesize.mockResolvedValue(synthesized);
+
+    // Act
+    const result = await getOrGenerateAudio(
+      { storageClient, ttsClient },
+      { bookId: 'book-1', chunkIndex: 0, voice: 'zh-TW-default', text: '你好。' },
+    );
+
+    // Assert
+    expect(result).toEqual(persisted);
+    expect(ttsClient.synthesize).toHaveBeenCalledWith('你好。', 'zh-TW-default');
+    expect(storageClient.put).toHaveBeenCalledWith('book-1/0/zh-TW-default', synthesized);
+  });
+});</code></pre>
+<p>
+  每個測試的 Arrange 現在只剩下「跟其他三個測試不一樣的那一行」,一眼就看得出這個測試在測什麼。
+</p>
+
+<h2>為什麼是 <code>let</code> + <code>beforeEach</code> 賦值,不是直接 <code>const</code></h2>
+<p>
+  <code>storageClient</code>/<code>ttsClient</code> 要在 <code>describe</code> 區塊裡宣告(這樣每個
+  <code>test</code> 才讀得到同一個名字),但**值**要在每個測試開始前重新建立——所以宣告
+  (<code>let storageClient;</code>)跟賦值(<code>beforeEach</code> 裡的 <code>storageClient = {...}</code>)
+  是分開兩步。如果直接在 <code>describe</code> 區塊裡用 <code>const storageClient = {...}</code>,
+  那份物件就只會建立<strong>一次</strong>,四個測試共用同一個 <code>vi.fn()</code>——第一個測試呼叫過
+  <code>storageClient.get</code> 之後,呼叫紀錄會留到第二個測試,污染 <code>toHaveBeenCalledWith</code> 之類的斷言。
+</p>
+
+<h2>跟 Lesson 0007 的 <code>vi.hoisted()</code> 對照</h2>
+<p>
+  <a href="0007-vi-hoisted-shared-state.html">Lesson 0007</a> 的 <code>blobStore</code>/<code>synthesizeCalls</code>
+  也是「跨測試共用」的狀態,但那次是刻意讓它們在整份檔案只建立<strong>一次</strong>(模擬一個持續存在的雲端儲存空間),
+  所以才需要 <code>beforeEach</code> 手動呼叫 <code>blobStore.clear()</code> 去清空。今天的
+  <code>storageClient</code>/<code>ttsClient</code> 目的完全相反:每個測試都該是<strong>全新、乾淨</strong>的假物件,
+  所以 <code>beforeEach</code> 裡做的是重新<code>建立</code>整個物件,而不是清空舊的——兩種寫法都用了
+  <code>beforeEach</code>,但解決的是相反方向的問題。
+</p>
+
+<table>
+  <tr><td><strong>Lesson 0007 · <code>vi.hoisted()</code></strong></td><td>狀態建立一次、跨測試共用 → <code>beforeEach</code> 負責清空</td></tr>
+  <tr><td><strong>今天 · <code>beforeEach</code> 賦值</strong></td><td>狀態每個測試都要全新 → <code>beforeEach</code> 負責重建</td></tr>
+</table>
+
+<div class="win-box">
+  <p class="kicker">動手做 · 今天的目標</p>
+  <p>
+    把這個重構真正套用到
+    <a href="../app/_lib/audioGenerationService.test.js">audioGenerationService.test.js</a> 上,
+    四個測試全部改完,不是只改上面示範的兩個。
+  </p>
+  <p><strong>步驟：</strong></p>
+  <ol>
+    <li>開監看視窗：<code>npm run test:watch audioGenerationService</code>。</li>
+    <li>從 <code>vitest</code> 多 import 一個 <code>beforeEach</code>。</li>
+    <li>在 <code>describe('getOrGenerateAudio', ...)</code> 區塊最上面宣告
+      <code>let storageClient;</code> 和 <code>let ttsClient;</code>,接著加上本課示範的
+      <code>beforeEach</code>,建立兩個乾淨的假物件。</li>
+    <li>把四個測試裡重複的 <code>const storageClient = {...}</code>/<code>const ttsClient = {...}</code>
+      都刪掉,改成直接對共用變數呼叫 <code>.mockResolvedValue(...)</code>/<code>.mockRejectedValue(...)</code>。</li>
+    <li>剩下兩個「失敗路徑」的測試(<code>propagates the error...</code> 開頭那兩個)也要照著改——它們一樣有
+      重複的假物件骨架。</li>
+    <li>存檔確認四個測試都還是綠的——這個重構不改變任何斷言,只是把重複的 Arrange 收斂掉。</li>
+  </ol>
+  <p class="sidenote">
+    這個重構會留在專案裡,讓 <code>audioGenerationService.test.js</code> 之後更容易讀、更容易加新測試——不是丟掉的練習題。
+    完成後記得自己 commit,跟過去幾課一樣。
+  </p>
+</div>
+
+<h2>小測驗</h2>
+
+<div class="quiz">
+  <p class="quiz-q">1. <code>beforeEach</code> 註冊的 <code>fn</code> 什麼時候會執行?</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">整個測試檔案開始前,只執行一次</button>
+    <button class="quiz-choice" data-correct="true">同一個 describe 裡,每個 test 開始前都重新執行一次</button>
+    <button class="quiz-choice" data-correct="false">每個 test 結束後,執行一次做清理</button>
+    <button class="quiz-choice" data-correct="false">只有第一個 test 開始前執行一次</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="沒錯——這正是它跟「檔案層級只建立一次」的 vi.hoisted 狀態的關鍵差異。"
+     data-incorrect-feedback="再想想:如果它只執行一次,後面的測試要怎麼各自拿到「乾淨」的假物件?"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">2. 為什麼要用 <code>let storageClient;</code> 搭配 <code>beforeEach</code> 賦值,而不是在 describe 區塊裡直接 <code>const storageClient = {...}</code>?</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">因為 Vitest 規定 describe 區塊裡不能用 const</button>
+    <button class="quiz-choice" data-correct="true">直接 const 只會建立一次,呼叫紀錄會跨測試殘留、污染斷言</button>
+    <button class="quiz-choice" data-correct="false">因為 let 執行速度比 const 快</button>
+    <button class="quiz-choice" data-correct="false">因為 vi.fn() 只能賦值給用 let 宣告的變數</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="正確——const 版本會讓四個測試共用同一個 vi.fn(),呼叫次數/參數會互相污染。"
+     data-incorrect-feedback="再想想:如果四個測試共用同一個從沒重建過的 vi.fn(),toHaveBeenCalledWith 這類斷言會發生什麼事?"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">3. 今天的 <code>beforeEach</code> 跟 Lesson 0007 <code>vi.hoisted()</code> 裡的 <code>beforeEach</code>,兩者用途有什麼不同?</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">完全一樣,只是用在不同檔案裡</button>
+    <button class="quiz-choice" data-correct="true">今天是重建全新假物件；Lesson 0007 是清空同一份、只建立一次的共用狀態</button>
+    <button class="quiz-choice" data-correct="false">今天不需要 beforeEach,只有 vi.hoisted 才需要</button>
+    <button class="quiz-choice" data-correct="false">Lesson 0007 的 beforeEach 只在第一個測試前執行</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="沒錯——同一個 hook,方向相反:一個負責「重建乾淨狀態」,一個負責「清空持續存在的狀態」。"
+     data-incorrect-feedback="再想想:vi.hoisted 的 blobStore 是不是整份檔案共用、只建立一次?今天的 storageClient 呢?"></p>
+</div>
+
+<p class="ask-agent">
+  卡住了、或想知道「為什麼」不只「怎麼做」?隨時回來問我——我是你的教學助教,
+  可以解釋任何看不懂的地方,或幫你 review 你寫的測試。
+</p>
+
+<div class="nav-footer">
+  <span>← <a href="0007-vi-hoisted-shared-state.html">Lesson 0007</a> ・ <a href="../reference/vitest-basics.html">Vitest 基礎速查表</a>（已更新今天學到的 beforeEach）</span>
+  <span><a href="../MISSION.md">MISSION.md</a></span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>
