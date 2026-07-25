@@ -18,6 +18,10 @@
   Official docs for replacing an entire module (vs. dependency-injection fakes). Use for: testing code that imports its dependency directly, like the `audio-chunks` API route.
 - [Vitest — `expect().rejects`](https://vitest.dev/api/expect.html#rejects)
   Official docs for unwrapping a rejected Promise so a matcher like `toThrow` can assert on it. Use for: testing that an `async` function's failure path propagates correctly, as in `audioGenerationService`'s generation-failure test.
+- [Vitest — `vi.hoisted()`](https://vitest.dev/api/vi.html#vi-hoisted)
+  Official docs for the API that lets a `vi.mock()` factory safely reference a shared variable declared elsewhere in the file, by hoisting that declaration alongside `vi.mock()` itself. Use for: mocking two collaborating modules (e.g. `@vercel/blob` and `edge-tts-universal`) that need to read/write the same in-memory fake state, as in `progressiveGeneration.test.js`.
+- [Vitest — Test Hooks API (`beforeEach`)](https://vitest.dev/api/#beforeeach)
+  Official docs for the hook that re-runs setup before every test in a `describe` block. Use for: collapsing near-identical fake-object setup repeated across tests into one place, as in `audioGenerationService.test.js`.
 
 ## Wisdom (Communities)
 
@@ -52,6 +56,10 @@
   官方文件，說明如何換掉整個模組（相對於依賴注入的假物件）。用途：測試直接 import 依賴的程式碼，例如 `audio-chunks` 這個 API route。
 - [Vitest — `expect().rejects`](https://vitest.dev/api/expect.html#rejects)
   官方文件，說明如何「打開」一個 reject 的 Promise，讓 `toThrow` 這類 matcher 可以斷言它。用途：測試 `async` 函式的失敗路徑有沒有正確傳出去，例如 `audioGenerationService` 的生成失敗測試。
+- [Vitest — `vi.hoisted()`](https://vitest.dev/api/vi.html#vi-hoisted)
+  官方文件，說明如何讓 `vi.mock()` 的 factory 安全讀寫檔案裡其他地方宣告的共用變數——把那個宣告跟 `vi.mock()` 一起提升。用途：同時 mock 兩個需要共用同一份假資料的模組（例如 `@vercel/blob` 和 `edge-tts-universal`），如 `progressiveGeneration.test.js` 所做。
+- [Vitest — Test Hooks API（`beforeEach`）](https://vitest.dev/api/#beforeeach)
+  官方文件，說明這個 hook 如何在 `describe` 區塊裡的每個測試前重新執行一次設定。用途：把測試之間重複、幾乎一樣的假物件建立收斂成一處，如 `audioGenerationService.test.js` 所做。
 
 ## 智慧類（社群）
 

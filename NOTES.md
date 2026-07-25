@@ -7,6 +7,8 @@
 - Will sometimes name the exact ticket/topic to teach next (e.g. "/teach ticket 04") rather than leaving it to inferred ZPD - when given, honor it directly instead of picking a different next-topic.
 - 2026-07-18: confirmed both outstanding exercises done and merged - Lesson 0002's empty-array `chunkText` test (commit `998df89`) and Lesson 0003's cache-miss `audioGenerationService` test (on top of `b6c8b61`). See [[0002-chunktext-empty-input-recall]] and [[0003-test-todo-callback-gotcha]].
 - 2026-07-23: Lesson 0006 exercise (`toBeEnabled` on both Home buttons) done and green, not yet committed. Prefers real code over toy examples for the async findBy/waitFor lesson (last untaught mission item) - explicitly chose to wait until ticket 06 (upload/playback UI) exists rather than teach it against a throwaway example now. Don't propose that lesson again until ticket 06 lands.
+- 2026-07-25: Lesson 0007 exercise (two-book cache-key isolation test in `progressiveGeneration.test.js`) done and green; committed as `90eb069`. See [[0005-vi-hoisted-cache-key-recall]]. Ticket 05 closed (`530d4ac`) since last session but ticket 06 (upload/playback UI) is still `ready-for-agent` - the async findBy/waitFor lesson is still blocked, same gap as 2026-07-23.
+- 2026-07-25 (same session): taught Lesson 0008 (`beforeEach` shared setup) as a bridge lesson while waiting on ticket 06 - Joy explicitly chose "bridge lesson now" over waiting/reviewing when asked. Exercise (refactor all 4 `audioGenerationService.test.js` tests) done and green, not yet committed. See [[0006-beforeeach-shared-setup-recall]]. Good bridge-lesson pattern to reuse next time ticket 06 is still blocked: find real duplication/friction in existing passing tests rather than inventing a toy example.
 
 ---
 

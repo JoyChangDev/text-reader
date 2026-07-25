@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lesson 0007 · 讓 mock factory 讀到共用變數：vi.hoisted()</title>
+<link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+
+<p class="kicker">Lesson 0007 · Shared Mutable Mock State</p>
+<h1>當兩個 <code>vi.mock()</code> 要共用同一份假資料：<code>vi.hoisted()</code></h1>
+<p class="subtitle">
+  目標：看懂 <strong>ticket 05</strong>（whole-book progressive generation orchestration，commit <code>530d4ac</code>）
+  新增的 <a href="../app/api/audio-chunks/progressiveGeneration.test.js">progressiveGeneration.test.js</a>
+  裡為什麼要用 <code>vi.hoisted()</code>，然後獨立幫這個整合測試補一個還沒涵蓋的情境。
+</p>
+
+<blockquote>
+  主要參考資料：<a href="https://vitest.dev/api/vi.html#vi-hoisted" target="_blank" rel="noopener">Vitest — <code>vi.hoisted()</code> API 文件</a>（官方文件）。
+  這篇說明為什麼需要它、它怎麼跟 <code>vi.mock()</code> 的提升時機配合。
+</blockquote>
+
+<h2>先回憶一下 Lesson 0004 的提升（hoisting）</h2>
+<p>
+  <a href="0004-mocking-whole-modules.html">Lesson 0004</a> 提過：<code>vi.mock('路徑', factory)</code>
+  會被 Vitest 提升到檔案最上面，比任何 <code>import</code> 都早執行。當時的例子裡，<code>factory</code>
+  自己造一個全新的假物件，不需要用到檔案裡其他地方宣告的變數：
+</p>
+<pre><code>vi.mock('@/app/_lib/audioGenerationService', () => ({
+  generateAudioForChunk: vi.fn(),
+}));</code></pre>
+<p>
+  但 <a href="../app/api/audio-chunks/progressiveGeneration.test.js">progressiveGeneration.test.js</a> 要做的事更複雜：
+  它要假造<strong>兩個</strong>外部依賴（<code>@vercel/blob</code> 和 <code>edge-tts-universal</code>），
+  而且這兩個假模組要共用同一份「假資料庫」——一個記錄已上傳檔案的 <code>Map</code>，一個記錄呼叫過幾次
+  <code>synthesize</code>——這樣測試才能斷言「第二次呼叫沒有重新產生語音」。
+</p>
+
+<h2>直接宣告變數會壞掉</h2>
+<p>直覺的寫法可能是這樣：</p>
+<pre><code>// ❌ 這樣寫會噴 ReferenceError
+const blobStore = new Map();
+
+vi.mock('@vercel/blob', () => ({
+  async get(pathname) {
+    return blobStore.has(pathname) ? { stream: blobStore.get(pathname) } : null;
+  },
+  // ...
+}));</code></pre>
+<p>
+  問題出在提升的時機差一步：<code>vi.mock()</code> 整句（包括它的 <code>factory</code>）會被搬到檔案最上面，
+  但 <code>const blobStore = new Map()</code> 是一般的變數宣告，<strong>不會</strong>被提升——它還留在原本的位置。
+  等 Vitest 執行到被搬到最上面的 <code>factory</code> 時,<code>blobStore</code> 這一行根本還沒跑到,
+  變數只是宣告了但還沒被賦值（JS 稱為 <em>temporal dead zone</em>）。結果就是
+  <code>ReferenceError: Cannot access 'blobStore' before initialization</code>。
+</p>
+<p class="sidenote">
+  這跟 <a href="0003-fakes-at-a-boundary.html">Lesson 0003</a>/<a href="0005-async-rejection-matchers.html">Lesson 0005</a>
+  提過的陷阱是同一個家族：程式碼「看起來」該有的東西都在，但執行順序跟你想的不一樣。
+</p>
+
+<h2>解法：讓變數宣告跟著一起被提升</h2>
+<p>
+  <code>vi.hoisted(factory)</code> 做的事很單純：把 <code>factory</code> 回傳的東西，
+  提早到跟 <code>vi.mock()</code> 同一個時間點準備好。<code>progressiveGeneration.test.js</code> 開頭：
+</p>
+<pre><code>const { blobStore, synthesizeCalls } = vi.hoisted(() => ({
+  blobStore: new Map(),
+  synthesizeCalls: [],
+}));
+
+vi.mock('@vercel/blob', () => ({
+  async get(pathname) {
+    if (!blobStore.has(pathname)) return null;
+    return { stream: blobStore.get(pathname) };
+  },
+  async put(pathname, data) {
+    blobStore.set(pathname, typeof data === 'string' ? data : await data.text());
+    return { url: `https://blob.test/${pathname}` };
+  },
+}));
+
+vi.mock('edge-tts-universal', () => ({
+  EdgeTTS: class {
+    constructor(text) { this.text = text; }
+    async synthesize() {
+      synthesizeCalls.push({ text: this.text });
+      return { audio: new Blob([`audio-for:${this.text}`]), subtitle: [{ text: this.text }] };
+    }
+  },
+}));</code></pre>
+<p>
+  因為 <code>vi.hoisted()</code> 本身也會被提升到最上面（而且比一般的 <code>vi.mock()</code> 更早），
+  等到兩個 <code>vi.mock()</code> 的 <code>factory</code> 執行時，<code>blobStore</code> 和
+  <code>synthesizeCalls</code> 已經是「真正初始化過」的 <code>Map</code> 和陣列——兩個 mock 的
+  <code>factory</code> 讀寫的是同一份物件，這正是它們需要共用「假資料庫」的關鍵。
+</p>
+
+<table>
+  <tr><td><strong>Lesson 0004 · <code>vi.mock()</code> 單獨用</strong></td><td>factory 自己造新假物件，不需要讀外部變數</td></tr>
+  <tr><td><strong>今天 · <code>vi.hoisted()</code> + <code>vi.mock()</code></strong></td><td>factory 需要讀寫檔案裡其他地方宣告的共用變數 → 那個變數也要提升</td></tr>
+</table>
+
+<h2>為什麼 <code>beforeEach</code> 要清空這兩個共用變數</h2>
+<p>
+  <code>blobStore</code> 和 <code>synthesizeCalls</code> 是整個測試檔案共用、只建立<strong>一次</strong>的
+  <code>Map</code>/陣列——不會像 <a href="0004-mocking-whole-modules.html">Lesson 0004</a> 的
+  <code>vi.fn()</code> 那樣有 <code>mockResolvedValueOnce</code> 幫你限定只影響一次呼叫。如果不清空,
+  前一個測試存進 <code>blobStore</code> 的假錄音檔,會被下一個測試誤判成「快取已經有了」:
+</p>
+<pre><code>beforeEach(() => {
+  blobStore.clear();
+  synthesizeCalls.length = 0;
+});</code></pre>
+<p class="sidenote">
+  跟 Lesson 0004 的 <code>mockResolvedValueOnce</code> 是同一種問題（共用狀態不重設,會漏到下一個測試),
+  只是這次共用的是原始的 <code>Map</code>/陣列,不是 <code>vi.fn()</code> 的回傳值隊列,所以解法是
+  <code>beforeEach</code> 手動清空,而不是 <code>Once</code> 版本的方法。
+</p>
+
+<div class="win-box">
+  <p class="kicker">動手做 · 今天的目標</p>
+  <p>
+    現在的三個測試都只用<strong>一本書</strong>驗證快取行為,從來沒驗證過:如果<strong>兩本不同的書</strong>
+    剛好在同一個 <code>chunkIndex</code>(例如都是 <code>0</code>)用一模一樣的文字,會不會被誤判成同一筆快取?
+    這其實是在鎖住 <a href="../app/_lib/audioGenerationService.js">audioGenerationService.js</a> 的快取
+    key 是 <code>`${bookId}/${chunkIndex}/${voice}`</code>,而不是只有 <code>chunkIndex</code>。
+  </p>
+  <p><strong>步驟:</strong></p>
+  <ol>
+    <li>開監看視窗:<code>npm run test:watch progressiveGeneration</code>。</li>
+    <li>在 <a href="../app/api/audio-chunks/progressiveGeneration.test.js">progressiveGeneration.test.js</a>
+      的 <code>describe</code> 區塊裡新增一個測試,名字取類似
+      <code>'two different books do not share a cached chunk at the same index'</code>。</li>
+    <li>Arrange:一段固定的文字(例如 <code>const text = '這是唯一的一句話。';</code>),用
+      <code>postChunks</code> 拿到 <code>chunks</code>。</li>
+    <li>Act:對 <code>bookId: 'book-x'</code> 呼叫一次 <code>postAudioChunk({ bookId: 'book-x', chunkIndex: 0, text: chunks[0] })</code>,
+      再對 <code>bookId: 'book-y'</code> 呼叫一次<strong>一模一樣的</strong> <code>chunkIndex: 0</code>、
+      <code>text: chunks[0]</code>。</li>
+    <li>Assert:<code>synthesizeCalls</code> 長度是 <code>2</code>(兩本書各自觸發一次真的生成,
+      不是第二次直接命中第一本書的快取)。</li>
+    <li>存檔確認測試變綠——不需要改 <code>audioGenerationService.js</code>,它的 cache key 本來就有帶
+      <code>bookId</code>,今天只是把這條行為鎖進測試套件。</li>
+  </ol>
+  <p class="sidenote">
+    這個測試會留在專案裡,跟其他三個一起保護 <code>progressiveGeneration</code> 的快取正確性——不是丟掉的練習題。
+    完成後記得自己 commit,跟過去幾課一樣。
+  </p>
+</div>
+
+<h2>小測驗</h2>
+
+<div class="quiz">
+  <p class="quiz-q">1. 為什麼在 <code>vi.mock()</code> 的 <code>factory</code> 裡直接讀取一個上面用 <code>const</code> 宣告的一般變數會噴錯?</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">因為 <code>vi.mock()</code> 不允許讀取任何外部變數</button>
+    <button class="quiz-choice" data-correct="true">因為 <code>vi.mock()</code> 被提升到最上面,但一般的 <code>const</code> 宣告沒有跟著提升</button>
+    <button class="quiz-choice" data-correct="false">因為 <code>const</code> 宣告的變數永遠無法被其他函式讀取</button>
+    <button class="quiz-choice" data-correct="false">因為兩個 <code>vi.mock()</code> 之間不能共用任何東西</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="沒錯——factory 執行的時間點比 const 那一行早,變數還在 temporal dead zone,自然讀不到。"
+     data-incorrect-feedback="再想想:Lesson 0004 提過 vi.mock() 會被提升,但一般的變數宣告會不會也一起被提升?"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">2. <code>vi.hoisted(factory)</code> 實際解決的問題是什麼?</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">讓測試檔案的執行速度變得更快</button>
+    <button class="quiz-choice" data-correct="true">讓 factory 回傳的東西提早準備好,跟 vi.mock() 同一個時間點就緒</button>
+    <button class="quiz-choice" data-correct="false">自動幫每個測試重設所有 vi.fn() 的呼叫紀錄</button>
+    <button class="quiz-choice" data-correct="false">讓多個測試檔案之間可以共用同一份假物件</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="正確——它讓裡面的宣告也被提升到跟 vi.mock() 同一批,factory 執行時變數已經初始化好了。"
+     data-incorrect-feedback="再想想:今天的問題不是「慢」,而是變數「還沒準備好」——vi.hoisted 解決的是哪一半?"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">3. 為什麼 <code>beforeEach</code> 要手動清空 <code>blobStore</code> 和 <code>synthesizeCalls</code>?</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">因為 Vitest 規定每個測試檔案都要有 beforeEach</button>
+    <button class="quiz-choice" data-correct="true">因為它們是整份檔案共用一次建立的可變狀態,不清空會留到下一個測試</button>
+    <button class="quiz-choice" data-correct="false">因為 <code>vi.hoisted()</code> 每次測試都會重新執行一次</button>
+    <button class="quiz-choice" data-correct="false">因為清空可以讓 <code>@vercel/blob</code> 的 mock 執行得更快</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="沒錯——跟 Lesson 0004 的 mockResolvedValueOnce 是同一種共用狀態問題,只是這裡要手動清空。"
+     data-incorrect-feedback="再想想:blobStore 是在檔案載入時建立「一次」,還是每個測試都重新建立一次?"></p>
+</div>
+
+<p class="ask-agent">
+  卡住了、或想知道「為什麼」不只「怎麼做」?隨時回來問我——我是你的教學助教,
+  可以解釋任何看不懂的地方,或幫你 review 你寫的測試。
+</p>
+
+<div class="nav-footer">
+  <span>← <a href="0006-rtl-render-screen-queries.html">Lesson 0006</a> ・ <a href="../reference/vitest-basics.html">Vitest 基礎速查表</a>(已更新今天學到的 vi.hoisted)</span>
+  <span><a href="../MISSION.md">MISSION.md</a></span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>
