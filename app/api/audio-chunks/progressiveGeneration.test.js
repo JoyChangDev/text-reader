@@ -118,4 +118,17 @@ describe('progressive generation orchestration', () => {
     expect(secondResult).toEqual(firstResult);
     expect(synthesizeCalls).toHaveLength(1);
   });
+
+  test('two different books do not share a cached chunk at the same index', async () => {
+    const text = '這是唯一的一句話。';
+    const { chunks } = await (await postChunks(jsonRequest({ text }))).json();
+
+    const firstId = 'book-x';
+    await postAudioChunk(jsonRequest({ bookId: firstId, chunkIndex: 0, text: chunks[0] }));
+
+    const secondId = 'book-y';
+    await postAudioChunk(jsonRequest({ bookId: secondId, chunkIndex: 0, text: chunks[0] }));
+
+    expect(synthesizeCalls).toHaveLength(2);
+  });
 });
