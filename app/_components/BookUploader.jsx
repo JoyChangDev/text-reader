@@ -27,7 +27,7 @@ export default function BookUploader({ onReady }) {
       }
 
       const { chunks } = await response.json();
-      onReady({ bookId: crypto.randomUUID(), chunks });
+      onReady({ bookId: crypto.randomUUID(), chunks, title: file.name });
     } catch {
       setError("Couldn't process that file. Please try again.");
     }

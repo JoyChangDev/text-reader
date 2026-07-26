@@ -96,4 +96,35 @@ describe('AudioPlayer', () => {
     expect(await screen.findByRole('button', { name: /^play$/i })).toBeInTheDocument();
     expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
   });
+
+  test('resumes at a given initialIndex without requesting earlier chunks', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-resume" chunks={chunks} initialIndex={2} />
+      </ChakraProvider>,
+    );
+
+    expect(screen.getByText('Chunk 3 of 4')).toBeInTheDocument();
+
+    // Look-ahead from index 2 (current + 2) covers chunks 2 and 3 only - chunks
+    // 0 and 1 were already heard in an earlier session and are never requested.
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    expect(global.fetch.mock.calls.map(([, init]) => JSON.parse(init.body).chunkIndex)).toEqual([
+      2, 3,
+    ]);
+  });
+
+  test('calls onBackToLibrary when the reader asks to switch books', async () => {
+    const onBackToLibrary = vi.fn();
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-1" chunks={chunks} onBackToLibrary={onBackToLibrary} />
+      </ChakraProvider>,
+    );
+
+    fireEvent.click(screen.getByText(/back to library/i));
+
+    expect(onBackToLibrary).toHaveBeenCalledTimes(1);
+  });
 });

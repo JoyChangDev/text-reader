@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { updateResumeIndex } from './bookLibrary';
 import { chunkFetchPlan } from './chunkFetchPlan';
 
 const LOOKAHEAD = 2;
@@ -10,10 +11,12 @@ const LOOKAHEAD = 2;
 // look-ahead window of upcoming chunks in the background (via /api/audio-chunks)
 // while the current one plays, and advances to the next chunk when the current
 // one finishes. Callers attach `audioRef` to a single <audio> element and its
-// `onEnded` to `handleEnded`.
-export function useBookPlayer({ bookId, chunks }) {
+// `onEnded` to `handleEnded`. `initialIndex` lets a caller resume a book at a
+// previously-saved position (see ticket 07); the current chunk index is kept
+// persisted back to the library as the resume position.
+export function useBookPlayer({ bookId, chunks, initialIndex = 0 }) {
   const [chunkAudio, setChunkAudio] = useState({});
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [wantsToPlay, setWantsToPlay] = useState(false);
   const audioRef = useRef(null);
   const pendingFetchesRef = useRef(new Set());
@@ -84,6 +87,12 @@ export function useBookPlayer({ bookId, chunks }) {
       audio.play();
     }
   }, [isPlaying, currentIndex, currentStatus, currentUrl]);
+
+  // Persist the reading position as it advances, so reopening this book later
+  // (see BookLibrary) resumes here rather than from the start.
+  useEffect(() => {
+    updateResumeIndex(bookId, currentIndex);
+  }, [bookId, currentIndex]);
 
   const handleEnded = useCallback(() => {
     if (currentIndex + 1 >= chunks.length) {
