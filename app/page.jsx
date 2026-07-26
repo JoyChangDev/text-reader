@@ -1,11 +1,15 @@
 'use client';
-import { Button, HStack } from '@chakra-ui/react';
+import { useState } from 'react';
+
+import AudioPlayer from './_components/AudioPlayer';
+import BookUploader from './_components/BookUploader';
 
 export default function Home() {
-  return (
-    <HStack bg="background" color="foreground">
-      <Button>Click me</Button>
-      <Button>Click me</Button>
-    </HStack>
-  );
+  const [book, setBook] = useState(null);
+
+  if (!book) {
+    return <BookUploader onReady={setBook} />;
+  }
+
+  return <AudioPlayer bookId={book.bookId} chunks={book.chunks} />;
 }
