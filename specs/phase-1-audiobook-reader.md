@@ -1,6 +1,6 @@
 # Phase 1 — Text-to-Audiobook Reader (Web App)
 
-_Status: ready-for-agent_
+_Status: done_
 
 ## Problem Statement
 
