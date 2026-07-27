@@ -7,11 +7,12 @@ import { useBookPlayer } from '@/app/_lib/useBookPlayer';
 // Sequential chunk player: plays one chunk at a time while a small look-ahead
 // buffer of upcoming chunks generates in the background (see useBookPlayer).
 export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackToLibrary }) {
-  const { audioRef, currentIndex, isPlaying, chunkAudio, play, pause, handleEnded } = useBookPlayer(
-    { bookId, chunks, initialIndex },
-  );
+  const { audioRef, currentIndex, isPlaying, chunkAudio, play, pause, handleEnded, retryChunk } =
+    useBookPlayer({ bookId, chunks, initialIndex });
 
-  const currentChunkReady = chunkAudio[currentIndex]?.status === 'ready';
+  const currentChunkStatus = chunkAudio[currentIndex]?.status;
+  const currentChunkReady = currentChunkStatus === 'ready';
+  const currentChunkErrored = currentChunkStatus === 'error';
 
   return (
     <VStack bg="background" color="foreground" align="start" gap={2}>
@@ -24,12 +25,19 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
       <HStack>
         {isPlaying ? (
           <Button onClick={pause}>Pause</Button>
+        ) : currentChunkErrored ? (
+          <Button onClick={() => retryChunk(currentIndex)}>Retry</Button>
         ) : (
           <Button onClick={play} disabled={!currentChunkReady}>
             Play
           </Button>
         )}
       </HStack>
+      {currentChunkErrored && (
+        <Text color="danger" role="alert">
+          Couldn&apos;t generate audio for this chunk.
+        </Text>
+      )}
       <audio ref={audioRef} onEnded={handleEnded} data-testid="audio-element" />
     </VStack>
   );

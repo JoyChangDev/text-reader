@@ -116,5 +116,6 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0 }) {
     play,
     pause,
     handleEnded,
+    retryChunk: fetchChunk,
   };
 }

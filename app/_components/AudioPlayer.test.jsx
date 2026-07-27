@@ -92,8 +92,10 @@ describe('AudioPlayer', () => {
 
     // Chunk 1 (fetched ahead of time) came back as an error, not ready - rather
     // than silently stalling with Pause still showing, playback stops signalling
-    // as active so the reader isn't misled. (A visible error/retry is ticket 08.)
-    expect(await screen.findByRole('button', { name: /^play$/i })).toBeInTheDocument();
+    // as active and a visible error + retry control take over (ticket 08).
+    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn't generate audio/i);
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^play$/i })).not.toBeInTheDocument();
     expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
   });
 
@@ -112,6 +114,89 @@ describe('AudioPlayer', () => {
     expect(global.fetch.mock.calls.map(([, init]) => JSON.parse(init.body).chunkIndex)).toEqual([
       2, 3,
     ]);
+  });
+
+  test('surfaces a visible error and lets the reader manually retry the current chunk', async () => {
+    let chunk0Attempts = 0;
+    global.fetch = vi.fn(async (_url, { body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      if (chunkIndex === 0) {
+        chunk0Attempts += 1;
+        if (chunk0Attempts === 1) {
+          return new Response(JSON.stringify({ error: 'boom' }), { status: 502 });
+        }
+      }
+      return new Response(
+        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
+        { status: 200 },
+      );
+    });
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-retry" chunks={chunks} />
+      </ChakraProvider>,
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn't generate audio/i);
+    const retryButton = screen.getByRole('button', { name: /retry/i });
+    // No misleading disabled "Play" button alongside the error.
+    expect(screen.queryByRole('button', { name: /^play$/i })).not.toBeInTheDocument();
+
+    fireEvent.click(retryButton);
+
+    await waitFor(() => expect(chunk0Attempts).toBe(2));
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(await screen.findByRole('button', { name: /^play$/i })).toBeEnabled();
+  });
+
+  test('a failed look-ahead chunk does not block unrelated cached chunks, and retrying it resumes playback without losing position', async () => {
+    const threeChunks = ['第一段。', '第二段。', '第三段。'];
+    let chunk1Attempts = 0;
+    global.fetch = vi.fn(async (_url, { body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      if (chunkIndex === 1) {
+        chunk1Attempts += 1;
+        if (chunk1Attempts === 1) {
+          return new Response(JSON.stringify({ error: 'boom' }), { status: 502 });
+        }
+      }
+      return new Response(
+        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
+        { status: 200 },
+      );
+    });
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-retry-2" chunks={threeChunks} />
+      </ChakraProvider>,
+    );
+
+    // Chunk 2, unrelated to the chunk-1 failure, still generated in the background.
+    await waitFor(() => expect(chunk1Attempts).toBe(1));
+    expect(global.fetch.mock.calls.some(([, init]) => JSON.parse(init.body).chunkIndex === 2)).toBe(
+      true,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /play/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /pause/i });
+
+    const audioEl = screen.getByTestId('audio-element');
+    fireEvent.ended(audioEl);
+
+    // Advanced to the errored chunk 1 - position moves forward, error surfaces.
+    expect(screen.getByText('Chunk 2 of 3')).toBeInTheDocument();
+    const retryButton = await screen.findByRole('button', { name: /retry/i });
+
+    fireEvent.click(retryButton);
+
+    await waitFor(() => expect(chunk1Attempts).toBe(2));
+    // Retry succeeded and playback resumed on its own - the reader was already
+    // mid-playback, so a successful retry shouldn't require a second Play click.
+    await waitFor(() => expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('Chunk 2 of 3')).toBeInTheDocument();
   });
 
   test('calls onBackToLibrary when the reader asks to switch books', async () => {
