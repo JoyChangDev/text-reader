@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lesson 0009 · 非同步 UI：findBy 與 waitFor</title>
+<link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+
+<p class="kicker">Lesson 0009 · Async UI</p>
+<h1>非同步 UI：<code>findBy</code> 與 <code>waitFor</code></h1>
+<p class="subtitle">
+  目標：Ticket 06（上傳＋漸進式播放 UI）已經完工，<a href="../app/_components/BookUploader.test.jsx">BookUploader.test.jsx</a>
+  裡已經有真正在用 <code>findBy</code>/<code>waitFor</code> 的測試——只是還沒有一堂課解釋過它們。這是
+  <a href="../MISSION.md">MISSION.md</a> 清單上最後一項還沒教的技能：測試「讀取中 → 成功/失敗」這種非同步 UI 行為。
+  今天看懂這些既有測試，然後親手幫 <code>BookUploader</code> 補一個目前沒人測到的真實情境。
+</p>
+
+<blockquote>
+  主要參考資料：<a href="https://testing-library.com/docs/dom-testing-library/api-async/" target="_blank" rel="noopener">Testing Library — Async 工具官方文件（<code>findBy</code>、<code>waitFor</code>）</a>。
+</blockquote>
+
+<h2>為什麼 <code>getByText</code> 在這裡不夠用</h2>
+<p>
+  <a href="0006-rtl-render-screen-queries.html">Lesson 0006</a> 學過的 <code>getByRole</code>/<code>getByText</code>
+  是<strong>同步</strong>的——呼叫當下畫面上有沒有這個元素，馬上就有答案。但 <code>BookUploader</code> 選了檔案之後,
+  真正的畫面更新要等 <code>fetch('/api/chunks')</code> 這個 Promise resolve 之後才會發生：
+</p>
+<pre><code>fireEvent.change(input, { target: { files: [file] } });
+
+// 這裡執行的當下，fetch 可能還沒 resolve，錯誤訊息可能還沒出現在畫面上
+expect(screen.getByText(/couldn't process/i)).toBeInTheDocument(); // ❌ 常常會失敗</code></pre>
+<p>
+  問題不是邏輯錯了，是<strong>時機</strong>錯了：斷言執行的那一刻,非同步更新可能還沒發生。需要的是一個
+  「先等,等到出現（或等到超時）再判斷」的查詢方式。
+</p>
+
+<h2><code>findBy*</code>：會等待的 <code>getBy*</code></h2>
+<p>
+  這正是專案裡已經存在的這個測試在做的事——<a href="../app/_components/BookUploader.test.jsx">BookUploader.test.jsx</a>
+  「檔案處理失敗時顯示錯誤訊息」那個測試：
+</p>
+<pre><code>test("shows an error message if chunking the uploaded file fails", async () => {
+  global.fetch = vi.fn(
+    async () => new Response(JSON.stringify({ error: 'nope' }), { status: 400 }),
+  );
+  const onReady = vi.fn();
+
+  render(&lt;ChakraProvider&gt;&lt;BookUploader onReady={onReady} /&gt;&lt;/ChakraProvider&gt;);
+
+  const file = makeTxtFile('第一段。');
+  const input = screen.getByLabelText(/upload/i);
+  fireEvent.change(input, { target: { files: [file] } });
+
+  expect(await screen.findByText(/couldn't process/i)).toBeInTheDocument();
+  expect(onReady).not.toHaveBeenCalled();
+});</code></pre>
+<p>
+  <code>screen.findByText(...)</code> 回傳一個 <strong>Promise</strong>：它會每隔一小段時間重新查詢一次畫面,
+  直到找到符合的元素、或超過預設的 1000ms timeout 才放棄（timeout 就會 reject,測試失敗並附上目前的 DOM 內容方便除錯）。
+  前面加 <code>await</code>,拿到的就是真的找到的那個元素——所以才能直接對它呼叫 <code>.toBeInTheDocument()</code>。
+</p>
+<p class="sidenote">
+  <strong>心法：</strong><code>findByText(x)</code> 幾乎等於「不斷重試 <code>getByText(x)</code>,
+  抓到就回傳,逾時就放棄」。<code>find</code> 這個字首本身就是在提示你「這需要花時間找」。
+</p>
+
+<h2><code>waitFor</code>：等一個任意斷言成立</h2>
+<p>
+  <code>findBy*</code> 只能用來等「某個元素出現」。但同一個測試檔案裡,「成功上傳」的那個測試要等的不是畫面上多了什麼元素,
+  而是<strong>一個假函式有沒有被呼叫</strong>——這種情況换用 <code>waitFor</code>：
+</p>
+<pre><code>fireEvent.change(input, { target: { files: [file] } });
+
+await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
+
+const [book] = onReady.mock.calls[0];
+expect(book.chunks).toEqual(['第一段。', '第二段。']);</code></pre>
+<p>
+  <code>waitFor(callback)</code> 會不斷重複執行 <code>callback</code>,只要裡面的 <code>expect(...)</code>
+  還在拋錯就繼續重試,直到它不再拋錯（成功）或超過 timeout（失敗）才停下來。<code>findBy*</code> 其實就是
+  「查詢＋<code>waitFor</code>」包在一起的語法糖,專門處理「等元素出現」這一種情況；碰到「等一個不是『元素存不存在』
+  的條件」（呼叫次數、某個值變了……),就直接用更通用的 <code>waitFor</code>。
+</p>
+
+<table>
+  <tr><td><code>getByText(x)</code></td><td>同步,馬上查;找不到就<strong>拋錯讓測試失敗</strong></td></tr>
+  <tr><td><code>queryByText(x)</code></td><td>同步,馬上查;找不到回傳 <strong><code>null</code></strong>（不拋錯）</td></tr>
+  <tr><td><code>findByText(x)</code></td><td>非同步,重試查詢直到找到或逾時;回傳 <strong>Promise</strong>,要 <code>await</code></td></tr>
+  <tr><td><code>waitFor(cb)</code></td><td>非同步,重試任意 <code>cb</code> 直到不拋錯或逾時;比 <code>findBy*</code> 更通用</td></tr>
+</table>
+
+<h2>陷阱：用 <code>findBy</code> 斷言「東西不見了」會很慢</h2>
+<p>
+  <code>findBy*</code> 是為了「等某個東西出現」設計的,如果拿它去確認「某個東西沒出現」,會等到整個 timeout
+  跑完才判斷失敗（或成功）——白白拖慢測試。確認「沒有」要用同步、找不到只回傳 <code>null</code> 的
+  <code>queryBy*</code>。<a href="../app/_components/AudioPlayer.test.jsx">AudioPlayer.test.jsx</a>
+  裡就有這個對照組——錯誤狀態出現時,順便確認「Play 按鈕沒有跟著顯示」：
+</p>
+<pre><code>expect(await screen.findByRole('alert')).toHaveTextContent(/couldn't generate audio/i);
+// 錯誤已經確定出現了，這裡不需要再「等」——直接同步查詢有沒有
+expect(screen.queryByRole('button', { name: /^play$/i })).not.toBeInTheDocument();</code></pre>
+<p class="sidenote">
+  <strong>經驗法則：</strong>「等它出現」→ <code>findBy</code>；「確認它不在」→ <code>queryBy</code> +
+  <code>.not.toBeInTheDocument()</code>；「等一個不是元素存在與否的條件」→ <code>waitFor</code>。
+</p>
+
+<div class="win-box">
+  <p class="kicker">動手做 · 今天的目標</p>
+  <p>
+    <a href="../app/_components/BookUploader.jsx">BookUploader.jsx</a> 的 <code>processFile</code> 一開始就呼叫
+    <code>setError(null)</code>——也就是說,如果讀者先上傳一個失敗的檔案（畫面出現錯誤訊息）,接著再成功上傳另一個檔案,
+    舊的錯誤訊息應該會消失。這個行為目前<strong>完全沒有測試覆蓋</strong>——去補上它。
+  </p>
+  <p><strong>步驟：</strong></p>
+  <ol>
+    <li>開監看視窗：<code>npm run test:watch BookUploader</code>。</li>
+    <li>在 <code>BookUploader.test.jsx</code> 裡新增一個測試:
+      「<em>成功上傳新檔案後,先前的錯誤訊息會消失</em>」。</li>
+    <li>先讓 <code>global.fetch</code> 回傳失敗（跟現有的錯誤測試一樣的寫法）,上傳一個檔案,用
+      <code>findByText</code> 確認錯誤訊息真的出現了。</li>
+    <li>接著把 <code>global.fetch</code> 換成回傳成功的版本,再對同一個 <code>input</code> 觸發一次
+      <code>fireEvent.change</code>（上傳第二個檔案）。</li>
+    <li>用 <code>waitFor</code> 確認 <code>onReady</code> 這次真的被呼叫了一次——代表第二次上傳成功處理完了。</li>
+    <li>最後用 <code>queryByText</code>（不是 <code>findByText</code>！)確認錯誤訊息已經<strong>不在</strong>畫面上了。</li>
+    <li>存檔確認新測試變綠,其他測試也還是綠的。</li>
+  </ol>
+  <p class="sidenote">
+    這個測試會留在 <code>BookUploader.test.jsx</code> 裡,補上一個真實存在但目前沒人測到的行為——不是丟掉的練習題。
+    完成後記得自己 commit,跟過去幾課一樣。
+  </p>
+</div>
+
+<h2>小測驗</h2>
+
+<div class="quiz">
+  <p class="quiz-q">1. 為什麼「上傳失敗後畫面出現錯誤訊息」這個斷言,不能直接用 <code>getByText</code>?</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">因為 getByText 不支援正規表達式當作查詢條件</button>
+    <button class="quiz-choice" data-correct="true">因為斷言執行當下，錯誤訊息可能還沒等到 fetch 完成而出現</button>
+    <button class="quiz-choice" data-correct="false">因為 getByText 只能用在按鈕上，不能用在文字上</button>
+    <button class="quiz-choice" data-correct="false">因為錯誤訊息用了 role="alert"，一定要搭配 findByRole</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="沒錯——getByText 是同步查詢，執行當下畫面還沒更新完，就會找不到而讓測試失敗。"
+     data-incorrect-feedback="再想想：fetch('/api/chunks') resolve 之前，畫面上會不會出現錯誤訊息？斷言是在哪一個時間點執行的？"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">2. <code>findByText(x)</code> 跟 <code>waitFor(() =&gt; expect(...))</code> 之間，最準確的關係是什麼？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">兩者完全無關，只是剛好都能處理非同步情境</button>
+    <button class="quiz-choice" data-correct="true">findByText 本質上是查詢包在 waitFor 裡，專門處理元素出現的情況</button>
+    <button class="quiz-choice" data-correct="false">waitFor 只能等元素出現，findByText 才能等任意條件</button>
+    <button class="quiz-choice" data-correct="false">findByText 是同步的，waitFor 才是非同步的</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="正確——findBy* 是「查詢 + waitFor」的語法糖，遇到不是「元素存不存在」的條件才需要直接寫 waitFor。"
+     data-incorrect-feedback="再想想：waitFor 接受的是一個任意 callback，findByText 內部要做的事，是不是剛好可以用這個 callback 表達？"></p>
+</div>
+
+<div class="quiz">
+  <p class="quiz-q">3. 要斷言「Play 按鈕目前沒有顯示在畫面上」，為什麼優先選 <code>queryByRole</code> 而不是 <code>findByRole</code>？</p>
+  <div class="quiz-choices">
+    <button class="quiz-choice" data-correct="false">因為 findByRole 找不到元素時會讓整個測試檔案崩潰</button>
+    <button class="quiz-choice" data-correct="true">findByRole 會等到整個 timeout 跑完才判定找不到，白白拖慢測試</button>
+    <button class="quiz-choice" data-correct="false">因為 queryByRole 才支援 name 這個篩選選項</button>
+    <button class="quiz-choice" data-correct="false">因為 findByRole 只能查詢按鈕，不能查詢其他角色</button>
+  </div>
+  <p class="quiz-feedback"
+     data-correct-feedback="沒錯——findBy* 是為了「等出現」設計的，拿去確認「不存在」等於每次都要等滿整個 timeout。"
+     data-incorrect-feedback="再想想：findByRole 找不到元素的時候，它是馬上回報，還是要先重試一陣子才放棄？"></p>
+</div>
+
+<p class="ask-agent">
+  卡住了、或想知道「為什麼」不只「怎麼做」？隨時回來問我——我是你的教學助教，
+  可以解釋任何看不懂的地方，或幫你 review 你寫的測試。
+</p>
+
+<div class="nav-footer">
+  <span>← <a href="0008-shared-setup-beforeeach.html">Lesson 0008</a> ・ <a href="../reference/vitest-basics.html">Vitest 基礎速查表</a>（已更新今天學到的 findBy/waitFor）</span>
+  <span><a href="../MISSION.md">MISSION.md</a></span>
+</div>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

@@ -217,6 +217,27 @@ beforeEach(() => {
   <a href="../app/_lib/audioGenerationService.test.js">audioGenerationService.test.js</a>。
 </p>
 
+<h2>非同步查詢：<code>findBy*</code> 與 <code>waitFor</code></h2>
+<pre><code>// 等一個元素出現（查詢 + waitFor 的語法糖），回傳 Promise
+expect(await screen.findByText(/couldn't process/i)).toBeInTheDocument();
+
+// 等任意條件成立（例如假函式被呼叫），比 findBy* 更通用
+await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
+
+// 確認「不存在」——用同步的 queryBy*，不要用 findBy*（會白等整個 timeout）
+expect(screen.queryByText(/couldn't process/i)).not.toBeInTheDocument();
+</code></pre>
+<table>
+  <tr><td><code>getByText(x)</code></td><td>同步；找不到就拋錯讓測試失敗</td></tr>
+  <tr><td><code>queryByText(x)</code></td><td>同步；找不到回傳 <code>null</code>（不拋錯）——確認「不存在」用這個</td></tr>
+  <tr><td><code>findByText(x)</code></td><td>非同步；重試查詢直到找到或逾時（預設 1000ms）；回傳 Promise，要 <code>await</code></td></tr>
+  <tr><td><code>waitFor(cb)</code></td><td>非同步；重試任意 <code>cb</code> 直到不拋錯或逾時——<code>findBy*</code> 就是拿它包查詢做出來的</td></tr>
+</table>
+<p class="sidenote">
+  來自 <a href="../lessons/0009-async-findby-waitfor.html">Lesson 0009</a>，範例見
+  <a href="../app/_components/BookUploader.test.jsx">BookUploader.test.jsx</a>。
+</p>
+
 <h2>查詢優先順序（RTL）</h2>
 <p>依照 <a href="https://testing-library.com/docs/queries/about/#priority" target="_blank" rel="noopener">Testing Library 官方優先順序</a>，由上到下優先使用：</p>
 <ol>
@@ -228,7 +249,7 @@ beforeEach(() => {
 <p class="sidenote">來自 <a href="../lessons/0006-rtl-render-screen-queries.html">Lesson 0006</a>。</p>
 
 <div class="nav-footer">
-  <span>← <a href="../lessons/0008-shared-setup-beforeeach.html">回到 Lesson 0008</a></span>
+  <span>← <a href="../lessons/0009-async-findby-waitfor.html">回到 Lesson 0009</a></span>
   <span><a href="../MISSION.md">MISSION.md</a></span>
 </div>
 </body>
