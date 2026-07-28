@@ -19,6 +19,10 @@ const baseProps = {
   onSpeedChange: () => {},
   previewingVoice: null,
   onTogglePreviewVoice: () => {},
+  segments: [],
+  totalSeconds: 0,
+  bookPositionSeconds: 0,
+  onSeek: () => {},
 };
 
 function renderBar(overrides = {}) {

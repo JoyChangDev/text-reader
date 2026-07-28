@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { updateResumeIndex } from './bookLibrary';
+import { buildBookTimeline, locateBookOffset, locateSentenceIndexForOffset } from './bookProgress';
 import { chunkFetchPlan } from './chunkFetchPlan';
 import { deriveSentenceSpans } from './sentenceSpans';
 
@@ -20,12 +21,20 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [wantsToPlay, setWantsToPlay] = useState(false);
   const [activeSentenceIndex, setActiveSentenceIndex] = useState(0);
+  const [currentTimeSeconds, setCurrentTimeSeconds] = useState(0);
   const audioRef = useRef(null);
   const pendingFetchesRef = useRef(new Set());
   const loadedIndexRef = useRef(null);
   // A cross-chunk jump-to-sentence request, applied once its target chunk's audio
   // finishes loading (see the "load and play" effect below).
   const pendingSeekRef = useRef(null);
+  // The chunk index a seek was just applied to, so the chunk-change reset effect below
+  // doesn't clobber it back to sentence 0. Needed specifically when a jump's target chunk
+  // is already ready: the load-and-play effect (declared above the reset effect, so it
+  // runs first within the same commit) applies the seek and clears pendingSeekRef in the
+  // same flush the reset effect also reacts to `currentIndex` in - without this ref, the
+  // reset effect would see pendingSeekRef already cleared and undo the seek it just missed.
+  const seekAppliedIndexRef = useRef(null);
 
   const currentStatus = chunkAudio[currentIndex]?.status;
   const currentUrl = chunkAudio[currentIndex]?.url;
@@ -40,9 +49,26 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
     });
   }, [chunkAudio, currentIndex, chunks, currentStatus]);
   // A look-ahead chunk that already failed before its turn arrived should not
-  // keep showing Pause with nothing happening (a visible error/retry is
-  // ticket 08's job, not this one's - this just avoids misleading the reader).
+  // keep showing Pause with nothing happening (a visible error/retry surfaces
+  // instead - see AudioPlayer/PlayerBar).
   const isPlaying = wantsToPlay && currentStatus !== 'error';
+
+  // The whole book's chunk-by-chunk timeline (real durations where generated,
+  // estimated otherwise) backing the whole-book progress scrubber - a pure
+  // re-derivation from cached data, recalculated whenever a chunk finishes
+  // generating (see ticket 08).
+  const timeline = useMemo(
+    () => buildBookTimeline({ chunks, chunkAudio, voice }),
+    [chunks, chunkAudio, voice],
+  );
+
+  // The reader's position expressed in book-level (not chunk-level) seconds, for the
+  // scrubber to display - the start of the current chunk's segment plus how far into
+  // it playback has reached.
+  const bookPositionSeconds = useMemo(
+    () => (timeline.segments[currentIndex]?.startSeconds ?? 0) + currentTimeSeconds,
+    [timeline, currentIndex, currentTimeSeconds],
+  );
 
   const fetchChunk = useCallback(
     async (index) => {
@@ -64,7 +90,7 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
         const data = await response.json();
         setChunkAudio((prev) => ({
           ...prev,
-          [index]: { status: 'ready', url: data.url, boundaries: data.boundaries },
+          [index]: { status: 'ready', url: data.url, boundaries: data.boundaries, voice },
         }));
       } catch {
         setChunkAudio((prev) => ({ ...prev, [index]: { status: 'error' } }));
@@ -95,12 +121,14 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
   // Shared by both seek paths below (same-chunk direct seek, and the cross-chunk
   // pending-seek applied once loading finishes) so there's one place that sets
   // audio.currentTime and the active-sentence highlight together.
-  const applySeek = useCallback((spans, sentenceIndex) => {
+  const applySeek = useCallback((spans, sentenceIndex, chunkIndex) => {
     const audio = audioRef.current;
     const target = spans[sentenceIndex];
     if (!audio || !target) return;
     audio.currentTime = target.startSeconds;
     setActiveSentenceIndex(sentenceIndex);
+    setCurrentTimeSeconds(target.startSeconds);
+    seekAppliedIndexRef.current = chunkIndex;
   }, []);
 
   // Once the current chunk's audio is ready and playback is desired, load and play it.
@@ -117,7 +145,7 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
 
       const pendingSeek = pendingSeekRef.current;
       if (pendingSeek?.chunkIndex === currentIndex) {
-        applySeek(currentSentenceSpans, pendingSeek.sentenceIndex);
+        applySeek(currentSentenceSpans, pendingSeek.sentenceIndex, currentIndex);
         pendingSeekRef.current = null;
       }
 
@@ -143,11 +171,18 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
 
   // A chunk change (natural advance or a cross-chunk jump) starts its sentence
   // highlight at the top; timeupdate corrects it once playback is under way. Skipped
-  // when a jump-to-sentence targeting this same chunk is still pending, so it doesn't
-  // get clobbered back to 0 before (or after) the load-and-play effect above applies it.
+  // when a jump-to-sentence targeting this same chunk is still pending (not yet ready,
+  // see the load-and-play effect above) or was just applied to it in this same effect
+  // flush (already ready when the jump was requested) - either way, this reset would
+  // otherwise clobber it back to 0.
   useEffect(() => {
     if (pendingSeekRef.current?.chunkIndex === currentIndex) return;
+    if (seekAppliedIndexRef.current === currentIndex) {
+      seekAppliedIndexRef.current = null;
+      return;
+    }
     setActiveSentenceIndex(0);
+    setCurrentTimeSeconds(0);
   }, [currentIndex]);
 
   const handleEnded = useCallback(() => {
@@ -169,7 +204,10 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
   // polling timer.
   const handleTimeUpdate = useCallback(() => {
     const audio = audioRef.current;
-    if (!audio || currentSentenceSpans.length === 0) return;
+    if (!audio) return;
+    setCurrentTimeSeconds(audio.currentTime);
+
+    if (currentSentenceSpans.length === 0) return;
 
     const time = audio.currentTime;
     const index = currentSentenceSpans.findIndex(
@@ -198,7 +236,7 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
 
       if (alreadyLoaded && entry?.status === 'ready') {
         pendingSeekRef.current = null;
-        applySeek(currentSentenceSpans, sentenceIndex);
+        applySeek(currentSentenceSpans, sentenceIndex, currentIndex);
         setWantsToPlay(true);
         return;
       }
@@ -215,12 +253,40 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
     [chunkAudio, currentIndex, currentSentenceSpans, applySeek, fetchChunk],
   );
 
+  // Jumps playback to a book-level scrub target (seconds from the start of the whole
+  // book, per `timeline`) - the drop target for the whole-book progress scrubber (see
+  // ticket 08). Resolves the target chunk/offset, then the sentence within that chunk
+  // closest to it, and hands off to seekToSentence above so both the "already generated"
+  // and "not yet generated" paths (including bypassing the sequential look-ahead) are
+  // reused rather than re-implemented here.
+  const seekToBookOffset = useCallback(
+    (targetSeconds) => {
+      const location = locateBookOffset(timeline.segments, targetSeconds);
+      if (!location) return;
+
+      const { chunkIndex, offsetSeconds } = location;
+      const segment = timeline.segments[chunkIndex];
+      const sentenceIndex = locateSentenceIndexForOffset({
+        text: chunks[chunkIndex],
+        boundaries: chunkAudio[chunkIndex]?.boundaries ?? [],
+        offsetSeconds,
+        chunkDurationSeconds: segment.durationSeconds,
+      });
+
+      seekToSentence(chunkIndex, sentenceIndex);
+    },
+    [timeline, chunks, chunkAudio, seekToSentence],
+  );
+
   return {
     audioRef,
     currentIndex,
     isPlaying,
     chunkAudio,
     activeSentenceIndex,
+    timeline,
+    bookPositionSeconds,
+    seekToBookOffset,
     play,
     pause,
     handleEnded,

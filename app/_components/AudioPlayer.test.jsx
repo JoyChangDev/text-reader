@@ -587,3 +587,187 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     expect(await screen.findByTestId('sentence-6-1')).toHaveAttribute('data-active', 'true');
   });
 });
+
+describe('AudioPlayer whole-book progress scrubber', () => {
+  beforeEach(() => {
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.pause = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('shows every chunk as estimated before any has generated, then swaps each to its real duration and recalculates the total as it generates', async () => {
+    const fourChunks = ['第一段。', '第二段。', '第三段。', '第四段。'];
+    const resolvers = {};
+    global.fetch = vi.fn(
+      (_url, { body }) =>
+        new Promise((resolve) => {
+          const { chunkIndex } = JSON.parse(body);
+          resolvers[chunkIndex] = resolve;
+        }),
+    );
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-scrub-total" chunks={fourChunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+    for (let index = 0; index < 3; index += 1) {
+      expect(screen.getByTestId(`scrubber-segment-${index}`)).toHaveAttribute(
+        'data-estimated',
+        'true',
+      );
+    }
+
+    // Chunk 0 finishes with a real 2-second duration (4 chars) - an observed ratio of
+    // 0.5 s/char now backs every not-yet-generated chunk's estimate (4 chars * 0.5 = 2s).
+    resolvers[0](
+      new Response(
+        JSON.stringify({
+          url: 'https://blob.test/0',
+          boundaries: [{ text: '第一段', offset: 0, duration: 20_000_000 }],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId('scrubber-segment-0')).not.toHaveAttribute('data-estimated'),
+    );
+    expect(screen.getByText('00:00 / 00:08')).toBeInTheDocument();
+
+    // Chunk 1 finishes with a real 3-second duration, updating the observed ratio to
+    // 0.625 s/char (5s / 8 chars) for the still-ungenerated chunks 2 and 3.
+    resolvers[1](
+      new Response(
+        JSON.stringify({
+          url: 'https://blob.test/1',
+          boundaries: [{ text: '第二段', offset: 0, duration: 30_000_000 }],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId('scrubber-segment-1')).not.toHaveAttribute('data-estimated'),
+    );
+    expect(screen.getByText('00:00 / 00:10')).toBeInTheDocument();
+    expect(screen.getByTestId('scrubber-segment-2')).toHaveAttribute('data-estimated', 'true');
+    expect(screen.getByTestId('scrubber-segment-3')).toHaveAttribute('data-estimated', 'true');
+  });
+
+  test('dragging the scrubber into an already-generated chunk seeks directly to the sentence at that offset', async () => {
+    const eightChunks = [
+      '第一段。',
+      '第二段。',
+      '第三段之一。第三段之二。',
+      '第四段。',
+      '第五段。',
+      '第六段。',
+      '第七段。',
+      '第八段。',
+    ];
+    global.fetch = vi.fn(async (_url, { body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      const boundariesByChunk = {
+        0: [{ text: '第一段', offset: 0, duration: 10_000_000 }],
+        1: [{ text: '第二段', offset: 0, duration: 10_000_000 }],
+        2: [
+          { text: '第三段之一', offset: 0, duration: 10_000_000 },
+          { text: '第三段之二', offset: 10_000_000, duration: 10_000_000 },
+        ],
+      };
+      return new Response(
+        JSON.stringify({
+          url: `https://blob.test/${chunkIndex}`,
+          boundaries: boundariesByChunk[chunkIndex] ?? [],
+        }),
+        { status: 200 },
+      );
+    });
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-scrub-seek" chunks={eightChunks} />
+      </ChakraProvider>,
+    );
+
+    // Look-ahead covers chunks 0-2; timeline (in book-level seconds) is:
+    // [0,1) chunk0, [1,2) chunk1, [2,4) chunk2 (two 1s sentences), [4,...) estimated.
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+    await waitFor(() =>
+      expect(screen.getByTestId('scrubber-segment-2')).not.toHaveAttribute('data-estimated'),
+    );
+
+    fireEvent.change(screen.getByRole('slider', { name: /book progress/i }), {
+      target: { value: '3' },
+    });
+
+    await waitFor(() => expect(screen.getByText('Chunk 3 of 8')).toBeInTheDocument());
+    const audioEl = screen.getByTestId('audio-element');
+    // 3s book-level falls 1s into chunk2 (which starts at 2s) - its second sentence.
+    await waitFor(() => expect(audioEl.currentTime).toBe(1));
+    expect(await screen.findByTestId('sentence-2-1')).toHaveAttribute('data-active', 'true');
+    expect(await screen.findByRole('button', { name: /pause/i })).toBeInTheDocument();
+  });
+
+  test('dragging the scrubber into a not-yet-generated chunk generates only that chunk, then begins playback at the target offset once ready', async () => {
+    const eightChunks = [
+      '第一段。',
+      '第二段。',
+      '第三段。',
+      '第四段。',
+      '第五段。',
+      '第六段。',
+      '第七段之一。第七段之二。',
+      '第八段。',
+    ];
+    global.fetch = vi.fn(async (_url, { body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      const boundaries =
+        chunkIndex === 6
+          ? [
+              { text: '第七段之一', offset: 0, duration: 10_000_000 },
+              { text: '第七段之二', offset: 10_000_000, duration: 10_000_000 },
+            ]
+          : [{ text: 'x', offset: 0, duration: 10_000_000 }];
+      return new Response(JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries }), {
+        status: 200,
+      });
+    });
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-scrub-jump" chunks={eightChunks} />
+      </ChakraProvider>,
+    );
+
+    // Look-ahead (chunks 0-2, each a real 1s) backs an observed ratio of 0.25 s/char;
+    // chunk 6 (8 chars) is estimated at 2s, starting at book-level second 6.
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+
+    fireEvent.change(screen.getByRole('slider', { name: /book progress/i }), {
+      target: { value: '7' },
+    });
+
+    await waitFor(() => expect(screen.getByText('Chunk 7 of 8')).toBeInTheDocument());
+
+    const requestedChunkIndexes = () =>
+      global.fetch.mock.calls.map(([, init]) => JSON.parse(init.body).chunkIndex);
+    await waitFor(() => expect(requestedChunkIndexes()).toContain(6));
+    expect(requestedChunkIndexes().filter((index) => index === 6)).toHaveLength(1);
+    // Chunks 3, 4, and 5 sat between the initial look-ahead and the drag target -
+    // dragging past them must not force generating any of them.
+    expect(requestedChunkIndexes()).not.toEqual(expect.arrayContaining([3, 4, 5]));
+
+    const audioEl = screen.getByTestId('audio-element');
+    // The drag targeted 1s into chunk 6's estimated 2s span - its first sentence.
+    await waitFor(() => expect(audioEl.currentTime).toBe(0));
+    expect(await screen.findByTestId('sentence-6-0')).toHaveAttribute('data-active', 'true');
+  });
+});

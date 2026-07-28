@@ -13,7 +13,7 @@ function contentLength(value) {
   return value.replace(NON_CONTENT_PATTERN, '').length;
 }
 
-function ticksToSeconds(ticks) {
+export function ticksToSeconds(ticks) {
   return ticks / TICKS_PER_SECOND;
 }
 

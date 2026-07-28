@@ -26,6 +26,9 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
     isPlaying,
     chunkAudio,
     activeSentenceIndex,
+    timeline,
+    bookPositionSeconds,
+    seekToBookOffset,
     play,
     pause,
     handleEnded,
@@ -115,6 +118,10 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
         onSpeedChange={handleSpeedChange}
         previewingVoice={previewingVoice}
         onTogglePreviewVoice={togglePreviewVoice}
+        segments={timeline.segments}
+        totalSeconds={timeline.totalSeconds}
+        bookPositionSeconds={bookPositionSeconds}
+        onSeek={seekToBookOffset}
       />
       <audio
         ref={audioRef}
