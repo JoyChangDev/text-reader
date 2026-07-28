@@ -65,7 +65,9 @@ describe('progressive generation orchestration', () => {
     // Walk every chunk in order, generating its audio via the second endpoint.
     const results = [];
     for (const [chunkIndex, chunkText] of chunks.entries()) {
-      const response = await postAudioChunk(jsonRequest({ bookId, chunkIndex, text: chunkText }));
+      const response = await postAudioChunk(
+        jsonRequest({ bookId, chunkIndex, text: chunkText, voice: 'zh-TW-HsiaoChenNeural' }),
+      );
       results.push(await response.json());
     }
 
@@ -86,7 +88,12 @@ describe('progressive generation orchestration', () => {
     // Jump straight to the last chunk before ever requesting the earlier ones.
     const lastIndex = chunks.length - 1;
     const jumpResponse = await postAudioChunk(
-      jsonRequest({ bookId, chunkIndex: lastIndex, text: chunks[lastIndex] }),
+      jsonRequest({
+        bookId,
+        chunkIndex: lastIndex,
+        text: chunks[lastIndex],
+        voice: 'zh-TW-HsiaoChenNeural',
+      }),
     );
     const jumpResult = await jumpResponse.json();
 
@@ -96,7 +103,7 @@ describe('progressive generation orchestration', () => {
 
     // Now request an earlier chunk — it must generate its own, unrelated audio.
     const earlyResponse = await postAudioChunk(
-      jsonRequest({ bookId, chunkIndex: 0, text: chunks[0] }),
+      jsonRequest({ bookId, chunkIndex: 0, text: chunks[0], voice: 'zh-TW-HsiaoChenNeural' }),
     );
     const earlyResult = await earlyResponse.json();
 
@@ -109,10 +116,14 @@ describe('progressive generation orchestration', () => {
     const text = '這是唯一的一句話。';
     const { chunks } = await (await postChunks(jsonRequest({ text }))).json();
 
-    const first = await postAudioChunk(jsonRequest({ bookId, chunkIndex: 0, text: chunks[0] }));
+    const first = await postAudioChunk(
+      jsonRequest({ bookId, chunkIndex: 0, text: chunks[0], voice: 'zh-TW-HsiaoChenNeural' }),
+    );
     const firstResult = await first.json();
 
-    const second = await postAudioChunk(jsonRequest({ bookId, chunkIndex: 0, text: chunks[0] }));
+    const second = await postAudioChunk(
+      jsonRequest({ bookId, chunkIndex: 0, text: chunks[0], voice: 'zh-TW-HsiaoChenNeural' }),
+    );
     const secondResult = await second.json();
 
     expect(secondResult).toEqual(firstResult);
@@ -124,10 +135,24 @@ describe('progressive generation orchestration', () => {
     const { chunks } = await (await postChunks(jsonRequest({ text }))).json();
 
     const firstId = 'book-x';
-    await postAudioChunk(jsonRequest({ bookId: firstId, chunkIndex: 0, text: chunks[0] }));
+    await postAudioChunk(
+      jsonRequest({
+        bookId: firstId,
+        chunkIndex: 0,
+        text: chunks[0],
+        voice: 'zh-TW-HsiaoChenNeural',
+      }),
+    );
 
     const secondId = 'book-y';
-    await postAudioChunk(jsonRequest({ bookId: secondId, chunkIndex: 0, text: chunks[0] }));
+    await postAudioChunk(
+      jsonRequest({
+        bookId: secondId,
+        chunkIndex: 0,
+        text: chunks[0],
+        voice: 'zh-TW-HsiaoChenNeural',
+      }),
+    );
 
     expect(synthesizeCalls).toHaveLength(2);
   });

@@ -1,5 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+
+import { getListenerSettings } from '@/app/_lib/listenerSettings';
 
 import ChakraProvider from '../_providers/chakra';
 import AudioPlayer from './AudioPlayer';
@@ -212,6 +214,73 @@ describe('AudioPlayer', () => {
     fireEvent.click(screen.getByText(/back to library/i));
 
     expect(onBackToLibrary).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AudioPlayer voice selection', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.pause = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
+
+    global.fetch = vi.fn(async (_url, { body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      return new Response(
+        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
+        { status: 200 },
+      );
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('defaults to the current hardcoded voice and sends it with each chunk request', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-1" chunks={chunks} />
+      </ChakraProvider>,
+    );
+
+    const picker = screen.getByLabelText(/narration voice/i);
+    expect(picker).toHaveValue('zh-TW-HsiaoChenNeural');
+    expect(
+      within(picker)
+        .getAllByRole('option')
+        .map((option) => option.value),
+    ).toEqual(['zh-TW-HsiaoChenNeural', 'zh-TW-YunJheNeural', 'zh-TW-HsiaoYuNeural']);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).voice).toBe('zh-TW-HsiaoChenNeural');
+  });
+
+  test('changing the voice persists it and applies to subsequently fetched chunks only', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-1" chunks={chunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+
+    fireEvent.change(screen.getByLabelText(/narration voice/i), {
+      target: { value: 'zh-TW-YunJheNeural' },
+    });
+
+    expect(getListenerSettings().voice).toBe('zh-TW-YunJheNeural');
+
+    // Chunk 3 finishes playing chunk 0 and is topped up next - it's the first
+    // request made after the voice change, so it's the first to use it.
+    const audioEl = screen.getByTestId('audio-element');
+    const playButton = await screen.findByRole('button', { name: /play/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /pause/i });
+    fireEvent.ended(audioEl);
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(4));
+    const lastCallBody = JSON.parse(global.fetch.mock.calls[3][1].body);
+    expect(lastCallBody).toMatchObject({ chunkIndex: 3, voice: 'zh-TW-YunJheNeural' });
   });
 });
 

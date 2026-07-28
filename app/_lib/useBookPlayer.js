@@ -15,7 +15,7 @@ const LOOKAHEAD = 2;
 // `onEnded` to `handleEnded`. `initialIndex` lets a caller resume a book at a
 // previously-saved position (see ticket 07); the current chunk index is kept
 // persisted back to the library as the resume position.
-export function useBookPlayer({ bookId, chunks, initialIndex = 0 }) {
+export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice }) {
   const [chunkAudio, setChunkAudio] = useState({});
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [wantsToPlay, setWantsToPlay] = useState(false);
@@ -54,7 +54,7 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0 }) {
         const response = await fetch('/api/audio-chunks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bookId, chunkIndex: index, text: chunks[index] }),
+          body: JSON.stringify({ bookId, chunkIndex: index, text: chunks[index], voice }),
         });
 
         if (!response.ok) {
@@ -72,7 +72,7 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0 }) {
         pendingFetchesRef.current.delete(index);
       }
     },
-    [bookId, chunks],
+    [bookId, chunks, voice],
   );
 
   // Keep the look-ahead buffer topped up as playback position or chunk state changes.

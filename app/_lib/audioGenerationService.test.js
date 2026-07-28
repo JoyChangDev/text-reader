@@ -1,6 +1,18 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { getOrGenerateAudio } from './audioGenerationService';
+const { fakeStorageClient, fakeTtsClient } = vi.hoisted(() => ({
+  fakeStorageClient: { get: vi.fn(), put: vi.fn() },
+  fakeTtsClient: { synthesize: vi.fn() },
+}));
+
+vi.mock('./blobStorageClient', () => ({
+  createBlobStorageClient: () => fakeStorageClient,
+}));
+vi.mock('./edgeTtsClient', () => ({
+  createEdgeTtsClient: () => fakeTtsClient,
+}));
+
+import { generateAudioForChunk, getOrGenerateAudio } from './audioGenerationService';
 
 describe('getOrGenerateAudio', () => {
   let storageClient;
@@ -85,5 +97,57 @@ describe('getOrGenerateAudio', () => {
         { bookId: 'book-1', chunkIndex: 0, voice: 'zh-TW-default', text: '你好。' },
       ),
     ).rejects.toThrow('blob upload failed');
+  });
+});
+
+describe('generateAudioForChunk', () => {
+  beforeEach(() => {
+    fakeStorageClient.get.mockReset();
+    fakeStorageClient.put.mockReset();
+    fakeTtsClient.synthesize.mockReset();
+  });
+
+  test('threads the caller-supplied voice through to the cache key and ttsClient', async () => {
+    fakeStorageClient.get.mockResolvedValue(undefined);
+    const synthesized = { audio: new Blob(['fake-audio']), boundaries: [] };
+    const persisted = { url: 'https://blob.example/generated.mp3', boundaries: [] };
+    fakeTtsClient.synthesize.mockResolvedValue(synthesized);
+    fakeStorageClient.put.mockResolvedValue(persisted);
+
+    const result = await generateAudioForChunk({
+      bookId: 'book-1',
+      chunkIndex: 0,
+      text: '你好。',
+      voice: 'zh-TW-YunJheNeural',
+    });
+
+    expect(result).toEqual(persisted);
+    expect(fakeStorageClient.get).toHaveBeenCalledWith('book-1/0/zh-TW-YunJheNeural');
+    expect(fakeTtsClient.synthesize).toHaveBeenCalledWith('你好。', 'zh-TW-YunJheNeural');
+    expect(fakeStorageClient.put).toHaveBeenCalledWith('book-1/0/zh-TW-YunJheNeural', synthesized);
+  });
+
+  test('a voice change does not reuse or invalidate a chunk cached under a different voice', async () => {
+    fakeStorageClient.get.mockResolvedValue(undefined);
+    fakeTtsClient.synthesize.mockResolvedValue({ audio: new Blob(['fake-audio']), boundaries: [] });
+    fakeStorageClient.put.mockResolvedValue({
+      url: 'https://blob.example/new.mp3',
+      boundaries: [],
+    });
+
+    await generateAudioForChunk({
+      bookId: 'book-1',
+      chunkIndex: 0,
+      text: '你好。',
+      voice: 'zh-TW-HsiaoYuNeural',
+    });
+
+    // Cache lookup and write both go through the new voice's own key - the
+    // previously-cached chunk under the old voice is untouched (see ticket 02).
+    expect(fakeStorageClient.get).toHaveBeenCalledWith('book-1/0/zh-TW-HsiaoYuNeural');
+    expect(fakeStorageClient.put).toHaveBeenCalledWith(
+      'book-1/0/zh-TW-HsiaoYuNeural',
+      expect.anything(),
+    );
   });
 });

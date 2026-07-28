@@ -1,9 +1,14 @@
 'use client';
 
-import { Box, Button, HStack, Text, VStack } from '@chakra-ui/react';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { Box, Button, HStack, NativeSelect, Text, VStack } from '@chakra-ui/react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { splitIntoSentences } from '@/app/_lib/chunkText';
+import {
+  AVAILABLE_VOICES,
+  getListenerSettings,
+  updateListenerSettings,
+} from '@/app/_lib/listenerSettings';
 import { useBookPlayer } from '@/app/_lib/useBookPlayer';
 
 // How long to leave auto-scroll suspended after the reader scrolls manually, before
@@ -16,6 +21,7 @@ const AUTO_SCROLL_RESUME_DELAY_MS = 4000;
 // whichever sentence is currently playing; clicking any sentence - including one in a
 // chunk that hasn't been generated yet - seeks playback there directly.
 export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackToLibrary }) {
+  const [voice, setVoice] = useState(() => getListenerSettings().voice);
   const {
     audioRef,
     currentIndex,
@@ -28,7 +34,15 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
     handleTimeUpdate,
     seekToSentence,
     retryChunk,
-  } = useBookPlayer({ bookId, chunks, initialIndex });
+  } = useBookPlayer({ bookId, chunks, initialIndex, voice });
+
+  // Prospective only: this only affects chunks fetched from here on - chunks already
+  // cached/generated under the previous voice keep playing as-is (see ticket 02).
+  const handleVoiceChange = useCallback((event) => {
+    const nextVoice = event.target.value;
+    setVoice(nextVoice);
+    updateListenerSettings({ voice: nextVoice });
+  }, []);
 
   const currentChunkStatus = chunkAudio[currentIndex]?.status;
   const currentChunkReady = currentChunkStatus === 'ready';
@@ -126,6 +140,20 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
             Play
           </Button>
         )}
+        <NativeSelect.Root width="auto">
+          <NativeSelect.Field
+            aria-label="Narration voice"
+            value={voice}
+            onChange={handleVoiceChange}
+          >
+            {AVAILABLE_VOICES.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </NativeSelect.Field>
+          <NativeSelect.Indicator />
+        </NativeSelect.Root>
       </HStack>
       {currentChunkErrored && (
         <Text color="danger" role="alert">
