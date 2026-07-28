@@ -515,30 +515,8 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     expect(window.Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
-  test('suspends auto-scroll after a manual scroll, instead of fighting the reader', async () => {
-    render(
-      <ChakraProvider>
-        <AudioPlayer bookId="book-hl-scroll" chunks={twoSentenceChunks} />
-      </ChakraProvider>,
-    );
-
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
-    const playButton = await screen.findByRole('button', { name: /play/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /pause/i });
-
-    fireEvent.scroll(screen.getByRole('log', { name: /book text/i }));
-    window.Element.prototype.scrollIntoView.mockClear();
-
-    const audioEl = screen.getByTestId('audio-element');
-    audioEl.currentTime = 1.5;
-    fireEvent.timeUpdate(audioEl);
-
-    await waitFor(() =>
-      expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true'),
-    );
-    expect(window.Element.prototype.scrollIntoView).not.toHaveBeenCalled();
-  });
+  // Auto-scroll suspension on manual scroll is TranscriptView's own behavior,
+  // unit-tested in isolation there (see ticket 07) - not re-asserted here.
 
   test('clicking a sentence in the currently loaded chunk seeks audio.currentTime there', async () => {
     render(
