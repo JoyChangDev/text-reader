@@ -284,6 +284,83 @@ describe('AudioPlayer voice selection', () => {
   });
 });
 
+describe('AudioPlayer playback speed', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.pause = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
+
+    global.fetch = vi.fn(async (_url, { body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      return new Response(
+        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
+        { status: 200 },
+      );
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('defaults to 1x and offers the fixed presets', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-speed" chunks={chunks} />
+      </ChakraProvider>,
+    );
+
+    const picker = screen.getByLabelText(/playback speed/i);
+    expect(picker).toHaveValue('1');
+    expect(
+      within(picker)
+        .getAllByRole('option')
+        .map((option) => option.value),
+    ).toEqual(['0.75', '1', '1.25', '1.5', '1.75', '2']);
+  });
+
+  test('selecting a speed applies it immediately to the currently loaded audio and persists it', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-speed-2" chunks={chunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+    const playButton = await screen.findByRole('button', { name: /play/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /pause/i });
+
+    const audioEl = screen.getByTestId('audio-element');
+    fireEvent.change(screen.getByLabelText(/playback speed/i), { target: { value: '1.5' } });
+
+    expect(audioEl.playbackRate).toBe(1.5);
+    expect(getListenerSettings().speed).toBe(1.5);
+  });
+
+  test('a selected speed carries over to the next chunk loaded within the same session', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-speed-3" chunks={chunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+    const playButton = await screen.findByRole('button', { name: /play/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /pause/i });
+
+    fireEvent.change(screen.getByLabelText(/playback speed/i), { target: { value: '2' } });
+
+    const audioEl = screen.getByTestId('audio-element');
+    fireEvent.ended(audioEl);
+
+    await waitFor(() => expect(screen.getByText('Chunk 2 of 4')).toBeInTheDocument());
+    await waitFor(() => expect(audioEl.playbackRate).toBe(2));
+  });
+});
+
 describe('AudioPlayer voice preview samples', () => {
   beforeEach(() => {
     window.localStorage.clear();

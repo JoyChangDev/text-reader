@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { splitIntoSentences } from '@/app/_lib/chunkText';
 import {
+  AVAILABLE_SPEEDS,
   AVAILABLE_VOICES,
   getListenerSettings,
   updateListenerSettings,
@@ -23,6 +24,7 @@ const AUTO_SCROLL_RESUME_DELAY_MS = 4000;
 // chunk that hasn't been generated yet - seeks playback there directly.
 export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackToLibrary }) {
   const [voice, setVoice] = useState(() => getListenerSettings().voice);
+  const [speed, setSpeed] = useState(() => getListenerSettings().speed);
   const {
     audioRef,
     currentIndex,
@@ -35,7 +37,7 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
     handleTimeUpdate,
     seekToSentence,
     retryChunk,
-  } = useBookPlayer({ bookId, chunks, initialIndex, voice });
+  } = useBookPlayer({ bookId, chunks, initialIndex, voice, speed });
 
   // Prospective only: this only affects chunks fetched from here on - chunks already
   // cached/generated under the previous voice keep playing as-is (see ticket 02).
@@ -43,6 +45,14 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
     const nextVoice = event.target.value;
     setVoice(nextVoice);
     updateListenerSettings({ voice: nextVoice });
+  }, []);
+
+  // Applies immediately to whatever's currently playing (via useBookPlayer) and
+  // persists as a device-wide default across books (see ticket 04).
+  const handleSpeedChange = useCallback((event) => {
+    const nextSpeed = Number(event.target.value);
+    setSpeed(nextSpeed);
+    updateListenerSettings({ speed: nextSpeed });
   }, []);
 
   // Previewing plays a static, pre-generated clip (see scripts/generate-voice-samples.mjs)
@@ -176,6 +186,20 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
             {AVAILABLE_VOICES.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
+              </option>
+            ))}
+          </NativeSelect.Field>
+          <NativeSelect.Indicator />
+        </NativeSelect.Root>
+        <NativeSelect.Root width="auto">
+          <NativeSelect.Field
+            aria-label="Playback speed"
+            value={speed}
+            onChange={handleSpeedChange}
+          >
+            {AVAILABLE_SPEEDS.map((option) => (
+              <option key={option} value={option}>
+                {option}x
               </option>
             ))}
           </NativeSelect.Field>

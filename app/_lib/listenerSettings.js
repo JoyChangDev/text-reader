@@ -8,10 +8,14 @@ export const AVAILABLE_VOICES = [
   { value: 'zh-TW-HsiaoYuNeural', label: 'Hsiao-Yu' },
 ];
 
-const DEFAULT_SETTINGS = { voice: DEFAULT_VOICE };
+export const DEFAULT_SPEED = 1;
 
-// Device-scoped Listener preferences (voice, and later speed) in one generic store,
-// separate from bookLibrary.js's per-book records - see ADR 0001.
+export const AVAILABLE_SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2];
+
+const DEFAULT_SETTINGS = { voice: DEFAULT_VOICE, speed: DEFAULT_SPEED };
+
+// Device-scoped Listener preferences (voice, speed) in one generic store, separate
+// from bookLibrary.js's per-book records - see ADR 0001.
 function readSettings() {
   if (typeof window === 'undefined') return DEFAULT_SETTINGS;
 

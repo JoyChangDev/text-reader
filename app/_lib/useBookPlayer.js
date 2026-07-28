@@ -15,7 +15,7 @@ const LOOKAHEAD = 2;
 // `onEnded` to `handleEnded`. `initialIndex` lets a caller resume a book at a
 // previously-saved position (see ticket 07); the current chunk index is kept
 // persisted back to the library as the resume position.
-export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice }) {
+export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed = 1 }) {
   const [chunkAudio, setChunkAudio] = useState({});
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [wantsToPlay, setWantsToPlay] = useState(false);
@@ -112,6 +112,7 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice }) {
 
     if (loadedIndexRef.current !== currentIndex) {
       audio.src = currentUrl;
+      audio.playbackRate = speed;
       loadedIndexRef.current = currentIndex;
 
       const pendingSeek = pendingSeekRef.current;
@@ -124,7 +125,15 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice }) {
     } else if (audio.paused) {
       audio.play();
     }
-  }, [isPlaying, currentIndex, currentStatus, currentUrl, currentSentenceSpans, applySeek]);
+  }, [isPlaying, currentIndex, currentStatus, currentUrl, currentSentenceSpans, applySeek, speed]);
+
+  // Applied immediately to whatever's currently loaded, independent of the chunk-load
+  // effect above (which only runs when the chunk itself changes) - a pure client-side
+  // effect, no new TTS calls or cache changes (see ticket 04).
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (audio) audio.playbackRate = speed;
+  }, [speed]);
 
   // Persist the reading position as it advances, so reopening this book later
   // (see BookLibrary) resumes here rather than from the start.
