@@ -8,6 +8,7 @@ import {
   AVAILABLE_VOICES,
   getListenerSettings,
   updateListenerSettings,
+  voiceSampleUrl,
 } from '@/app/_lib/listenerSettings';
 import { useBookPlayer } from '@/app/_lib/useBookPlayer';
 
@@ -43,6 +44,32 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
     setVoice(nextVoice);
     updateListenerSettings({ voice: nextVoice });
   }, []);
+
+  // Previewing plays a static, pre-generated clip (see scripts/generate-voice-samples.mjs)
+  // through a separate <audio> element - it never touches the persisted selection, calls
+  // edge-tts, or requests /api/audio-chunks (see ticket 03).
+  const [previewingVoice, setPreviewingVoice] = useState(null);
+  const previewAudioRef = useRef(null);
+
+  const togglePreviewVoice = useCallback(
+    (voiceValue) => {
+      const previewAudio = previewAudioRef.current;
+      if (!previewAudio) return;
+
+      if (previewingVoice === voiceValue) {
+        previewAudio.pause();
+        setPreviewingVoice(null);
+        return;
+      }
+
+      previewAudio.src = voiceSampleUrl(voiceValue);
+      previewAudio.play();
+      setPreviewingVoice(voiceValue);
+    },
+    [previewingVoice],
+  );
+
+  const handlePreviewEnded = useCallback(() => setPreviewingVoice(null), []);
 
   const currentChunkStatus = chunkAudio[currentIndex]?.status;
   const currentChunkReady = currentChunkStatus === 'ready';
@@ -154,6 +181,16 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
           </NativeSelect.Field>
           <NativeSelect.Indicator />
         </NativeSelect.Root>
+        {AVAILABLE_VOICES.map((option) => (
+          <Button
+            key={option.value}
+            size="sm"
+            variant="outline"
+            onClick={() => togglePreviewVoice(option.value)}
+          >
+            {previewingVoice === option.value ? `Stop ${option.label}` : `Preview ${option.label}`}
+          </Button>
+        ))}
       </HStack>
       {currentChunkErrored && (
         <Text color="danger" role="alert">
@@ -166,6 +203,7 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
         onTimeUpdate={handleTimeUpdate}
         data-testid="audio-element"
       />
+      <audio ref={previewAudioRef} onEnded={handlePreviewEnded} data-testid="voice-preview-audio" />
     </VStack>
   );
 }

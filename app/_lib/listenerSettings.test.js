@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, test } from 'vitest';
 
-import { DEFAULT_VOICE, getListenerSettings, updateListenerSettings } from './listenerSettings';
+import {
+  DEFAULT_VOICE,
+  getListenerSettings,
+  updateListenerSettings,
+  voiceSampleUrl,
+} from './listenerSettings';
 
 describe('listenerSettings', () => {
   beforeEach(() => {
@@ -29,5 +34,11 @@ describe('listenerSettings', () => {
 
     // A fresh read from storage (no in-memory state carried over) still sees it.
     expect(getListenerSettings()).toEqual({ voice: 'zh-TW-HsiaoYuNeural' });
+  });
+});
+
+describe('voiceSampleUrl', () => {
+  test('points at the static, pre-generated clip for a voice (see scripts/generate-voice-samples.mjs)', () => {
+    expect(voiceSampleUrl('zh-TW-YunJheNeural')).toBe('/voice-samples/zh-TW-YunJheNeural.mp3');
   });
 });
