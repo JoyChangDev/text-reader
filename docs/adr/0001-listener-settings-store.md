@@ -1,0 +1,7 @@
+# Listener settings are device-scoped, in one generic store
+
+Phase 1.5 introduces several Listener preferences — narration voice, and later playback speed and theme — none of which are properties of a Book. `bookLibrary.js` only persists per-Book state (`resumeIndex`); it has no concept of a device-wide default. Rather than adding a per-Book field for each preference, or a separate `localStorage` key per preference, we introduce one generic Listener settings store (e.g. `listenerSettings.js`, its own `localStorage` key) that starts with `{ voice }` and is extended by later tickets. Voice changes apply prospectively only — the cache key already includes voice, so already-generated chunks keep playing in their original voice rather than being invalidated.
+
+Considered alternatives: a per-Book `voice` field (rejected — voice isn't a property of the content, and would need to be replicated for speed/theme too); a dedicated `text-reader:voice` key for this ticket alone (rejected — would likely be refactored into a shared store the moment speed or theme landed).
+
+**Exception — theme is not in this store.** Theme is managed by `next-themes`' own persistence (its own `localStorage` key plus a blocking script that prevents a flash-of-wrong-theme on load). Folding theme into `listenerSettings` would mean reading it only after hydration, reintroducing the flash `next-themes` exists to prevent. Speed and voice have no such constraint, so they stay in `listenerSettings`; theme is a deliberate, narrow exception to "one generic store."

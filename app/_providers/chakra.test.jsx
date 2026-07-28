@@ -9,3 +9,10 @@ test('wires custom background/foreground/accent semantic tokens to Chakra defaul
   expect(tokenCss).toContain('"--chakra-colors-foreground":"var(--chakra-colors-fg)"');
   expect(tokenCss).toContain('"--chakra-colors-accent"');
 });
+
+test('wires active-sentence highlight semantic tokens', () => {
+  const tokenCss = JSON.stringify(system.getTokenCss());
+
+  expect(tokenCss).toContain('"--chakra-colors-active-sentence-bg"');
+  expect(tokenCss).toContain('"--chakra-colors-active-sentence-fg"');
+});
