@@ -10,6 +10,7 @@ describe('AudioPlayer', () => {
   beforeEach(() => {
     window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
     window.HTMLMediaElement.prototype.pause = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
 
     global.fetch = vi.fn(async (_url, { body }) => {
       const { chunkIndex } = JSON.parse(body);
@@ -211,5 +212,157 @@ describe('AudioPlayer', () => {
     fireEvent.click(screen.getByText(/back to library/i));
 
     expect(onBackToLibrary).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence seeking', () => {
+  const twoSentenceChunks = ['第一句。第二句。', '第三句。第四句。'];
+  const boundariesByChunk = {
+    0: [
+      { text: '第一句', offset: 0, duration: 10_000_000 },
+      { text: '第二句', offset: 10_000_000, duration: 10_000_000 },
+    ],
+    1: [
+      { text: '第三句', offset: 0, duration: 10_000_000 },
+      { text: '第四句', offset: 10_000_000, duration: 10_000_000 },
+    ],
+  };
+
+  beforeEach(() => {
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.pause = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
+
+    global.fetch = vi.fn(async (_url, { body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      return new Response(
+        JSON.stringify({
+          url: `https://blob.test/${chunkIndex}`,
+          boundaries: boundariesByChunk[chunkIndex] ?? [],
+        }),
+        { status: 200 },
+      );
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('highlights the sentence containing the current playback time and auto-scrolls to it', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-hl" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    const playButton = await screen.findByRole('button', { name: /play/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /pause/i });
+
+    const audioEl = screen.getByTestId('audio-element');
+    audioEl.currentTime = 1.5;
+    fireEvent.timeUpdate(audioEl);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true'),
+    );
+    expect(screen.getByTestId('sentence-0-0')).not.toHaveAttribute('data-active');
+    expect(window.Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  test('suspends auto-scroll after a manual scroll, instead of fighting the reader', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-hl-scroll" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    const playButton = await screen.findByRole('button', { name: /play/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /pause/i });
+
+    fireEvent.scroll(screen.getByRole('log', { name: /book text/i }));
+    window.Element.prototype.scrollIntoView.mockClear();
+
+    const audioEl = screen.getByTestId('audio-element');
+    audioEl.currentTime = 1.5;
+    fireEvent.timeUpdate(audioEl);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true'),
+    );
+    expect(window.Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  test('clicking a sentence in the currently loaded chunk seeks audio.currentTime there', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-seek" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^play$/i })).toBeEnabled());
+
+    const audioEl = screen.getByTestId('audio-element');
+    fireEvent.click(screen.getByTestId('sentence-0-1'));
+
+    await waitFor(() => expect(audioEl.currentTime).toBe(1));
+    expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true');
+    expect(await screen.findByRole('button', { name: /pause/i })).toBeInTheDocument();
+  });
+
+  test('clicking a sentence in a not-yet-generated chunk generates only that chunk - not the ones skipped over - then seeks there once ready', async () => {
+    const eightChunks = [
+      '第一段。',
+      '第二段。',
+      '第三段。',
+      '第四段。',
+      '第五段。',
+      '第六段。',
+      '第七段之一。第七段之二。',
+      '第八段。',
+    ];
+    global.fetch = vi.fn(async (_url, { body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      const boundaries =
+        chunkIndex === 6
+          ? [
+              { text: '第七段之一', offset: 0, duration: 10_000_000 },
+              { text: '第七段之二', offset: 10_000_000, duration: 10_000_000 },
+            ]
+          : [];
+      return new Response(JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries }), {
+        status: 200,
+      });
+    });
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-jump" chunks={eightChunks} />
+      </ChakraProvider>,
+    );
+
+    // Initial look-ahead from chunk 0 covers chunks 0-2 only.
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+
+    fireEvent.click(screen.getByTestId('sentence-6-1'));
+
+    await waitFor(() => expect(screen.getByText('Chunk 7 of 8')).toBeInTheDocument());
+
+    const requestedChunkIndexes = () =>
+      global.fetch.mock.calls.map(([, init]) => JSON.parse(init.body).chunkIndex);
+    await waitFor(() => expect(requestedChunkIndexes()).toContain(6));
+    expect(requestedChunkIndexes().filter((index) => index === 6)).toHaveLength(1);
+    // Chunks 3, 4, and 5 sat between the initial look-ahead and the jump target - jumping
+    // ahead must not force generating any of them.
+    expect(requestedChunkIndexes()).not.toEqual(expect.arrayContaining([3, 4, 5]));
+
+    const audioEl = screen.getByTestId('audio-element');
+    await waitFor(() => expect(audioEl.currentTime).toBe(1));
+    expect(await screen.findByTestId('sentence-6-1')).toHaveAttribute('data-active', 'true');
   });
 });

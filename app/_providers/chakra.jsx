@@ -15,6 +15,8 @@ const config = defineConfig({
         foreground: { value: '{colors.fg}' },
         accent: { value: '{colors.blue.500}' },
         danger: { value: '{colors.red.500}' },
+        activeSentenceBg: { value: '{colors.yellow.200}' },
+        activeSentenceFg: { value: '{colors.black}' },
       },
     },
   },

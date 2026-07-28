@@ -1,6 +1,6 @@
 const SENTENCE_PATTERN = /[^。！？]*[。！？]+[」』"'）】]*/g;
 
-function splitIntoSentences(text) {
+export function splitIntoSentences(text) {
   const sentences = [];
   // Track where the last matched sentence ended so trailing text can be added later.
   let lastIndex = 0;
