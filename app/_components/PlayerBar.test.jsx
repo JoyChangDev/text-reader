@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import ChakraProvider from '../_providers/chakra';
 import PlayerBar from './PlayerBar';
@@ -17,8 +17,6 @@ const baseProps = {
   onVoiceChange: () => {},
   speed: 1,
   onSpeedChange: () => {},
-  previewingVoice: null,
-  onTogglePreviewVoice: () => {},
 };
 
 function renderBar(overrides = {}) {
@@ -30,6 +28,15 @@ function renderBar(overrides = {}) {
 }
 
 describe('PlayerBar', () => {
+  beforeEach(() => {
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.pause = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   test('shows the current chunk position', () => {
     renderBar({ currentIndex: 1, totalChunks: 4 });
 
@@ -123,16 +130,18 @@ describe('PlayerBar', () => {
     expect(screen.getByLabelText(/playback speed/i)).toBeDisabled();
   });
 
-  test('offers a preview button per voice, labeled to preview or stop depending on previewingVoice', () => {
-    const onTogglePreviewVoice = vi.fn();
-    renderBar({ previewingVoice: 'zh-TW-YunJheNeural', onTogglePreviewVoice });
+  // Full preview behavior (toggling, switching voices, resetting on end) is covered by
+  // VoicePreview's own tests - this just confirms it's actually wired in here, using
+  // the shared implementation rather than a separate copy (see ticket 06).
+  test('offers voice preview, built on the shared VoicePreview component', async () => {
+    renderBar();
 
-    expect(screen.getByRole('button', { name: /preview hsiao-chen/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /stop yun-jhe/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /preview hsiao-yu/i })).toBeInTheDocument();
+    const previewButton = screen.getByRole('button', { name: /preview yun-jhe/i });
+    fireEvent.click(previewButton);
 
-    fireEvent.click(screen.getByRole('button', { name: /preview hsiao-yu/i }));
-
-    expect(onTogglePreviewVoice).toHaveBeenCalledWith('zh-TW-HsiaoYuNeural');
+    expect(screen.getByTestId('voice-preview-audio').src).toContain(
+      '/voice-samples/zh-TW-YunJheNeural.mp3',
+    );
+    expect(await screen.findByRole('button', { name: /stop yun-jhe/i })).toBeInTheDocument();
   });
 });

@@ -1,10 +1,11 @@
 'use client';
-import { VStack } from '@chakra-ui/react';
+import { Heading, HStack, VStack } from '@chakra-ui/react';
 import { useCallback, useState } from 'react';
 
 import AudioPlayer from './_components/AudioPlayer';
 import BookLibrary from './_components/BookLibrary';
 import BookUploader from './_components/BookUploader';
+import VoicePreview from './_components/VoicePreview';
 import { addBook, getBook } from './_lib/bookLibrary';
 
 export default function Home() {
@@ -25,6 +26,12 @@ export default function Home() {
     return (
       <VStack align="start" gap={6}>
         <BookUploader onReady={handleUploaded} />
+        <VStack align="start" gap={2}>
+          <Heading size="sm">Preview voices</Heading>
+          <HStack wrap="wrap">
+            <VoicePreview />
+          </HStack>
+        </VStack>
         <BookLibrary onSelect={handleSelectBook} />
       </VStack>
     );

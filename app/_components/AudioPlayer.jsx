@@ -1,13 +1,9 @@
 'use client';
 
 import { Box, Button } from '@chakra-ui/react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 
-import {
-  getListenerSettings,
-  updateListenerSettings,
-  voiceSampleUrl,
-} from '@/app/_lib/listenerSettings';
+import { getListenerSettings, updateListenerSettings } from '@/app/_lib/listenerSettings';
 import { useBookPlayer } from '@/app/_lib/useBookPlayer';
 
 import PlayerBar from './PlayerBar';
@@ -52,32 +48,6 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
     updateListenerSettings({ speed: nextSpeed });
   }, []);
 
-  // Previewing plays a static, pre-generated clip (see scripts/generate-voice-samples.mjs)
-  // through a separate <audio> element - it never touches the persisted selection, calls
-  // edge-tts, or requests /api/audio-chunks (see ticket 03).
-  const [previewingVoice, setPreviewingVoice] = useState(null);
-  const previewAudioRef = useRef(null);
-
-  const togglePreviewVoice = useCallback(
-    (voiceValue) => {
-      const previewAudio = previewAudioRef.current;
-      if (!previewAudio) return;
-
-      if (previewingVoice === voiceValue) {
-        previewAudio.pause();
-        setPreviewingVoice(null);
-        return;
-      }
-
-      previewAudio.src = voiceSampleUrl(voiceValue);
-      previewAudio.play();
-      setPreviewingVoice(voiceValue);
-    },
-    [previewingVoice],
-  );
-
-  const handlePreviewEnded = useCallback(() => setPreviewingVoice(null), []);
-
   const handleRetry = useCallback(() => retryChunk(currentIndex), [retryChunk, currentIndex]);
 
   const currentChunkStatus = chunkAudio[currentIndex]?.status;
@@ -116,8 +86,6 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
         onVoiceChange={handleVoiceChange}
         speed={speed}
         onSpeedChange={handleSpeedChange}
-        previewingVoice={previewingVoice}
-        onTogglePreviewVoice={togglePreviewVoice}
       />
       {/* A ping-pong pair, not one element per role: which one is "active" (playing) vs.
           "standby" (preloading the next chunk in the background) flips over time as
@@ -138,7 +106,6 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
         data-testid="audio-element-standby"
         data-active={activeIsPrimary ? undefined : 'true'}
       />
-      <audio ref={previewAudioRef} onEnded={handlePreviewEnded} data-testid="voice-preview-audio" />
     </Box>
   );
 }

@@ -112,6 +112,22 @@ describe('Home', () => {
     expect(JSON.parse(global.fetch.mock.calls[0][1].body).chunkIndex).toBe(2);
   });
 
+  test('offers voice preview before any book is opened', async () => {
+    render(
+      <ChakraProvider>
+        <Home />
+      </ChakraProvider>,
+    );
+
+    const previewButton = screen.getByRole('button', { name: /preview yun-jhe/i });
+    fireEvent.click(previewButton);
+
+    expect(screen.getByTestId('voice-preview-audio').src).toContain(
+      '/voice-samples/zh-TW-YunJheNeural.mp3',
+    );
+    expect(await screen.findByRole('button', { name: /stop yun-jhe/i })).toBeInTheDocument();
+  });
+
   test('going back to the library lets the reader switch to a different book', async () => {
     addBook({ bookId: 'book-a', title: 'Book A', chunks: ['甲。'] });
     addBook({ bookId: 'book-b', title: 'Book B', chunks: ['乙。'] });
