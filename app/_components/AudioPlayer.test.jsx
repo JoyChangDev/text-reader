@@ -52,13 +52,21 @@ describe('AudioPlayer', () => {
     const audioEl = screen.getByTestId('audio-element');
     expect(audioEl.src).toBe('https://blob.test/0');
 
+    // Chunk 1's audio was already buffered into the standby element ahead of time
+    // (see ticket 05) - finishing chunk 0 swaps to it directly instead of assigning a
+    // fresh, cold src.
+    const standbyEl = screen.getByTestId('audio-element-standby');
+    await waitFor(() => expect(standbyEl.src).toBe('https://blob.test/1'));
+
     // Finishing chunk 0 advances to chunk 1 and tops up the look-ahead buffer (chunk 3).
     fireEvent.ended(audioEl);
 
     await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(4));
     expect(JSON.parse(global.fetch.mock.calls[3][1].body).chunkIndex).toBe(3);
     expect(screen.getByText('Chunk 2 of 4')).toBeInTheDocument();
-    await waitFor(() => expect(audioEl.src).toBe('https://blob.test/1'));
+    // Still the same src it was preloaded with - no fresh load happened at swap time.
+    expect(standbyEl.src).toBe('https://blob.test/1');
+    expect(standbyEl).toHaveAttribute('data-active', 'true');
 
     const pauseButton = screen.getByRole('button', { name: /pause/i });
     fireEvent.click(pauseButton);
@@ -357,7 +365,11 @@ describe('AudioPlayer playback speed', () => {
     fireEvent.ended(audioEl);
 
     await waitFor(() => expect(screen.getByText('Chunk 2 of 4')).toBeInTheDocument());
-    await waitFor(() => expect(audioEl.playbackRate).toBe(2));
+    // Chunk 1 swapped onto the standby element (see ticket 05) - it's the one actually
+    // playing now, so it's the one that must carry the selected speed.
+    const activeEl = screen.getByTestId('audio-element-standby');
+    expect(activeEl).toHaveAttribute('data-active', 'true');
+    await waitFor(() => expect(activeEl.playbackRate).toBe(2));
   });
 });
 
@@ -715,5 +727,128 @@ describe('AudioPlayer playback lock', () => {
 
     expect(await screen.findByRole('button', { name: /pause/i })).toBeInTheDocument();
     expect(audioEl.currentTime).toBe(1);
+  });
+});
+
+describe('AudioPlayer chunk-to-chunk audio preloading', () => {
+  beforeEach(() => {
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.pause = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("buffers the next chunk's actual audio into the standby element as soon as it's ready, ahead of the current chunk ending", async () => {
+    global.fetch = vi.fn(async (_url, { body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      return new Response(
+        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
+        { status: 200 },
+      );
+    });
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-preload-1" chunks={chunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /pause/i });
+
+    // Buffered into the standby element while chunk 0 is still playing - not yet the
+    // active one.
+    const standbyEl = screen.getByTestId('audio-element-standby');
+    await waitFor(() => expect(standbyEl.src).toBe('https://blob.test/1'));
+    expect(standbyEl).not.toHaveAttribute('data-active');
+  });
+
+  test('advances to an already-buffered standby element without a fresh src assignment, then starts preloading the chunk after that', async () => {
+    global.fetch = vi.fn(async (_url, { body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      return new Response(
+        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
+        { status: 200 },
+      );
+    });
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-preload-2" chunks={chunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /pause/i });
+
+    const primaryEl = screen.getByTestId('audio-element');
+    const standbyEl = screen.getByTestId('audio-element-standby');
+    await waitFor(() => expect(standbyEl.src).toBe('https://blob.test/1'));
+    const preloadedSrc = standbyEl.src;
+
+    fireEvent.ended(primaryEl);
+
+    await waitFor(() => expect(screen.getByText('Chunk 2 of 4')).toBeInTheDocument());
+    // Still exactly the src it was preloaded with - proves no fresh load happened at
+    // the moment of the swap.
+    expect(standbyEl.src).toBe(preloadedSrc);
+    expect(standbyEl).toHaveAttribute('data-active', 'true');
+    expect(primaryEl).not.toHaveAttribute('data-active');
+    // The now-standby element (previously active) starts buffering chunk 2 in turn.
+    await waitFor(() => expect(primaryEl.src).toBe('https://blob.test/2'));
+  });
+
+  test("falls back to a cold load on the newly-current chunk when its audio wasn't buffered in time, preserving existing chunk-advancement behavior", async () => {
+    const resolvers = {};
+    global.fetch = vi.fn(
+      (_url, { body }) =>
+        new Promise((resolve) => {
+          const { chunkIndex } = JSON.parse(body);
+          resolvers[chunkIndex] = resolve;
+        }),
+    );
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-preload-3" chunks={chunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+    resolvers[0](
+      new Response(JSON.stringify({ url: 'https://blob.test/0', boundaries: [] }), {
+        status: 200,
+      }),
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /pause/i });
+
+    const primaryEl = screen.getByTestId('audio-element');
+    const standbyEl = screen.getByTestId('audio-element-standby');
+    // Chunk 1's request is still in flight - nothing buffered into standby yet.
+    expect(standbyEl).not.toHaveAttribute('src');
+
+    fireEvent.ended(primaryEl);
+
+    // No swap happened (nothing was buffered) - the primary element stays "active".
+    expect(primaryEl).toHaveAttribute('data-active', 'true');
+    expect(screen.getByText('Chunk 2 of 4')).toBeInTheDocument();
+
+    resolvers[1](
+      new Response(JSON.stringify({ url: 'https://blob.test/1', boundaries: [] }), {
+        status: 200,
+      }),
+    );
+
+    // Falls back to the normal cold-load path, unchanged from before this ticket, once
+    // chunk 1's audio finally becomes ready.
+    await waitFor(() => expect(primaryEl.src).toBe('https://blob.test/1'));
   });
 });

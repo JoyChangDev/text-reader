@@ -21,7 +21,9 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
   const [voice, setVoice] = useState(() => getListenerSettings().voice);
   const [speed, setSpeed] = useState(() => getListenerSettings().speed);
   const {
-    audioRef,
+    primaryAudioRef,
+    secondaryAudioRef,
+    activeIsPrimary,
     currentIndex,
     isPlaying,
     chunkAudio,
@@ -117,11 +119,24 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
         previewingVoice={previewingVoice}
         onTogglePreviewVoice={togglePreviewVoice}
       />
+      {/* A ping-pong pair, not one element per role: which one is "active" (playing) vs.
+          "standby" (preloading the next chunk in the background) flips over time as
+          chunks advance, rather than either element having a fixed role (see ticket 05). */}
       <audio
-        ref={audioRef}
+        ref={primaryAudioRef}
+        preload="auto"
         onEnded={handleEnded}
         onTimeUpdate={handleTimeUpdate}
         data-testid="audio-element"
+        data-active={activeIsPrimary ? 'true' : undefined}
+      />
+      <audio
+        ref={secondaryAudioRef}
+        preload="auto"
+        onEnded={handleEnded}
+        onTimeUpdate={handleTimeUpdate}
+        data-testid="audio-element-standby"
+        data-active={activeIsPrimary ? undefined : 'true'}
       />
       <audio ref={previewAudioRef} onEnded={handlePreviewEnded} data-testid="voice-preview-audio" />
     </Box>

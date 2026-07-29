@@ -8,22 +8,43 @@ import { deriveSentenceSpans } from './sentenceSpans';
 
 const LOOKAHEAD = 2;
 
+// Assigns a chunk's audio into a physical <audio> element and stamps which chunk index
+// it now holds - shared by the standby-preload effect and the active element's
+// cold-load path below so both stay in sync (see ticket 05).
+function loadAudioInto(audio, loadedIndexRef, index, url, speed) {
+  audio.src = url;
+  audio.playbackRate = speed;
+  loadedIndexRef.current = index;
+}
+
 // Drives progressive, sequential playback of a book's chunks: fetches a small
 // look-ahead window of upcoming chunks in the background (via /api/audio-chunks)
 // while the current one plays, and advances to the next chunk when the current
-// one finishes. Callers attach `audioRef` to a single <audio> element and its
-// `onEnded` to `handleEnded`. `initialIndex` lets a caller resume a book at a
-// previously-saved position (see ticket 07); the current chunk index is kept
-// persisted back to the library as the resume position.
+// one finishes. Callers attach `primaryAudioRef`/`secondaryAudioRef` to a pair of
+// <audio> elements and both elements' `onEnded`/`onTimeUpdate` to `handleEnded`/
+// `handleTimeUpdate` - `activeIsPrimary` says which one is currently playing (see
+// ticket 05, the ping-pong preloading below). `initialIndex` lets a caller resume a
+// book at a previously-saved position (see ticket 07); the current chunk index is
+// kept persisted back to the library as the resume position.
 export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed = 1 }) {
   const [chunkAudio, setChunkAudio] = useState({});
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [wantsToPlay, setWantsToPlay] = useState(false);
   const [activeSentenceIndex, setActiveSentenceIndex] = useState(0);
   const [currentTimeSeconds, setCurrentTimeSeconds] = useState(0);
-  const audioRef = useRef(null);
+  // Which physical <audio> element is the "active" (playing) one vs. the "standby"
+  // (preloading) one - flips on each natural chunk advance whose next chunk was
+  // already buffered ahead of time, rather than either element having a fixed role
+  // (see ticket 05).
+  const [activeIsPrimary, setActiveIsPrimary] = useState(true);
+  const primaryAudioRef = useRef(null);
+  const secondaryAudioRef = useRef(null);
   const pendingFetchesRef = useRef(new Set());
-  const loadedIndexRef = useRef(null);
+  // Which chunk index (if any) is currently loaded (src assigned) into each physical
+  // element, tracked per element rather than per role so a role flip doesn't require
+  // copying values between refs - only the active/standby labels below move.
+  const primaryLoadedIndexRef = useRef(null);
+  const secondaryLoadedIndexRef = useRef(null);
   // A cross-chunk jump-to-sentence request, applied once its target chunk's audio
   // finishes loading (see the "load and play" effect below).
   const pendingSeekRef = useRef(null);
@@ -35,8 +56,16 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
   // reset effect would see pendingSeekRef already cleared and undo the seek it just missed.
   const seekAppliedIndexRef = useRef(null);
 
+  const activeAudioRef = activeIsPrimary ? primaryAudioRef : secondaryAudioRef;
+  const standbyAudioRef = activeIsPrimary ? secondaryAudioRef : primaryAudioRef;
+  const activeLoadedIndexRef = activeIsPrimary ? primaryLoadedIndexRef : secondaryLoadedIndexRef;
+  const standbyLoadedIndexRef = activeIsPrimary ? secondaryLoadedIndexRef : primaryLoadedIndexRef;
+
   const currentStatus = chunkAudio[currentIndex]?.status;
   const currentUrl = chunkAudio[currentIndex]?.url;
+  const nextIndex = currentIndex + 1;
+  const nextStatus = chunkAudio[nextIndex]?.status;
+  const nextUrl = chunkAudio[nextIndex]?.url;
 
   // Sentence-level spans for the currently-loaded chunk, derived from its word-boundary
   // metadata - a pure re-derivation from cached data, not persisted state (see ticket 01).
@@ -100,30 +129,58 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
     plan.forEach((index) => fetchChunk(index));
   }, [chunks, currentIndex, chunkAudio, fetchChunk]);
 
+  // As soon as the next chunk's audio is known (its metadata, including the blob URL,
+  // is already prefetched by the look-ahead above), start loading its actual audio
+  // bytes into the standby element in the background - independent of whether the
+  // current chunk is playing or paused, so it's ready the moment playback reaches it
+  // (see ticket 05). A no-op once the standby element already holds this same chunk.
+  useEffect(() => {
+    const standbyAudio = standbyAudioRef.current;
+    if (!standbyAudio) return;
+    if (nextIndex >= chunks.length) return;
+    if (nextStatus !== 'ready') return;
+    if (standbyLoadedIndexRef.current === nextIndex) return;
+
+    loadAudioInto(standbyAudio, standbyLoadedIndexRef, nextIndex, nextUrl, speed);
+  }, [
+    nextIndex,
+    nextStatus,
+    nextUrl,
+    chunks.length,
+    speed,
+    standbyAudioRef,
+    standbyLoadedIndexRef,
+  ]);
+
   // Shared by both seek paths below (same-chunk direct seek, and the cross-chunk
   // pending-seek applied once loading finishes) so there's one place that sets
   // audio.currentTime and the active-sentence highlight together.
-  const applySeek = useCallback((spans, sentenceIndex, chunkIndex) => {
-    const audio = audioRef.current;
-    const target = spans[sentenceIndex];
-    if (!audio || !target) return;
-    audio.currentTime = target.startSeconds;
-    setActiveSentenceIndex(sentenceIndex);
-    setCurrentTimeSeconds(target.startSeconds);
-    seekAppliedIndexRef.current = chunkIndex;
-  }, []);
+  const applySeek = useCallback(
+    (spans, sentenceIndex, chunkIndex) => {
+      const audio = activeAudioRef.current;
+      const target = spans[sentenceIndex];
+      if (!audio || !target) return;
+      audio.currentTime = target.startSeconds;
+      setActiveSentenceIndex(sentenceIndex);
+      setCurrentTimeSeconds(target.startSeconds);
+      seekAppliedIndexRef.current = chunkIndex;
+    },
+    [activeAudioRef],
+  );
 
-  // Once the current chunk's audio is ready and playback is desired, load and play it.
-  // A jump-to-sentence request targeting this chunk (see seekToSentence) is applied here,
-  // once its audio has actually finished loading rather than optimistically beforehand.
+  // Once the current chunk's audio is ready and playback is desired, load and play it
+  // on the active element. A jump-to-sentence request targeting this chunk (see
+  // seekToSentence) is applied here, once its audio has actually finished loading
+  // rather than optimistically beforehand. When the active element already holds this
+  // chunk's audio - either because it was already playing, or because a natural
+  // advance just swapped in an already-buffered standby element (see handleEnded below)
+  // - this only resumes playback, without a fresh (and gap-inducing) src assignment.
   useEffect(() => {
-    const audio = audioRef.current;
+    const audio = activeAudioRef.current;
     if (!audio || !isPlaying || currentStatus !== 'ready') return;
 
-    if (loadedIndexRef.current !== currentIndex) {
-      audio.src = currentUrl;
-      audio.playbackRate = speed;
-      loadedIndexRef.current = currentIndex;
+    if (activeLoadedIndexRef.current !== currentIndex) {
+      loadAudioInto(audio, activeLoadedIndexRef, currentIndex, currentUrl, speed);
 
       const pendingSeek = pendingSeekRef.current;
       if (pendingSeek?.chunkIndex === currentIndex) {
@@ -135,14 +192,26 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
     } else if (audio.paused) {
       audio.play();
     }
-  }, [isPlaying, currentIndex, currentStatus, currentUrl, currentSentenceSpans, applySeek, speed]);
+  }, [
+    isPlaying,
+    currentIndex,
+    currentStatus,
+    currentUrl,
+    currentSentenceSpans,
+    applySeek,
+    speed,
+    activeAudioRef,
+    activeLoadedIndexRef,
+  ]);
 
-  // Applied immediately to whatever's currently loaded, independent of the chunk-load
-  // effect above (which only runs when the chunk itself changes) - a pure client-side
-  // effect, no new TTS calls or cache changes (see ticket 04).
+  // Applied immediately to both elements, independent of the chunk-load effect above
+  // (which only runs when the chunk itself changes) - a pure client-side effect, no new
+  // TTS calls or cache changes (see ticket 04). Covers both elements (not just the
+  // active one) so a chunk already preloaded into the standby element carries the
+  // current speed too, once it becomes active (see ticket 05).
   useEffect(() => {
-    const audio = audioRef.current;
-    if (audio) audio.playbackRate = speed;
+    if (primaryAudioRef.current) primaryAudioRef.current.playbackRate = speed;
+    if (secondaryAudioRef.current) secondaryAudioRef.current.playbackRate = speed;
   }, [speed]);
 
   // Persist the reading position as it advances, so reopening this book later
@@ -167,25 +236,36 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
     setCurrentTimeSeconds(0);
   }, [currentIndex]);
 
+  // Advances to the next chunk. If its audio was already buffered into the standby
+  // element by the preload effect above, ping-pongs the active/standby roles so the
+  // "load and play" effect just resumes the already-buffered element instead of
+  // assigning a cold src and waiting on a fresh load (see ticket 05) - otherwise it
+  // falls back to that same cold-load path once the chunk's audio becomes ready,
+  // unchanged from before this ticket.
   const handleEnded = useCallback(() => {
     if (currentIndex + 1 >= chunks.length) {
       setWantsToPlay(false);
       return;
     }
+
+    if (standbyLoadedIndexRef.current === currentIndex + 1) {
+      setActiveIsPrimary((prev) => !prev);
+    }
+
     setCurrentIndex(currentIndex + 1);
-  }, [currentIndex, chunks.length]);
+  }, [currentIndex, chunks.length, standbyLoadedIndexRef]);
 
   const play = useCallback(() => setWantsToPlay(true), []);
   const pause = useCallback(() => {
     setWantsToPlay(false);
-    audioRef.current?.pause();
-  }, []);
+    activeAudioRef.current?.pause();
+  }, [activeAudioRef]);
 
   // Finds which derived sentence span contains the audio element's current playback
   // time, so the active-sentence highlight tracks natural playback without a separate
   // polling timer.
   const handleTimeUpdate = useCallback(() => {
-    const audio = audioRef.current;
+    const audio = activeAudioRef.current;
     if (!audio) return;
     setCurrentTimeSeconds(audio.currentTime);
 
@@ -200,7 +280,7 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
     } else if (time >= currentSentenceSpans.at(-1).endSeconds) {
       setActiveSentenceIndex(currentSentenceSpans.length - 1);
     }
-  }, [currentSentenceSpans]);
+  }, [currentSentenceSpans, activeAudioRef]);
 
   // Sets where the _next_ play will start, identified by a chunk and its index within
   // that chunk's derived sentence spans - the click target for both the current chunk's
@@ -208,15 +288,18 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
   // playback (see ticket 02) - pressing play afterwards is what begins it, once the
   // target chunk is ready (see the "load and play" effect above). A chunk that isn't
   // ready yet is fetched directly here, bypassing chunkFetchPlan's sequential look-ahead
-  // ordering, so seeking ahead doesn't force generating every chunk in between.
+  // ordering, so seeking ahead doesn't force generating every chunk in between. An
+  // explicit jump like this always loads onto the active element directly (unlike a
+  // natural advance, it never ping-pongs to a preloaded standby - see ticket 05).
   const seekToSentence = useCallback(
     (chunkIndex, sentenceIndex) => {
       const entry = chunkAudio[chunkIndex];
-      // "Already loaded" means the <audio> element's src already points at this chunk
-      // (playback of it has started at least once) - not merely that its audio is ready,
-      // since assigning a fresh src (done by the load-and-play effect below) resets
-      // playback position and would otherwise silently undo a seek applied here first.
-      const alreadyLoaded = chunkIndex === currentIndex && loadedIndexRef.current === currentIndex;
+      // "Already loaded" means the active <audio> element's src already points at this
+      // chunk (playback of it has started at least once) - not merely that its audio is
+      // ready, since assigning a fresh src (done by the load-and-play effect below)
+      // resets playback position and would otherwise silently undo a seek applied here.
+      const alreadyLoaded =
+        chunkIndex === currentIndex && activeLoadedIndexRef.current === currentIndex;
 
       if (alreadyLoaded && entry?.status === 'ready') {
         pendingSeekRef.current = null;
@@ -224,7 +307,7 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
         return;
       }
 
-      // The target chunk's audio isn't loaded into the <audio> element yet, so its
+      // The target chunk's audio isn't loaded into the active element yet, so its
       // exact start-of-sentence offset can't be applied to `audio.currentTime` here -
       // that happens once pendingSeekRef is picked up by the "load and play" effect.
       // The active-sentence highlight updates immediately regardless, so the Listener
@@ -238,11 +321,13 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
         setCurrentIndex(chunkIndex);
       }
     },
-    [chunkAudio, currentIndex, currentSentenceSpans, applySeek, fetchChunk],
+    [chunkAudio, currentIndex, currentSentenceSpans, applySeek, fetchChunk, activeLoadedIndexRef],
   );
 
   return {
-    audioRef,
+    primaryAudioRef,
+    secondaryAudioRef,
+    activeIsPrimary,
     currentIndex,
     isPlaying,
     chunkAudio,
