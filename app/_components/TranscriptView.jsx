@@ -10,15 +10,19 @@ import { splitIntoSentences } from '@/app/_lib/chunkText';
 const AUTO_SCROLL_RESUME_DELAY_MS = 4000;
 
 // Scrollable rendering of the whole book's text, sentence by sentence: highlights
-// whichever sentence is currently playing, auto-scrolls to keep it visible, and
-// reports clicks (chunkIndex, sentenceIndex) - including on a sentence in a chunk
-// that hasn't been generated yet - via onSentenceClick, so the caller can drive
-// seeking (see ticket 01). Split out of AudioPlayer as its own component so it can
-// scroll independently of the persistent PlayerBar (see ticket 07).
+// whichever sentence is currently playing (or queued to play next, once paused - see
+// ticket 02), auto-scrolls to keep it visible, and reports clicks (chunkIndex,
+// sentenceIndex) - including on a sentence in a chunk that hasn't been generated yet -
+// via onSentenceClick, so the caller can drive seeking (see ticket 01). Sentence
+// clicking is disabled while playing, so an accidental tap can't derail playback -
+// scrolling itself is never affected either way (see ticket 02). Split out of
+// AudioPlayer as its own component so it can scroll independently of the persistent
+// PlayerBar (see ticket 07).
 export default function TranscriptView({
   chunks,
   currentIndex,
   activeSentenceIndex,
+  isPlaying,
   onSentenceClick,
 }) {
   // Every chunk's raw text is already available client-side (it was chunked before any
@@ -87,8 +91,8 @@ export default function TranscriptView({
                 data-active={isActive ? 'true' : undefined}
                 bg={isActive ? 'activeSentenceBg' : undefined}
                 color={isActive ? 'activeSentenceFg' : undefined}
-                cursor="pointer"
-                onClick={() => onSentenceClick(chunkIndex, sentenceIndex)}
+                cursor={isPlaying ? 'default' : 'pointer'}
+                onClick={isPlaying ? undefined : () => onSentenceClick(chunkIndex, sentenceIndex)}
               >
                 {sentence}
               </Text>

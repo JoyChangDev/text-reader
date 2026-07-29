@@ -101,6 +101,7 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
         chunks={chunks}
         currentIndex={currentIndex}
         activeSentenceIndex={activeSentenceIndex}
+        isPlaying={isPlaying}
         onSentenceClick={seekToSentence}
       />
       <PlayerBar

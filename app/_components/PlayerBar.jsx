@@ -10,9 +10,11 @@ import ThemeToggle from './ThemeToggle';
 
 // Persistent, media-player-style bottom bar: the whole-book progress scrubber (ticket
 // 08), current chunk position, transport controls (play/pause/retry, using standard
-// media-player glyphs rather than text labels), the voice picker (ticket 02), the
-// speed control (ticket 04), and the theme picker (ticket 09) all live here so they
-// stay visible while TranscriptView scrolls above it (see ticket 07).
+// media-player glyphs rather than text labels), the voice picker, the speed control,
+// and the theme picker (ticket 09) all live here so they stay visible while
+// TranscriptView scrolls above it (see ticket 07). The voice and speed pickers are
+// disabled while a chunk is actively playing, so an accidental change doesn't happen
+// mid-sentence - pausing unlocks them again (see ticket 02).
 export default function PlayerBar({
   currentIndex,
   totalChunks,
@@ -63,7 +65,7 @@ export default function PlayerBar({
             <FiPlay />
           </Button>
         )}
-        <NativeSelect.Root width="auto">
+        <NativeSelect.Root width="auto" disabled={isPlaying}>
           <NativeSelect.Field aria-label="Narration voice" value={voice} onChange={onVoiceChange}>
             {AVAILABLE_VOICES.map((option) => (
               <option key={option.value} value={option.value}>
@@ -73,7 +75,7 @@ export default function PlayerBar({
           </NativeSelect.Field>
           <NativeSelect.Indicator />
         </NativeSelect.Root>
-        <NativeSelect.Root width="auto">
+        <NativeSelect.Root width="auto" disabled={isPlaying}>
           <NativeSelect.Field aria-label="Playback speed" value={speed} onChange={onSpeedChange}>
             {AVAILABLE_SPEEDS.map((option) => (
               <option key={option} value={option}>

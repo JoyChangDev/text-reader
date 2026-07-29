@@ -518,7 +518,7 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
   // Auto-scroll suspension on manual scroll is TranscriptView's own behavior,
   // unit-tested in isolation there (see ticket 07) - not re-asserted here.
 
-  test('clicking a sentence in the currently loaded chunk seeks audio.currentTime there', async () => {
+  test('clicking a sentence while paused highlights it and queues it without starting playback; pressing play then seeks and plays from there', async () => {
     render(
       <ChakraProvider>
         <AudioPlayer bookId="book-seek" chunks={twoSentenceChunks} />
@@ -531,12 +531,20 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     const audioEl = screen.getByTestId('audio-element');
     fireEvent.click(screen.getByTestId('sentence-0-1'));
 
+    // Selecting a sentence while paused only queues it (see ticket 02) - the highlight
+    // updates immediately, but nothing plays until Play is pressed.
+    expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true');
+    expect(audioEl.currentTime).toBe(0);
+    expect(screen.getByRole('button', { name: /^play$/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^play$/i }));
+
     await waitFor(() => expect(audioEl.currentTime).toBe(1));
     expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true');
     expect(await screen.findByRole('button', { name: /pause/i })).toBeInTheDocument();
   });
 
-  test('clicking a sentence in a not-yet-generated chunk generates only that chunk - not the ones skipped over - then seeks there once ready', async () => {
+  test('clicking a sentence in a not-yet-generated chunk generates only that chunk - not the ones skipped over - then seeks there once play is pressed', async () => {
     const eightChunks = [
       '第一段。',
       '第二段。',
@@ -582,9 +590,131 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     // ahead must not force generating any of them.
     expect(requestedChunkIndexes()).not.toEqual(expect.arrayContaining([3, 4, 5]));
 
+    // The highlight is already queued on the selected sentence, but nothing has played
+    // yet - clicking a sentence only sets up where the next play will start (ticket 02).
+    expect(screen.getByTestId('sentence-6-1')).toHaveAttribute('data-active', 'true');
     const audioEl = screen.getByTestId('audio-element');
+    expect(audioEl.currentTime).toBe(0);
+
+    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    await waitFor(() => expect(playButton).toBeEnabled());
+    fireEvent.click(playButton);
+
     await waitFor(() => expect(audioEl.currentTime).toBe(1));
     expect(await screen.findByTestId('sentence-6-1')).toHaveAttribute('data-active', 'true');
+  });
+});
+
+describe('AudioPlayer playback lock', () => {
+  const twoSentenceChunks = ['第一句。第二句。', '第三句。第四句。'];
+  const boundariesByChunk = {
+    0: [
+      { text: '第一句', offset: 0, duration: 10_000_000 },
+      { text: '第二句', offset: 10_000_000, duration: 10_000_000 },
+    ],
+    1: [
+      { text: '第三句', offset: 0, duration: 10_000_000 },
+      { text: '第四句', offset: 10_000_000, duration: 10_000_000 },
+    ],
+  };
+
+  beforeEach(() => {
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.pause = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
+
+    global.fetch = vi.fn(async (_url, { body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      return new Response(
+        JSON.stringify({
+          url: `https://blob.test/${chunkIndex}`,
+          boundaries: boundariesByChunk[chunkIndex] ?? [],
+        }),
+        { status: 200 },
+      );
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('disables the voice and speed pickers while playing, and re-enables them on pause', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-lock" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    expect(screen.getByLabelText(/narration voice/i)).toBeEnabled();
+    expect(screen.getByLabelText(/playback speed/i)).toBeEnabled();
+
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /pause/i });
+
+    expect(screen.getByLabelText(/narration voice/i)).toBeDisabled();
+    expect(screen.getByLabelText(/playback speed/i)).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: /pause/i }));
+
+    expect(await screen.findByRole('button', { name: /^play$/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/narration voice/i)).toBeEnabled();
+    expect(screen.getByLabelText(/playback speed/i)).toBeEnabled();
+  });
+
+  test('clicking a sentence while playing has no effect', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-lock-2" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /pause/i });
+
+    const audioEl = screen.getByTestId('audio-element');
+    expect(screen.getByTestId('sentence-0-0')).toHaveAttribute('data-active', 'true');
+
+    fireEvent.click(screen.getByTestId('sentence-1-1'));
+
+    // No highlight change, no seek, no chunk jump - the accidental tap is a no-op
+    // while playing (see ticket 02).
+    expect(screen.getByTestId('sentence-0-0')).toHaveAttribute('data-active', 'true');
+    expect(screen.getByTestId('sentence-1-1')).not.toHaveAttribute('data-active');
+    expect(audioEl.currentTime).toBe(0);
+    expect(screen.getByText('Chunk 1 of 2')).toBeInTheDocument();
+  });
+
+  test('clicking a different sentence in the already-loaded chunk while paused seeks immediately, without resuming playback', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-lock-3" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /pause/i });
+
+    fireEvent.click(screen.getByRole('button', { name: /pause/i }));
+    await screen.findByRole('button', { name: /^play$/i });
+
+    const audioEl = screen.getByTestId('audio-element');
+    fireEvent.click(screen.getByTestId('sentence-0-1'));
+
+    // The chunk was already loaded (it had started playing before the pause), so the
+    // seek applies to audio.currentTime immediately - but it still doesn't resume
+    // playback on its own (see ticket 02, the alreadyLoaded branch of seekToSentence).
+    expect(audioEl.currentTime).toBe(1);
+    expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true');
+    expect(screen.getByRole('button', { name: /^play$/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^play$/i }));
+
+    expect(await screen.findByRole('button', { name: /pause/i })).toBeInTheDocument();
+    expect(audioEl.currentTime).toBe(1);
   });
 });
 

@@ -113,6 +113,20 @@ describe('PlayerBar', () => {
     expect(onSpeedChange).toHaveBeenCalledTimes(1);
   });
 
+  test('enables the voice and speed pickers while paused', () => {
+    renderBar({ isPlaying: false });
+
+    expect(screen.getByLabelText(/narration voice/i)).toBeEnabled();
+    expect(screen.getByLabelText(/playback speed/i)).toBeEnabled();
+  });
+
+  test('disables the voice and speed pickers while playing', () => {
+    renderBar({ isPlaying: true });
+
+    expect(screen.getByLabelText(/narration voice/i)).toBeDisabled();
+    expect(screen.getByLabelText(/playback speed/i)).toBeDisabled();
+  });
+
   test('offers a preview button per voice, labeled to preview or stop depending on previewingVoice', () => {
     const onTogglePreviewVoice = vi.fn();
     renderBar({ previewingVoice: 'zh-TW-YunJheNeural', onTogglePreviewVoice });

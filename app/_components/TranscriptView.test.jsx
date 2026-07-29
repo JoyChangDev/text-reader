@@ -39,7 +39,7 @@ describe('TranscriptView', () => {
     expect(screen.getByTestId('sentence-1-1')).not.toHaveAttribute('data-active');
   });
 
-  test('calls onSentenceClick with the chunk and sentence index that was clicked', () => {
+  test('calls onSentenceClick with the chunk and sentence index that was clicked, while not playing', () => {
     const onSentenceClick = vi.fn();
     render(
       <ChakraProvider>
@@ -47,6 +47,7 @@ describe('TranscriptView', () => {
           chunks={twoSentenceChunks}
           currentIndex={0}
           activeSentenceIndex={0}
+          isPlaying={false}
           onSentenceClick={onSentenceClick}
         />
       </ChakraProvider>,
@@ -55,6 +56,25 @@ describe('TranscriptView', () => {
     fireEvent.click(screen.getByTestId('sentence-1-0'));
 
     expect(onSentenceClick).toHaveBeenCalledWith(1, 0);
+  });
+
+  test('does not call onSentenceClick when a sentence is clicked while playing', () => {
+    const onSentenceClick = vi.fn();
+    render(
+      <ChakraProvider>
+        <TranscriptView
+          chunks={twoSentenceChunks}
+          currentIndex={0}
+          activeSentenceIndex={0}
+          isPlaying={true}
+          onSentenceClick={onSentenceClick}
+        />
+      </ChakraProvider>,
+    );
+
+    fireEvent.click(screen.getByTestId('sentence-1-0'));
+
+    expect(onSentenceClick).not.toHaveBeenCalled();
   });
 
   test('auto-scrolls to the active sentence when it changes', () => {

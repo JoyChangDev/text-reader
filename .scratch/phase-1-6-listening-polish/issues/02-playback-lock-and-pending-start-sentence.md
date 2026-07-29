@@ -7,19 +7,19 @@ the _next_ play will start rather than immediately playing.
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Voice select and speed select are disabled while the current chunk is playing,
+- [x] Voice select and speed select are disabled while the current chunk is playing,
       enabled while paused
-- [ ] Clicking a sentence in the transcript while playing has no effect
-- [ ] Clicking a sentence while paused immediately updates the active-sentence highlight
+- [x] Clicking a sentence in the transcript while playing has no effect
+- [x] Clicking a sentence while paused immediately updates the active-sentence highlight
       and displayed position (so the listener sees what's queued), without starting
       playback
-- [ ] Pressing play after selecting a sentence while paused begins playback from that
+- [x] Pressing play after selecting a sentence while paused begins playback from that
       selected sentence, once its chunk is ready
-- [ ] Scrolling the transcript is unaffected by playing/paused state either way
-- [ ] `seekToSentence` no longer forces playback to start (`wantsToPlay` is not set by it)
-- [ ] Existing AudioPlayer/PlayerBar/TranscriptView tests are updated to cover locked vs.
+- [x] Scrolling the transcript is unaffected by playing/paused state either way
+- [x] `seekToSentence` no longer forces playback to start (`wantsToPlay` is not set by it)
+- [x] Existing AudioPlayer/PlayerBar/TranscriptView tests are updated to cover locked vs.
       unlocked behavior and the new pending-start flow
 
 ## Comments

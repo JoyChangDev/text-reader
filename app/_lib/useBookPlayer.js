@@ -220,9 +220,11 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
     }
   }, [currentSentenceSpans]);
 
-  // Jumps playback to a specific sentence, identified by its chunk and its index within
+  // Sets where the _next_ play will start, identified by a chunk and its index within
   // that chunk's derived sentence spans - the click target for both the current chunk's
-  // text and any other chunk's, generated or not (see ticket 01). A chunk that isn't
+  // text and any other chunk's, generated or not (see ticket 01). Does not itself start
+  // playback (see ticket 02) - pressing play afterwards is what begins it, once the
+  // target chunk is ready (see the "load and play" effect above). A chunk that isn't
   // ready yet is fetched directly here, bypassing chunkFetchPlan's sequential look-ahead
   // ordering, so seeking ahead doesn't force generating every chunk in between.
   const seekToSentence = useCallback(
@@ -237,12 +239,16 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
       if (alreadyLoaded && entry?.status === 'ready') {
         pendingSeekRef.current = null;
         applySeek(currentSentenceSpans, sentenceIndex, currentIndex);
-        setWantsToPlay(true);
         return;
       }
 
+      // The target chunk's audio isn't loaded into the <audio> element yet, so its
+      // exact start-of-sentence offset can't be applied to `audio.currentTime` here -
+      // that happens once pendingSeekRef is picked up by the "load and play" effect.
+      // The active-sentence highlight updates immediately regardless, so the Listener
+      // sees what's queued to play next (see ticket 02, story 7).
       pendingSeekRef.current = { chunkIndex, sentenceIndex };
-      setWantsToPlay(true);
+      setActiveSentenceIndex(sentenceIndex);
       if (entry?.status !== 'ready') {
         fetchChunk(chunkIndex);
       }
@@ -255,10 +261,12 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
 
   // Jumps playback to a book-level scrub target (seconds from the start of the whole
   // book, per `timeline`) - the drop target for the whole-book progress scrubber (see
-  // ticket 08). Resolves the target chunk/offset, then the sentence within that chunk
-  // closest to it, and hands off to seekToSentence above so both the "already generated"
-  // and "not yet generated" paths (including bypassing the sequential look-ahead) are
-  // reused rather than re-implemented here.
+  // ticket 08, removed in ticket 04). Resolves the target chunk/offset, then the sentence
+  // within that chunk closest to it, and hands off to seekToSentence above so both the
+  // "already generated" and "not yet generated" paths (including bypassing the sequential
+  // look-ahead) are reused rather than re-implemented here. Unlike a direct sentence
+  // click, dragging the scrubber still starts playback immediately (an explicit `play()`
+  // here, since seekToSentence itself no longer does - see ticket 02).
   const seekToBookOffset = useCallback(
     (targetSeconds) => {
       const location = locateBookOffset(timeline.segments, targetSeconds);
@@ -274,6 +282,7 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
       });
 
       seekToSentence(chunkIndex, sentenceIndex);
+      setWantsToPlay(true);
     },
     [timeline, chunks, chunkAudio, seekToSentence],
   );
