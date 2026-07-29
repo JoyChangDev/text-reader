@@ -1,14 +1,30 @@
 'use client';
 
 import { Box, Button, Text } from '@chakra-ui/react';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FiTarget } from 'react-icons/fi';
 
 import { splitIntoSentences } from '@/app/_lib/chunkText';
 
+import ScrollPositionIndicator from './ScrollPositionIndicator';
+
 // How long to leave auto-scroll suspended after the reader scrolls manually, before
 // resuming to follow the active sentence again (see ticket 01).
 const AUTO_SCROLL_RESUME_DELAY_MS = 4000;
+
+// How much of the transcript container's content is scrollable - shared by both
+// directions of the scrollTop <-> percentage conversion below.
+function scrollableRange(container) {
+  return container.scrollHeight - container.clientHeight;
+}
+
+// The transcript container's scroll position as a percentage - purely a function of its
+// own scroll geometry, with no chunk index or audio duration data involved (see ticket 04).
+function computeScrollPercent(container) {
+  if (!container) return 0;
+  const scrollable = scrollableRange(container);
+  return scrollable > 0 ? (container.scrollTop / scrollable) * 100 : 0;
+}
 
 // Scrollable rendering of the whole book's text, sentence by sentence: highlights
 // whichever sentence is currently playing (or queued to play next, once paused - see
@@ -35,14 +51,22 @@ export default function TranscriptView({
   );
 
   const activeSentenceRef = useRef(null);
+  const scrollContainerRef = useRef(null);
   const suspendAutoScrollRef = useRef(false);
   const resumeAutoScrollTimeoutRef = useRef(null);
   const isProgrammaticScrollRef = useRef(false);
+  const [scrollPercent, setScrollPercent] = useState(0);
+
+  const updateScrollPercent = useCallback(() => {
+    setScrollPercent(computeScrollPercent(scrollContainerRef.current));
+  }, []);
 
   // A scroll the reader triggered themselves (as opposed to our own scrollIntoView
   // below) suspends auto-scroll rather than fighting them, resuming after a short idle
-  // period.
+  // period. The scroll-position indicator tracks every scroll regardless of source, so
+  // it stays in sync during auto-scroll and "jump to now playing" too (see ticket 04).
   const handleManualScroll = useCallback(() => {
+    updateScrollPercent();
     if (isProgrammaticScrollRef.current) return;
 
     suspendAutoScrollRef.current = true;
@@ -50,6 +74,24 @@ export default function TranscriptView({
     resumeAutoScrollTimeoutRef.current = setTimeout(() => {
       suspendAutoScrollRef.current = false;
     }, AUTO_SCROLL_RESUME_DELAY_MS);
+  }, [updateScrollPercent]);
+
+  useEffect(() => {
+    updateScrollPercent();
+  }, [updateScrollPercent]);
+
+  // The scroll-position indicator's drop target: sets the transcript's own scrollTop
+  // directly from the target percentage. It never touches audio.currentTime or
+  // chunk/sentence seeking - purely a text-scroll affordance (see ticket 04). Named
+  // apart from "seek" (used elsewhere for audio/sentence seeking) so the two aren't
+  // confused for one another.
+  const handleScrollPercentChange = useCallback((percent) => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const scrollable = scrollableRange(container);
+    container.scrollTop = scrollable > 0 ? (percent / 100) * scrollable : 0;
+    setScrollPercent(percent);
   }, []);
 
   // Shared by both the auto-scroll effect below and the "jump to now playing" button
@@ -85,50 +127,60 @@ export default function TranscriptView({
   }, [scrollToActiveSentence]);
 
   return (
-    <Box position="relative" flex="1" minH={0} w="full">
-      <Button
-        aria-label="Jump to now playing"
-        onClick={handleJumpToNowPlaying}
-        position="absolute"
-        bottom={4}
-        right={4}
-        zIndex={1}
-        size="sm"
-        borderRadius="full"
-      >
-        <FiTarget />
-      </Button>
-      <Box
-        onScroll={handleManualScroll}
-        h="full"
-        w="full"
-        overflowY="auto"
-        role="log"
-        aria-label="Book text"
-      >
-        {chunks.map((_, chunkIndex) => (
-          <Text as="p" key={chunkIndex} mb={2}>
-            {sentencesByChunk[chunkIndex].map((sentence, sentenceIndex) => {
-              const isActive = chunkIndex === currentIndex && sentenceIndex === activeSentenceIndex;
+    <Box display="flex" flexDirection="column" flex="1" minH={0} w="full">
+      <ScrollPositionIndicator
+        percent={scrollPercent}
+        onPercentChange={handleScrollPercentChange}
+      />
+      <Box position="relative" flex="1" minH={0} w="full">
+        <Button
+          aria-label="Jump to now playing"
+          onClick={handleJumpToNowPlaying}
+          position="absolute"
+          bottom={4}
+          right={4}
+          zIndex={1}
+          size="sm"
+          borderRadius="full"
+        >
+          <FiTarget />
+        </Button>
+        <Box
+          ref={scrollContainerRef}
+          onScroll={handleManualScroll}
+          h="full"
+          w="full"
+          overflowY="auto"
+          role="log"
+          aria-label="Book text"
+        >
+          {chunks.map((_, chunkIndex) => (
+            <Text as="p" key={chunkIndex} mb={2}>
+              {sentencesByChunk[chunkIndex].map((sentence, sentenceIndex) => {
+                const isActive =
+                  chunkIndex === currentIndex && sentenceIndex === activeSentenceIndex;
 
-              return (
-                <Text
-                  as="span"
-                  key={sentenceIndex}
-                  ref={isActive ? activeSentenceRef : undefined}
-                  data-testid={`sentence-${chunkIndex}-${sentenceIndex}`}
-                  data-active={isActive ? 'true' : undefined}
-                  bg={isActive ? 'activeSentenceBg' : undefined}
-                  color={isActive ? 'activeSentenceFg' : undefined}
-                  cursor={isPlaying ? 'default' : 'pointer'}
-                  onClick={isPlaying ? undefined : () => onSentenceClick(chunkIndex, sentenceIndex)}
-                >
-                  {sentence}
-                </Text>
-              );
-            })}
-          </Text>
-        ))}
+                return (
+                  <Text
+                    as="span"
+                    key={sentenceIndex}
+                    ref={isActive ? activeSentenceRef : undefined}
+                    data-testid={`sentence-${chunkIndex}-${sentenceIndex}`}
+                    data-active={isActive ? 'true' : undefined}
+                    bg={isActive ? 'activeSentenceBg' : undefined}
+                    color={isActive ? 'activeSentenceFg' : undefined}
+                    cursor={isPlaying ? 'default' : 'pointer'}
+                    onClick={
+                      isPlaying ? undefined : () => onSentenceClick(chunkIndex, sentenceIndex)
+                    }
+                  >
+                    {sentence}
+                  </Text>
+                );
+              })}
+            </Text>
+          ))}
+        </Box>
       </Box>
     </Box>
   );

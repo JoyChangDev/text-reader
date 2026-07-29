@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { updateResumeIndex } from './bookLibrary';
-import { buildBookTimeline, locateBookOffset, locateSentenceIndexForOffset } from './bookProgress';
 import { chunkFetchPlan } from './chunkFetchPlan';
 import { deriveSentenceSpans } from './sentenceSpans';
 
@@ -52,23 +51,6 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
   // keep showing Pause with nothing happening (a visible error/retry surfaces
   // instead - see AudioPlayer/PlayerBar).
   const isPlaying = wantsToPlay && currentStatus !== 'error';
-
-  // The whole book's chunk-by-chunk timeline (real durations where generated,
-  // estimated otherwise) backing the whole-book progress scrubber - a pure
-  // re-derivation from cached data, recalculated whenever a chunk finishes
-  // generating (see ticket 08).
-  const timeline = useMemo(
-    () => buildBookTimeline({ chunks, chunkAudio, voice }),
-    [chunks, chunkAudio, voice],
-  );
-
-  // The reader's position expressed in book-level (not chunk-level) seconds, for the
-  // scrubber to display - the start of the current chunk's segment plus how far into
-  // it playback has reached.
-  const bookPositionSeconds = useMemo(
-    () => (timeline.segments[currentIndex]?.startSeconds ?? 0) + currentTimeSeconds,
-    [timeline, currentIndex, currentTimeSeconds],
-  );
 
   const fetchChunk = useCallback(
     async (index) => {
@@ -259,43 +241,12 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
     [chunkAudio, currentIndex, currentSentenceSpans, applySeek, fetchChunk],
   );
 
-  // Jumps playback to a book-level scrub target (seconds from the start of the whole
-  // book, per `timeline`) - the drop target for the whole-book progress scrubber (see
-  // ticket 08, removed in ticket 04). Resolves the target chunk/offset, then the sentence
-  // within that chunk closest to it, and hands off to seekToSentence above so both the
-  // "already generated" and "not yet generated" paths (including bypassing the sequential
-  // look-ahead) are reused rather than re-implemented here. Unlike a direct sentence
-  // click, dragging the scrubber still starts playback immediately (an explicit `play()`
-  // here, since seekToSentence itself no longer does - see ticket 02).
-  const seekToBookOffset = useCallback(
-    (targetSeconds) => {
-      const location = locateBookOffset(timeline.segments, targetSeconds);
-      if (!location) return;
-
-      const { chunkIndex, offsetSeconds } = location;
-      const segment = timeline.segments[chunkIndex];
-      const sentenceIndex = locateSentenceIndexForOffset({
-        text: chunks[chunkIndex],
-        boundaries: chunkAudio[chunkIndex]?.boundaries ?? [],
-        offsetSeconds,
-        chunkDurationSeconds: segment.durationSeconds,
-      });
-
-      seekToSentence(chunkIndex, sentenceIndex);
-      setWantsToPlay(true);
-    },
-    [timeline, chunks, chunkAudio, seekToSentence],
-  );
-
   return {
     audioRef,
     currentIndex,
     isPlaying,
     chunkAudio,
     activeSentenceIndex,
-    timeline,
-    bookPositionSeconds,
-    seekToBookOffset,
     play,
     pause,
     handleEnded,

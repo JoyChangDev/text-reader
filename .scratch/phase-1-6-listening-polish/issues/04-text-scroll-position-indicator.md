@@ -6,22 +6,30 @@ decoupled from audio playback position or chunk duration.
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `bookProgress.js` and ADR 0002 are removed from the codebase
-- [ ] `ProgressScrubber` and `useBookPlayer.js`'s `timeline`/`buildBookTimeline`/
+- [x] `bookProgress.js` and ADR 0002 are removed from the codebase
+- [x] `ProgressScrubber` and `useBookPlayer.js`'s `timeline`/`buildBookTimeline`/
       `bookPositionSeconds`/`seekToBookOffset` are removed
-- [ ] New indicator computes a percentage purely from the transcript container's scroll
+- [x] New indicator computes a percentage purely from the transcript container's scroll
       position (`scrollTop`/`scrollHeight`/`clientHeight`) — no chunk index or duration
       data involved
-- [ ] Dragging or clicking the indicator sets the transcript's scroll position from the
+- [x] Dragging or clicking the indicator sets the transcript's scroll position from the
       target percentage; it never sets `audio.currentTime` or triggers chunk/sentence
       seeking
-- [ ] `PlayerBar.jsx` no longer receives/renders `segments`/`totalSeconds`/
+- [x] `PlayerBar.jsx` no longer receives/renders `segments`/`totalSeconds`/
       `bookPositionSeconds`/`onSeek` props
-- [ ] Sentence-highlighting during playback (`sentenceSpans.js`) is unaffected — only the
+- [x] Sentence-highlighting during playback (`sentenceSpans.js`) is unaffected — only the
       scrubber-related code is removed
-- [ ] New tests simulate scroll container dimensions in JSDOM and assert the reported
+- [x] New tests simulate scroll container dimensions in JSDOM and assert the reported
       percentage and drag-to-scroll behavior
 
 ## Comments
+
+- Implemented as a new `ScrollPositionIndicator.jsx`, rendered inside `TranscriptView.jsx`
+  above the scrollable container (which now holds a `scrollContainerRef`). Percentage is
+  tracked in `TranscriptView` state, recomputed on every scroll event (including
+  programmatic ones from auto-scroll/"jump to now playing", so the indicator stays in
+  sync) and on mount. `formatDuration.js` was left in place — it's unused by app code now,
+  but it's a `teach`-skill learning exercise file unrelated to this ticket's scope, not
+  part of the scrubber removal.

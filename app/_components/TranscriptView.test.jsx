@@ -183,6 +183,75 @@ describe('TranscriptView', () => {
     expect(window.Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
   });
 
+  test("reports scroll position as a percentage derived purely from the transcript container's own scroll geometry", () => {
+    render(
+      <ChakraProvider>
+        <TranscriptView
+          chunks={twoSentenceChunks}
+          currentIndex={0}
+          activeSentenceIndex={0}
+          onSentenceClick={() => {}}
+        />
+      </ChakraProvider>,
+    );
+
+    const container = screen.getByRole('log', { name: /book text/i });
+    Object.defineProperty(container, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(container, 'clientHeight', { value: 500, configurable: true });
+    container.scrollTop = 250;
+
+    fireEvent.scroll(container);
+
+    expect(screen.getByRole('slider', { name: /text position/i })).toHaveValue('50');
+  });
+
+  test('reports 0% when the container has no scrollable range, rather than dividing by zero', () => {
+    render(
+      <ChakraProvider>
+        <TranscriptView
+          chunks={twoSentenceChunks}
+          currentIndex={0}
+          activeSentenceIndex={0}
+          onSentenceClick={() => {}}
+        />
+      </ChakraProvider>,
+    );
+
+    const container = screen.getByRole('log', { name: /book text/i });
+    Object.defineProperty(container, 'scrollHeight', { value: 500, configurable: true });
+    Object.defineProperty(container, 'clientHeight', { value: 500, configurable: true });
+    container.scrollTop = 0;
+
+    fireEvent.scroll(container);
+
+    expect(screen.getByRole('slider', { name: /text position/i })).toHaveValue('0');
+  });
+
+  test('dragging the indicator scrolls the transcript to the target percentage, without touching sentence seeking', () => {
+    const onSentenceClick = vi.fn();
+    render(
+      <ChakraProvider>
+        <TranscriptView
+          chunks={twoSentenceChunks}
+          currentIndex={0}
+          activeSentenceIndex={0}
+          onSentenceClick={onSentenceClick}
+        />
+      </ChakraProvider>,
+    );
+
+    const container = screen.getByRole('log', { name: /book text/i });
+    Object.defineProperty(container, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(container, 'clientHeight', { value: 500, configurable: true });
+
+    fireEvent.change(screen.getByRole('slider', { name: /text position/i }), {
+      target: { value: '40' },
+    });
+
+    expect(container.scrollTop).toBe(200);
+    expect(onSentenceClick).not.toHaveBeenCalled();
+  });
+
   test('clicking "jump to now playing" re-arms auto-scroll, so the next sentence change follows immediately instead of staying suspended', async () => {
     const { rerender } = render(
       <ChakraProvider>

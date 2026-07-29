@@ -5,16 +5,16 @@ import { FiPause, FiPlay, FiRefreshCw } from 'react-icons/fi';
 
 import { AVAILABLE_SPEEDS, AVAILABLE_VOICES } from '@/app/_lib/listenerSettings';
 
-import ProgressScrubber from './ProgressScrubber';
 import ThemeToggle from './ThemeToggle';
 
-// Persistent, media-player-style bottom bar: the whole-book progress scrubber (ticket
-// 08), current chunk position, transport controls (play/pause/retry, using standard
-// media-player glyphs rather than text labels), the voice picker, the speed control,
-// and the theme picker (ticket 09) all live here so they stay visible while
-// TranscriptView scrolls above it (see ticket 07). The voice and speed pickers are
-// disabled while a chunk is actively playing, so an accidental change doesn't happen
-// mid-sentence - pausing unlocks them again (see ticket 02).
+// Persistent, media-player-style bottom bar: current chunk position, transport
+// controls (play/pause/retry, using standard media-player glyphs rather than text
+// labels), the voice picker, the speed control, and the theme picker (ticket 09) all
+// live here so they stay visible while TranscriptView scrolls above it (see ticket
+// 07). The voice and speed pickers are disabled while a chunk is actively playing, so
+// an accidental change doesn't happen mid-sentence - pausing unlocks them again (see
+// ticket 02). The whole-book progress scrubber that used to live here was replaced by
+// TranscriptView's text-scroll-position indicator (see ticket 04).
 export default function PlayerBar({
   currentIndex,
   totalChunks,
@@ -30,19 +30,9 @@ export default function PlayerBar({
   onSpeedChange,
   previewingVoice,
   onTogglePreviewVoice,
-  segments,
-  totalSeconds,
-  bookPositionSeconds,
-  onSeek,
 }) {
   return (
     <Box as="footer" flexShrink={0} w="full" bg="background" borderTopWidth="1px" px={4} py={3}>
-      <ProgressScrubber
-        segments={segments}
-        totalSeconds={totalSeconds}
-        currentTimeSeconds={bookPositionSeconds}
-        onSeek={onSeek}
-      />
       <Text fontSize="sm" mb={2}>
         Chunk {currentIndex + 1} of {totalChunks}
       </Text>
