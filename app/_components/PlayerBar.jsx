@@ -6,12 +6,13 @@ import { FiPause, FiPlay, FiRefreshCw } from 'react-icons/fi';
 import { AVAILABLE_SPEEDS, AVAILABLE_VOICES } from '@/app/_lib/listenerSettings';
 
 import ProgressScrubber from './ProgressScrubber';
+import ThemeToggle from './ThemeToggle';
 
 // Persistent, media-player-style bottom bar: the whole-book progress scrubber (ticket
 // 08), current chunk position, transport controls (play/pause/retry, using standard
-// media-player glyphs rather than text labels), the voice picker (ticket 02), and the
-// speed control (ticket 04) all live here so they stay visible while TranscriptView
-// scrolls above it (see ticket 07).
+// media-player glyphs rather than text labels), the voice picker (ticket 02), the
+// speed control (ticket 04), and the theme picker (ticket 09) all live here so they
+// stay visible while TranscriptView scrolls above it (see ticket 07).
 export default function PlayerBar({
   currentIndex,
   totalChunks,
@@ -92,6 +93,7 @@ export default function PlayerBar({
             {previewingVoice === option.value ? `Stop ${option.label}` : `Preview ${option.label}`}
           </Button>
         ))}
+        <ThemeToggle />
       </HStack>
     </Box>
   );

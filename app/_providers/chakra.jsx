@@ -11,12 +11,14 @@ const config = defineConfig({
   theme: {
     semanticTokens: {
       colors: {
-        background: { value: '{colors.bg}' },
-        foreground: { value: '{colors.fg}' },
-        accent: { value: '{colors.blue.500}' },
-        danger: { value: '{colors.red.500}' },
-        activeSentenceBg: { value: '{colors.yellow.200}' },
-        activeSentenceFg: { value: '{colors.black}' },
+        background: { value: { _light: '{colors.white}', _dark: '{colors.gray.950}' } },
+        foreground: { value: { _light: '{colors.gray.900}', _dark: '{colors.gray.50}' } },
+        accent: { value: { _light: '{colors.blue.600}', _dark: '{colors.blue.300}' } },
+        danger: { value: { _light: '{colors.red.600}', _dark: '{colors.red.400}' } },
+        activeSentenceBg: {
+          value: { _light: '{colors.yellow.200}', _dark: '{colors.yellow.600}' },
+        },
+        activeSentenceFg: { value: { _light: '{colors.black}', _dark: '{colors.black}' } },
       },
     },
   },

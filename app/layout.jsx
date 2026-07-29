@@ -1,4 +1,5 @@
 import ChakraProvider from '@/providers/chakra';
+import { ColorModeProvider } from '@/providers/colorMode';
 
 export const metadata = {
   title: 'Create Next App',
@@ -9,7 +10,9 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
-        <ChakraProvider>{children}</ChakraProvider>
+        <ColorModeProvider>
+          <ChakraProvider>{children}</ChakraProvider>
+        </ColorModeProvider>
       </body>
     </html>
   );
