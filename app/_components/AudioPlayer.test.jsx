@@ -8,13 +8,36 @@ import AudioPlayer from './AudioPlayer';
 
 const chunks = ['第一段。', '第二段。', '第三段。', '第四段。'];
 
+// useBookPlayer.js also persists the resume index to /api/library/[bookId] on every
+// chunk change (see ticket 07) - these helpers isolate the /api/audio-chunks traffic
+// these tests actually care about from that unrelated background traffic, which would
+// otherwise throw off call counts/indices below.
+function mockAudioChunkFetch(handleAudioChunk) {
+  global.fetch = vi.fn(async (url, init) => {
+    if (url !== '/api/audio-chunks') {
+      return new Response('{}', { status: 200 });
+    }
+    return handleAudioChunk(init);
+  });
+}
+
+function audioChunkFetchCalls() {
+  return global.fetch.mock.calls.filter(([url]) => url === '/api/audio-chunks');
+}
+
+function libraryPatchCalls() {
+  return global.fetch.mock.calls.filter(
+    ([url, init]) => url.startsWith('/api/library/') && init?.method === 'PATCH',
+  );
+}
+
 describe('AudioPlayer', () => {
   beforeEach(() => {
     window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
     window.HTMLMediaElement.prototype.pause = vi.fn();
     window.Element.prototype.scrollIntoView = vi.fn();
 
-    global.fetch = vi.fn(async (_url, { body }) => {
+    mockAudioChunkFetch(({ body }) => {
       const { chunkIndex } = JSON.parse(body);
       return new Response(
         JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
@@ -35,8 +58,8 @@ describe('AudioPlayer', () => {
     );
 
     // Look-ahead window (current + 2) is requested up front, not the whole book.
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
-    expect(global.fetch.mock.calls.map(([, init]) => JSON.parse(init.body).chunkIndex)).toEqual([
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
+    expect(audioChunkFetchCalls().map(([, init]) => JSON.parse(init.body).chunkIndex)).toEqual([
       0, 1, 2,
     ]);
 
@@ -61,8 +84,8 @@ describe('AudioPlayer', () => {
     // Finishing chunk 0 advances to chunk 1 and tops up the look-ahead buffer (chunk 3).
     fireEvent.ended(audioEl);
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(4));
-    expect(JSON.parse(global.fetch.mock.calls[3][1].body).chunkIndex).toBe(3);
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(4));
+    expect(JSON.parse(audioChunkFetchCalls()[3][1].body).chunkIndex).toBe(3);
     expect(screen.getByText('Chunk 2 of 4')).toBeInTheDocument();
     // Still the same src it was preloaded with - no fresh load happened at swap time.
     expect(standbyEl.src).toBe('https://blob.test/1');
@@ -77,7 +100,7 @@ describe('AudioPlayer', () => {
 
   test('stops signalling as playing if the chunk lined up next already failed to generate', async () => {
     const twoChunks = ['第一段。', '第二段。'];
-    global.fetch = vi.fn(async (_url, { body }) => {
+    mockAudioChunkFetch(({ body }) => {
       const { chunkIndex } = JSON.parse(body);
       if (chunkIndex === 1) {
         return new Response(JSON.stringify({ error: 'boom' }), { status: 502 });
@@ -121,15 +144,15 @@ describe('AudioPlayer', () => {
 
     // Look-ahead from index 2 (current + 2) covers chunks 2 and 3 only - chunks
     // 0 and 1 were already heard in an earlier session and are never requested.
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
-    expect(global.fetch.mock.calls.map(([, init]) => JSON.parse(init.body).chunkIndex)).toEqual([
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(2));
+    expect(audioChunkFetchCalls().map(([, init]) => JSON.parse(init.body).chunkIndex)).toEqual([
       2, 3,
     ]);
   });
 
   test('surfaces a visible error and lets the reader manually retry the current chunk', async () => {
     let chunk0Attempts = 0;
-    global.fetch = vi.fn(async (_url, { body }) => {
+    mockAudioChunkFetch(({ body }) => {
       const { chunkIndex } = JSON.parse(body);
       if (chunkIndex === 0) {
         chunk0Attempts += 1;
@@ -164,7 +187,7 @@ describe('AudioPlayer', () => {
   test('a failed look-ahead chunk does not block unrelated cached chunks, and retrying it resumes playback without losing position', async () => {
     const threeChunks = ['第一段。', '第二段。', '第三段。'];
     let chunk1Attempts = 0;
-    global.fetch = vi.fn(async (_url, { body }) => {
+    mockAudioChunkFetch(({ body }) => {
       const { chunkIndex } = JSON.parse(body);
       if (chunkIndex === 1) {
         chunk1Attempts += 1;
@@ -186,7 +209,7 @@ describe('AudioPlayer', () => {
 
     // Chunk 2, unrelated to the chunk-1 failure, still generated in the background.
     await waitFor(() => expect(chunk1Attempts).toBe(1));
-    expect(global.fetch.mock.calls.some(([, init]) => JSON.parse(init.body).chunkIndex === 2)).toBe(
+    expect(audioChunkFetchCalls().some(([, init]) => JSON.parse(init.body).chunkIndex === 2)).toBe(
       true,
     );
 
@@ -232,7 +255,7 @@ describe('AudioPlayer voice selection', () => {
     window.HTMLMediaElement.prototype.pause = vi.fn();
     window.Element.prototype.scrollIntoView = vi.fn();
 
-    global.fetch = vi.fn(async (_url, { body }) => {
+    mockAudioChunkFetch(({ body }) => {
       const { chunkIndex } = JSON.parse(body);
       return new Response(
         JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
@@ -259,8 +282,8 @@ describe('AudioPlayer voice selection', () => {
         .getAllByRole('option')
         .map((option) => option.value),
     ).toEqual(['zh-TW-HsiaoChenNeural', 'zh-TW-YunJheNeural', 'zh-TW-HsiaoYuNeural']);
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
-    expect(JSON.parse(global.fetch.mock.calls[0][1].body).voice).toBe('zh-TW-HsiaoChenNeural');
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
+    expect(JSON.parse(audioChunkFetchCalls()[0][1].body).voice).toBe('zh-TW-HsiaoChenNeural');
   });
 
   test('changing the voice persists it and applies to subsequently fetched chunks only', async () => {
@@ -270,7 +293,7 @@ describe('AudioPlayer voice selection', () => {
       </ChakraProvider>,
     );
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
 
     fireEvent.change(screen.getByLabelText(/narration voice/i), {
       target: { value: 'zh-TW-YunJheNeural' },
@@ -286,8 +309,8 @@ describe('AudioPlayer voice selection', () => {
     await screen.findByRole('button', { name: /pause/i });
     fireEvent.ended(audioEl);
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(4));
-    const lastCallBody = JSON.parse(global.fetch.mock.calls[3][1].body);
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(4));
+    const lastCallBody = JSON.parse(audioChunkFetchCalls()[3][1].body);
     expect(lastCallBody).toMatchObject({ chunkIndex: 3, voice: 'zh-TW-YunJheNeural' });
   });
 });
@@ -299,7 +322,7 @@ describe('AudioPlayer playback speed', () => {
     window.HTMLMediaElement.prototype.pause = vi.fn();
     window.Element.prototype.scrollIntoView = vi.fn();
 
-    global.fetch = vi.fn(async (_url, { body }) => {
+    mockAudioChunkFetch(({ body }) => {
       const { chunkIndex } = JSON.parse(body);
       return new Response(
         JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
@@ -335,7 +358,7 @@ describe('AudioPlayer playback speed', () => {
       </ChakraProvider>,
     );
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
     const playButton = await screen.findByRole('button', { name: /^play$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /pause/i });
@@ -354,7 +377,7 @@ describe('AudioPlayer playback speed', () => {
       </ChakraProvider>,
     );
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
     const playButton = await screen.findByRole('button', { name: /^play$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /pause/i });
@@ -391,7 +414,7 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     window.HTMLMediaElement.prototype.pause = vi.fn();
     window.Element.prototype.scrollIntoView = vi.fn();
 
-    global.fetch = vi.fn(async (_url, { body }) => {
+    mockAudioChunkFetch(({ body }) => {
       const { chunkIndex } = JSON.parse(body);
       return new Response(
         JSON.stringify({
@@ -414,7 +437,7 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
       </ChakraProvider>,
     );
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(2));
     const playButton = await screen.findByRole('button', { name: /^play$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /pause/i });
@@ -440,7 +463,7 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
       </ChakraProvider>,
     );
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(2));
     await waitFor(() => expect(screen.getByRole('button', { name: /^play$/i })).toBeEnabled());
 
     const audioEl = screen.getByTestId('audio-element');
@@ -470,7 +493,7 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
       '第七段之一。第七段之二。',
       '第八段。',
     ];
-    global.fetch = vi.fn(async (_url, { body }) => {
+    mockAudioChunkFetch(({ body }) => {
       const { chunkIndex } = JSON.parse(body);
       const boundaries =
         chunkIndex === 6
@@ -491,14 +514,14 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     );
 
     // Initial look-ahead from chunk 0 covers chunks 0-2 only.
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
 
     fireEvent.click(screen.getByTestId('sentence-6-1'));
 
     await waitFor(() => expect(screen.getByText('Chunk 7 of 8')).toBeInTheDocument());
 
     const requestedChunkIndexes = () =>
-      global.fetch.mock.calls.map(([, init]) => JSON.parse(init.body).chunkIndex);
+      audioChunkFetchCalls().map(([, init]) => JSON.parse(init.body).chunkIndex);
     await waitFor(() => expect(requestedChunkIndexes()).toContain(6));
     expect(requestedChunkIndexes().filter((index) => index === 6)).toHaveLength(1);
     // Chunks 3, 4, and 5 sat between the initial look-ahead and the jump target - jumping
@@ -538,7 +561,7 @@ describe('AudioPlayer playback lock', () => {
     window.HTMLMediaElement.prototype.pause = vi.fn();
     window.Element.prototype.scrollIntoView = vi.fn();
 
-    global.fetch = vi.fn(async (_url, { body }) => {
+    mockAudioChunkFetch(({ body }) => {
       const { chunkIndex } = JSON.parse(body);
       return new Response(
         JSON.stringify({
@@ -645,7 +668,7 @@ describe('AudioPlayer chunk-to-chunk audio preloading', () => {
   });
 
   test("buffers the next chunk's actual audio into the standby element as soon as it's ready, ahead of the current chunk ending", async () => {
-    global.fetch = vi.fn(async (_url, { body }) => {
+    mockAudioChunkFetch(({ body }) => {
       const { chunkIndex } = JSON.parse(body);
       return new Response(
         JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
@@ -671,7 +694,7 @@ describe('AudioPlayer chunk-to-chunk audio preloading', () => {
   });
 
   test('advances to an already-buffered standby element without a fresh src assignment, then starts preloading the chunk after that', async () => {
-    global.fetch = vi.fn(async (_url, { body }) => {
+    mockAudioChunkFetch(({ body }) => {
       const { chunkIndex } = JSON.parse(body);
       return new Response(
         JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
@@ -708,8 +731,8 @@ describe('AudioPlayer chunk-to-chunk audio preloading', () => {
 
   test("falls back to a cold load on the newly-current chunk when its audio wasn't buffered in time, preserving existing chunk-advancement behavior", async () => {
     const resolvers = {};
-    global.fetch = vi.fn(
-      (_url, { body }) =>
+    mockAudioChunkFetch(
+      ({ body }) =>
         new Promise((resolve) => {
           const { chunkIndex } = JSON.parse(body);
           resolvers[chunkIndex] = resolve;
@@ -722,7 +745,7 @@ describe('AudioPlayer chunk-to-chunk audio preloading', () => {
       </ChakraProvider>,
     );
 
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
     resolvers[0](
       new Response(JSON.stringify({ url: 'https://blob.test/0', boundaries: [] }), {
         status: 200,
@@ -753,5 +776,47 @@ describe('AudioPlayer chunk-to-chunk audio preloading', () => {
     // Falls back to the normal cold-load path, unchanged from before this ticket, once
     // chunk 1's audio finally becomes ready.
     await waitFor(() => expect(primaryEl.src).toBe('https://blob.test/1'));
+  });
+});
+
+describe('AudioPlayer resume-index persistence', () => {
+  beforeEach(() => {
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.pause = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
+
+    mockAudioChunkFetch(({ body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      return new Response(
+        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
+        { status: 200 },
+      );
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('persists the current chunk index to the library as the book advances', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-persist" chunks={chunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() =>
+      expect(libraryPatchCalls().map(([url]) => url)).toContain('/api/library/book-persist'),
+    );
+    expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({ resumeIndex: 0 });
+
+    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /pause/i });
+    fireEvent.ended(screen.getByTestId('audio-element'));
+
+    await waitFor(() =>
+      expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({ resumeIndex: 1 }),
+    );
   });
 });

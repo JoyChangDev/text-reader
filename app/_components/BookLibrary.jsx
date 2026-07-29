@@ -14,9 +14,14 @@ export default function BookLibrary({ onSelect }) {
   useEffect(() => {
     // Deferred to an effect (not a lazy useState initializer) so the first
     // client render matches the server-rendered empty state before hydration,
-    // then picks up the real localStorage-backed library once mounted.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setBooks(listBooks());
+    // then picks up the server-backed library once mounted.
+    let cancelled = false;
+    listBooks().then((fetchedBooks) => {
+      if (!cancelled) setBooks(fetchedBooks);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   if (books.length === 0) return null;

@@ -1,42 +1,41 @@
-const STORAGE_KEY = 'text-reader:library';
+const BASE_URL = '/api/library';
 
-// The library (list of uploaded books, each with its resume chunk index) is
-// persisted in the browser's local storage, scoped per device - see
-// .scratch/phase-1-audiobook-reader/issues/07-local-library-resume.md. This is
-// the one public interface the rest of the app depends on; nothing else should
-// read or write the raw storage key/shape directly.
-function readLibrary() {
-  if (typeof window === 'undefined') return [];
+// The library (list of uploaded books, each with its resume chunk index) is persisted
+// server-side in Vercel Blob via /api/library, so a book uploaded on one device can be
+// seen and resumed from any other - see
+// .scratch/phase-1-6-listening-polish/issues/07-cross-device-library.md. This is the one
+// public interface the rest of the app depends on; nothing else should call these routes
+// directly. Exported function names/shapes are unchanged from the previous
+// localStorage-backed version, just now async.
+export async function addBook({ bookId, title, chunks }) {
+  const response = await fetch(BASE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bookId, title, chunks }),
+  });
 
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+  return response.json();
 }
 
-function writeLibrary(library) {
-  if (typeof window === 'undefined') return;
-
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(library));
+export async function listBooks() {
+  const response = await fetch(BASE_URL);
+  const { books } = await response.json();
+  return books;
 }
 
-export function addBook({ bookId, title, chunks }) {
-  const library = readLibrary();
-  library.push({ bookId, title, chunks, resumeIndex: 0 });
-  writeLibrary(library);
+export async function getBook(bookId) {
+  const response = await fetch(`${BASE_URL}/${bookId}`);
+  if (!response.ok) return null;
+
+  return response.json();
 }
 
-export function listBooks() {
-  return readLibrary();
-}
+export async function updateResumeIndex(bookId, resumeIndex) {
+  const response = await fetch(`${BASE_URL}/${bookId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resumeIndex }),
+  });
 
-export function getBook(bookId) {
-  return readLibrary().find((book) => book.bookId === bookId) ?? null;
-}
-
-export function updateResumeIndex(bookId, resumeIndex) {
-  const library = readLibrary();
-  writeLibrary(library.map((book) => (book.bookId === bookId ? { ...book, resumeIndex } : book)));
+  return response.json();
 }

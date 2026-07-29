@@ -33,6 +33,13 @@ export function createBlobStorageClient({ token } = {}) {
       return persisted;
     },
 
+    // A generic counterpart to get() for callers that only need to persist plain JSON
+    // under a key (e.g. libraryService.js's index/chunks blobs) rather than the
+    // audio+boundaries pair get/put above are specifically shaped for.
+    async putJson(key, data) {
+      await put(metadataPathname(key), JSON.stringify(data), putOptions('application/json'));
+    },
+
     // Unlike get/put's key (a cache key mapped through metadataPathname/audioPathname),
     // del/list operate on literal blob pathnames, e.g. as returned by list() itself.
     async del(pathname) {

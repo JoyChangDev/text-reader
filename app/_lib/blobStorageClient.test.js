@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-const { fakeDel, fakeList } = vi.hoisted(() => ({
+const { fakeDel, fakeList, fakePut } = vi.hoisted(() => ({
   fakeDel: vi.fn(),
   fakeList: vi.fn(),
+  fakePut: vi.fn(),
 }));
 
 vi.mock('@vercel/blob', () => ({
   get: vi.fn(),
-  put: vi.fn(),
+  put: fakePut,
   del: fakeDel,
   list: fakeList,
 }));
@@ -18,6 +19,7 @@ describe('createBlobStorageClient', () => {
   beforeEach(() => {
     fakeDel.mockReset();
     fakeList.mockReset();
+    fakePut.mockReset();
   });
 
   describe('del', () => {
@@ -35,6 +37,34 @@ describe('createBlobStorageClient', () => {
       const client = createBlobStorageClient({ token: 'test-token' });
 
       await expect(client.del('book-1/0/voice-a.mp3')).rejects.toThrow('delete failed');
+    });
+  });
+
+  describe('putJson', () => {
+    test('stores the data as JSON at the key plus a .json suffix', async () => {
+      fakePut.mockResolvedValue({ url: 'https://blob.example/library/index.json' });
+      const client = createBlobStorageClient({ token: 'test-token' });
+
+      await client.putJson('library/index', [{ bookId: 'book-1', resumeIndex: 0 }]);
+
+      expect(fakePut).toHaveBeenCalledWith(
+        'library/index.json',
+        JSON.stringify([{ bookId: 'book-1', resumeIndex: 0 }]),
+        {
+          access: 'public',
+          addRandomSuffix: false,
+          allowOverwrite: true,
+          contentType: 'application/json',
+          token: 'test-token',
+        },
+      );
+    });
+
+    test('propagates errors from @vercel/blob put', async () => {
+      fakePut.mockRejectedValue(new Error('put failed'));
+      const client = createBlobStorageClient({ token: 'test-token' });
+
+      await expect(client.putJson('library/index', [])).rejects.toThrow('put failed');
     });
   });
 

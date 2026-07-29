@@ -1,66 +1,83 @@
-import { beforeEach, describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { addBook, getBook, listBooks, updateResumeIndex } from './bookLibrary';
 
 describe('bookLibrary', () => {
   beforeEach(() => {
-    window.localStorage.clear();
+    global.fetch = vi.fn();
   });
 
-  test('adding a book does not replace existing entries', () => {
-    addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] });
-    addBook({ bookId: 'book-2', title: 'Second Book', chunks: ['二。'] });
+  describe('addBook', () => {
+    test('POSTs the new book to /api/library and returns its summary', async () => {
+      const summary = { bookId: 'book-1', title: 'First Book', resumeIndex: 0 };
+      global.fetch.mockResolvedValue(new Response(JSON.stringify(summary), { status: 201 }));
 
-    const books = listBooks();
-    expect(books).toHaveLength(2);
-    expect(books.map((book) => book.bookId)).toEqual(['book-1', 'book-2']);
-  });
+      const result = await addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] });
 
-  test('a newly added book starts with a resume index of 0', () => {
-    addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] });
-
-    expect(getBook('book-1').resumeIndex).toBe(0);
-  });
-
-  test('listBooks lists every previously added book', () => {
-    addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] });
-    addBook({ bookId: 'book-2', title: 'Second Book', chunks: ['二。'] });
-
-    expect(listBooks().map((book) => book.title)).toEqual(['First Book', 'Second Book']);
-  });
-
-  test('getBook returns the full entry, including its chunks, for a known id', () => {
-    addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。', '二。'] });
-
-    expect(getBook('book-1')).toEqual({
-      bookId: 'book-1',
-      title: 'First Book',
-      chunks: ['一。', '二。'],
-      resumeIndex: 0,
+      expect(result).toEqual(summary);
+      expect(global.fetch).toHaveBeenCalledWith('/api/library', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }),
+      });
     });
   });
 
-  test('getBook returns null for an unknown id', () => {
-    expect(getBook('missing')).toBeNull();
+  describe('listBooks', () => {
+    test('GETs /api/library and returns the book summaries', async () => {
+      const books = [
+        { bookId: 'book-1', title: 'First Book', resumeIndex: 0 },
+        { bookId: 'book-2', title: 'Second Book', resumeIndex: 3 },
+      ];
+      global.fetch.mockResolvedValue(new Response(JSON.stringify({ books }), { status: 200 }));
+
+      const result = await listBooks();
+
+      expect(result).toEqual(books);
+      expect(global.fetch).toHaveBeenCalledWith('/api/library');
+    });
   });
 
-  test('updateResumeIndex updates only the targeted book', () => {
-    addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] });
-    addBook({ bookId: 'book-2', title: 'Second Book', chunks: ['二。'] });
+  describe('getBook', () => {
+    test('GETs /api/library/[bookId] and returns the full entry, including its chunks', async () => {
+      const book = {
+        bookId: 'book-1',
+        title: 'First Book',
+        resumeIndex: 0,
+        chunks: ['一。', '二。'],
+      };
+      global.fetch.mockResolvedValue(new Response(JSON.stringify(book), { status: 200 }));
 
-    updateResumeIndex('book-2', 3);
+      const result = await getBook('book-1');
 
-    expect(getBook('book-1').resumeIndex).toBe(0);
-    expect(getBook('book-2').resumeIndex).toBe(3);
+      expect(result).toEqual(book);
+      expect(global.fetch).toHaveBeenCalledWith('/api/library/book-1');
+    });
+
+    test('returns null when the book is not found', async () => {
+      global.fetch.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'not found' }), {
+          status: 404,
+        }),
+      );
+
+      expect(await getBook('missing')).toBeNull();
+    });
   });
 
-  test('persists across separate calls, as if surviving a page reload', () => {
-    addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] });
-    updateResumeIndex('book-1', 5);
+  describe('updateResumeIndex', () => {
+    test('PATCHes /api/library/[bookId] with the new resume index', async () => {
+      const summary = { bookId: 'book-1', title: 'First Book', resumeIndex: 5 };
+      global.fetch.mockResolvedValue(new Response(JSON.stringify(summary), { status: 200 }));
 
-    // A fresh read from storage (no in-memory state carried over) still sees it.
-    expect(listBooks()).toEqual([
-      { bookId: 'book-1', title: 'First Book', chunks: ['一。'], resumeIndex: 5 },
-    ]);
+      const result = await updateResumeIndex('book-1', 5);
+
+      expect(result).toEqual(summary);
+      expect(global.fetch).toHaveBeenCalledWith('/api/library/book-1', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resumeIndex: 5 }),
+      });
+    });
   });
 });

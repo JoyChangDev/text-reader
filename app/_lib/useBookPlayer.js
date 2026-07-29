@@ -215,9 +215,14 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
   }, [speed]);
 
   // Persist the reading position as it advances, so reopening this book later
-  // (see BookLibrary) resumes here rather than from the start.
+  // (see BookLibrary) resumes here rather than from the start. Now a network call
+  // (see ticket 07) rather than a synchronous localStorage write, so a failure is
+  // caught here - fire-and-forget from the caller's perspective, since there's no
+  // UI in this ticket's scope for surfacing a failed resume-position save.
   useEffect(() => {
-    updateResumeIndex(bookId, currentIndex);
+    updateResumeIndex(bookId, currentIndex).catch((error) => {
+      console.error('Failed to persist resume position', error);
+    });
   }, [bookId, currentIndex]);
 
   // A chunk change (natural advance or a cross-chunk jump) starts its sentence

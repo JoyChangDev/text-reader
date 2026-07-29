@@ -11,13 +11,13 @@ import { addBook, getBook } from './_lib/bookLibrary';
 export default function Home() {
   const [book, setBook] = useState(null);
 
-  const handleUploaded = useCallback(({ bookId, chunks, title }) => {
-    addBook({ bookId, title, chunks });
+  const handleUploaded = useCallback(async ({ bookId, chunks, title }) => {
+    await addBook({ bookId, title, chunks });
     setBook({ bookId, chunks, initialIndex: 0 });
   }, []);
 
-  const handleSelectBook = useCallback((bookId) => {
-    const entry = getBook(bookId);
+  const handleSelectBook = useCallback(async (bookId) => {
+    const entry = await getBook(bookId);
     if (!entry) return;
     setBook({ bookId: entry.bookId, chunks: entry.chunks, initialIndex: entry.resumeIndex });
   }, []);
