@@ -50,3 +50,22 @@ export async function updateResumeIndex(bookId, resumeIndex, { storageClient } =
 
   return updatedIndex.find((book) => book.bookId === bookId);
 }
+
+// Cascade delete: drops the book from the index, its chunks blob, and every audio/metadata
+// blob audioGenerationService.js cached under `${bookId}/${chunkIndex}/${voice}` (see
+// .scratch/phase-1-6-listening-polish/issues/08-delete-book-cascade-blob-cleanup.md). list()
+// is scoped to the bookId prefix, so this never touches other books' or the library
+// index's own blobs.
+export async function deleteBook(bookId, { storageClient } = defaultClients) {
+  const index = await readIndex(storageClient);
+  if (!index.some((book) => book.bookId === bookId)) return null;
+
+  const updatedIndex = index.filter((book) => book.bookId !== bookId);
+  await storageClient.putJson(INDEX_KEY, updatedIndex);
+  await storageClient.del(`${chunksKey(bookId)}.json`);
+
+  const audioBlobs = await storageClient.list(`${bookId}/`);
+  await Promise.all(audioBlobs.map(({ pathname }) => storageClient.del(pathname)));
+
+  return { bookId };
+}

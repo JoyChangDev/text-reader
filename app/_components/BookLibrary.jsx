@@ -1,9 +1,9 @@
 'use client';
 
-import { Button, Heading, VStack } from '@chakra-ui/react';
+import { Button, Heading, HStack, VStack } from '@chakra-ui/react';
 import { useEffect, useState } from 'react';
 
-import { listBooks } from '@/app/_lib/bookLibrary';
+import { deleteBook, listBooks } from '@/app/_lib/bookLibrary';
 
 // Lists previously uploaded books from the local library so the reader can
 // resume one. Reads the library on mount rather than on every render, so a
@@ -24,15 +24,38 @@ export default function BookLibrary({ onSelect }) {
     };
   }, []);
 
+  // Fire-and-forget from the caller's perspective (the onClick below doesn't await
+  // this), so a rejected fetch is caught here rather than becoming an unhandled
+  // rejection - same pattern useBookPlayer.js uses for its resume-index persistence.
+  const handleDelete = async (bookId) => {
+    try {
+      const deleted = await deleteBook(bookId);
+      if (!deleted) return;
+
+      setBooks((current) => current.filter((book) => book.bookId !== bookId));
+    } catch (error) {
+      console.error('Failed to delete book', error);
+    }
+  };
+
   if (books.length === 0) return null;
 
   return (
     <VStack bg="background" color="foreground" align="start" gap={2}>
       <Heading size="sm">Your library</Heading>
       {books.map((book) => (
-        <Button key={book.bookId} variant="outline" onClick={() => onSelect(book.bookId)}>
-          {book.title}
-        </Button>
+        <HStack key={book.bookId}>
+          <Button variant="outline" onClick={() => onSelect(book.bookId)}>
+            {book.title}
+          </Button>
+          <Button
+            aria-label={`Delete ${book.title}`}
+            variant="ghost"
+            onClick={() => handleDelete(book.bookId)}
+          >
+            Delete
+          </Button>
+        </HStack>
       ))}
     </VStack>
   );

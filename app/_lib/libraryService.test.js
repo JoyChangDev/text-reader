@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { addBook, getBook, listBooks, updateResumeIndex } from './libraryService';
+import { addBook, deleteBook, getBook, listBooks, updateResumeIndex } from './libraryService';
 
 describe('libraryService', () => {
   let storageClient;
@@ -112,6 +112,71 @@ describe('libraryService', () => {
       expect(await listBooks({ storageClient })).toEqual([
         { bookId: 'book-1', title: 'First Book', resumeIndex: 5 },
       ]);
+    });
+  });
+
+  describe('deleteBook', () => {
+    let delSpy;
+
+    beforeEach(() => {
+      storageClient.del = async (pathname) => {
+        blobs.delete(pathname);
+      };
+      storageClient.list = async () => [];
+      delSpy = vi.spyOn(storageClient, 'del');
+    });
+
+    test('returns null and does not touch storage for an unknown id', async () => {
+      const result = await deleteBook('missing', { storageClient });
+
+      expect(result).toBeNull();
+      expect(delSpy).not.toHaveBeenCalled();
+    });
+
+    test('removes only the targeted book from the index', async () => {
+      await addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }, { storageClient });
+      await addBook(
+        { bookId: 'book-2', title: 'Second Book', chunks: ['二。'] },
+        { storageClient },
+      );
+
+      await deleteBook('book-1', { storageClient });
+
+      expect(await listBooks({ storageClient })).toEqual([
+        { bookId: 'book-2', title: 'Second Book', resumeIndex: 0 },
+      ]);
+    });
+
+    test('deletes the chunks blob', async () => {
+      await addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }, { storageClient });
+
+      await deleteBook('book-1', { storageClient });
+
+      expect(delSpy).toHaveBeenCalledWith('library/book-1/chunks.json');
+    });
+
+    test('deletes every audio/metadata blob under the book prefix', async () => {
+      await addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }, { storageClient });
+      storageClient.list = async (prefix) =>
+        prefix === 'book-1/'
+          ? [
+              { pathname: 'book-1/0/voice-a.mp3', size: 100, uploadedAt: new Date() },
+              { pathname: 'book-1/0/voice-a.json', size: 10, uploadedAt: new Date() },
+            ]
+          : [];
+      const listSpy = vi.spyOn(storageClient, 'list');
+
+      await deleteBook('book-1', { storageClient });
+
+      expect(listSpy).toHaveBeenCalledWith('book-1/');
+      expect(delSpy).toHaveBeenCalledWith('book-1/0/voice-a.mp3');
+      expect(delSpy).toHaveBeenCalledWith('book-1/0/voice-a.json');
+    });
+
+    test('returns the deleted bookId', async () => {
+      await addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }, { storageClient });
+
+      expect(await deleteBook('book-1', { storageClient })).toEqual({ bookId: 'book-1' });
     });
   });
 });

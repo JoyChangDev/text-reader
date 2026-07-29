@@ -1,13 +1,14 @@
 import { describe, expect, test, vi } from 'vitest';
 
-import { getBook, updateResumeIndex } from '@/app/_lib/libraryService';
+import { deleteBook, getBook, updateResumeIndex } from '@/app/_lib/libraryService';
 
 vi.mock('@/app/_lib/libraryService', () => ({
   getBook: vi.fn(),
   updateResumeIndex: vi.fn(),
+  deleteBook: vi.fn(),
 }));
 
-const { GET, PATCH } = await import('./route');
+const { GET, PATCH, DELETE } = await import('./route');
 
 function jsonRequest(body) {
   return { json: () => Promise.resolve(body) };
@@ -85,6 +86,35 @@ describe('PATCH /api/library/[bookId]', () => {
     updateResumeIndex.mockRejectedValueOnce(new Error('blob put failed'));
 
     const response = await PATCH(jsonRequest({ resumeIndex: 3 }), paramsFor('book-1'));
+
+    expect(response.status).toBe(502);
+  });
+});
+
+describe('DELETE /api/library/[bookId]', () => {
+  test('returns 404 when the book does not exist', async () => {
+    deleteBook.mockResolvedValueOnce(null);
+
+    const response = await DELETE(jsonRequest({}), paramsFor('missing'));
+
+    expect(response.status).toBe(404);
+    expect(deleteBook).toHaveBeenCalledWith('missing');
+  });
+
+  test('deletes the book and returns its bookId', async () => {
+    deleteBook.mockResolvedValueOnce({ bookId: 'book-1' });
+
+    const response = await DELETE(jsonRequest({}), paramsFor('book-1'));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ bookId: 'book-1' });
+  });
+
+  test('returns a 502 when deleting the book fails', async () => {
+    deleteBook.mockRejectedValueOnce(new Error('blob del failed'));
+
+    const response = await DELETE(jsonRequest({}), paramsFor('book-1'));
 
     expect(response.status).toBe(502);
   });

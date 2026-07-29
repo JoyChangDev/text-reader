@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { getBook, updateResumeIndex } from '@/app/_lib/libraryService';
+import { deleteBook, getBook, updateResumeIndex } from '@/app/_lib/libraryService';
 
 export async function GET(request, { params }) {
   const { bookId } = await params;
@@ -36,5 +36,21 @@ export async function PATCH(request, { params }) {
   } catch (error) {
     console.error('Updating the resume position failed', error);
     return NextResponse.json({ error: 'Updating the resume position failed' }, { status: 502 });
+  }
+}
+
+export async function DELETE(request, { params }) {
+  const { bookId } = await params;
+
+  try {
+    const deleted = await deleteBook(bookId);
+    if (!deleted) {
+      return NextResponse.json({ error: 'book not found' }, { status: 404 });
+    }
+
+    return NextResponse.json(deleted);
+  } catch (error) {
+    console.error('Deleting the book failed', error);
+    return NextResponse.json({ error: 'Deleting the book failed' }, { status: 502 });
   }
 }

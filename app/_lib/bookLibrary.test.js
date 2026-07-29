@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { addBook, getBook, listBooks, updateResumeIndex } from './bookLibrary';
+import { addBook, deleteBook, getBook, listBooks, updateResumeIndex } from './bookLibrary';
 
 describe('bookLibrary', () => {
   beforeEach(() => {
@@ -78,6 +78,27 @@ describe('bookLibrary', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resumeIndex: 5 }),
       });
+    });
+  });
+
+  describe('deleteBook', () => {
+    test('DELETEs /api/library/[bookId] and returns the result', async () => {
+      global.fetch.mockResolvedValue(
+        new Response(JSON.stringify({ bookId: 'book-1' }), { status: 200 }),
+      );
+
+      const result = await deleteBook('book-1');
+
+      expect(result).toEqual({ bookId: 'book-1' });
+      expect(global.fetch).toHaveBeenCalledWith('/api/library/book-1', { method: 'DELETE' });
+    });
+
+    test('returns null when the book is not found', async () => {
+      global.fetch.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'not found' }), { status: 404 }),
+      );
+
+      expect(await deleteBook('missing')).toBeNull();
     });
   });
 });

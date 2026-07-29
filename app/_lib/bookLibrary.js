@@ -39,3 +39,10 @@ export async function updateResumeIndex(bookId, resumeIndex) {
 
   return response.json();
 }
+
+export async function deleteBook(bookId) {
+  const response = await fetch(`${BASE_URL}/${bookId}`, { method: 'DELETE' });
+  if (!response.ok) return null;
+
+  return response.json();
+}
