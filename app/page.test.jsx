@@ -40,7 +40,7 @@ describe('Home', () => {
     fireEvent.change(input, { target: { files: [file] } });
 
     await waitFor(() => expect(screen.getByText('Chunk 1 of 2')).toBeInTheDocument());
-    expect(await screen.findByRole('button', { name: /play/i })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: /^play$/i })).toBeEnabled();
 
     // Uploading added a new library entry without touching any existing ones.
     expect(listBooks()).toEqual([

@@ -6,12 +6,12 @@ listening position without hunting for it.
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] A visible button/control scrolls the transcript to the active sentence when clicked,
+- [x] A visible button/control scrolls the transcript to the active sentence when clicked,
       reusing the existing auto-scroll ref/behavior
-- [ ] Works correctly whether or not auto-scroll is currently suspended (i.e. the reader
+- [x] Works correctly whether or not auto-scroll is currently suspended (i.e. the reader
       recently scrolled manually)
-- [ ] Test coverage asserts the scroll-into-view behavior fires on click
+- [x] Test coverage asserts the scroll-into-view behavior fires on click
 
 ## Comments

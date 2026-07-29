@@ -42,7 +42,7 @@ describe('AudioPlayer', () => {
 
     expect(screen.getByText('Chunk 1 of 4')).toBeInTheDocument();
 
-    const playButton = await screen.findByRole('button', { name: /play/i });
+    const playButton = await screen.findByRole('button', { name: /^play$/i });
     expect(playButton).toBeEnabled();
     fireEvent.click(playButton);
 
@@ -86,7 +86,7 @@ describe('AudioPlayer', () => {
       </ChakraProvider>,
     );
 
-    const playButton = await screen.findByRole('button', { name: /play/i });
+    const playButton = await screen.findByRole('button', { name: /^play$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /pause/i });
 
@@ -182,7 +182,7 @@ describe('AudioPlayer', () => {
       true,
     );
 
-    const playButton = await screen.findByRole('button', { name: /play/i });
+    const playButton = await screen.findByRole('button', { name: /^play$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /pause/i });
 
@@ -273,7 +273,7 @@ describe('AudioPlayer voice selection', () => {
     // Chunk 3 finishes playing chunk 0 and is topped up next - it's the first
     // request made after the voice change, so it's the first to use it.
     const audioEl = screen.getByTestId('audio-element');
-    const playButton = await screen.findByRole('button', { name: /play/i });
+    const playButton = await screen.findByRole('button', { name: /^play$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /pause/i });
     fireEvent.ended(audioEl);
@@ -328,7 +328,7 @@ describe('AudioPlayer playback speed', () => {
     );
 
     await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
-    const playButton = await screen.findByRole('button', { name: /play/i });
+    const playButton = await screen.findByRole('button', { name: /^play$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /pause/i });
 
@@ -347,7 +347,7 @@ describe('AudioPlayer playback speed', () => {
     );
 
     await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(3));
-    const playButton = await screen.findByRole('button', { name: /play/i });
+    const playButton = await screen.findByRole('button', { name: /^play$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /pause/i });
 
@@ -500,7 +500,7 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     );
 
     await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
-    const playButton = await screen.findByRole('button', { name: /play/i });
+    const playButton = await screen.findByRole('button', { name: /^play$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /pause/i });
 
