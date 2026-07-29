@@ -1,4 +1,4 @@
-import { get, put } from '@vercel/blob';
+import { del, get, list, put } from '@vercel/blob';
 
 const metadataPathname = (key) => `${key}.json`;
 const audioPathname = (key) => `${key}.mp3`;
@@ -31,6 +31,17 @@ export function createBlobStorageClient({ token } = {}) {
       await put(metadataPathname(key), JSON.stringify(persisted), putOptions('application/json'));
 
       return persisted;
+    },
+
+    // Unlike get/put's key (a cache key mapped through metadataPathname/audioPathname),
+    // del/list operate on literal blob pathnames, e.g. as returned by list() itself.
+    async del(pathname) {
+      await del(pathname, { token });
+    },
+
+    async list(prefix) {
+      const { blobs } = await list({ prefix, token });
+      return blobs.map(({ pathname, size, uploadedAt }) => ({ pathname, size, uploadedAt }));
     },
   };
 }

@@ -7,13 +7,13 @@ exactly like `audioGenerationService.js` already does for `get`/`put`.
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `blobStorageClient.js` exposes `del(key)`, wrapping `@vercel/blob`'s `del`
-- [ ] `blobStorageClient.js` exposes `list(prefix)`, wrapping `@vercel/blob`'s `list`,
+- [x] `blobStorageClient.js` exposes `del(key)`, wrapping `@vercel/blob`'s `del`
+- [x] `blobStorageClient.js` exposes `list(prefix)`, wrapping `@vercel/blob`'s `list`,
       returning each blob's pathname, size, and `uploadedAt`
-- [ ] Both are covered by unit tests against a faked underlying `@vercel/blob` module — no
+- [x] Both are covered by unit tests against a faked underlying `@vercel/blob` module — no
       test hits real network/storage
-- [ ] No existing `get`/`put` behavior or call sites change
+- [x] No existing `get`/`put` behavior or call sites change
 
 ## Comments
