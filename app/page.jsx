@@ -3,6 +3,7 @@ import { Heading, HStack, VStack } from '@chakra-ui/react';
 import { useCallback, useState } from 'react';
 
 import AudioPlayer from './_components/AudioPlayer';
+import BlobUsageIndicator from './_components/BlobUsageIndicator';
 import BookLibrary from './_components/BookLibrary';
 import BookUploader from './_components/BookUploader';
 import VoicePreview from './_components/VoicePreview';
@@ -33,6 +34,7 @@ export default function Home() {
           </HStack>
         </VStack>
         <BookLibrary onSelect={handleSelectBook} />
+        <BlobUsageIndicator />
       </VStack>
     );
   }

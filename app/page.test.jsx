@@ -40,6 +40,11 @@ function fetchMock(handleOther) {
       book.resumeIndex = resumeIndex;
       return new Response(JSON.stringify(book), { status: 200 });
     }
+    if (url === '/api/blob-usage') {
+      return new Response(JSON.stringify({ usedBytes: 0, quotaBytes: 1_073_741_824, percent: 0 }), {
+        status: 200,
+      });
+    }
 
     return handleOther(url, options);
   });
