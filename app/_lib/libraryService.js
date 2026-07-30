@@ -22,7 +22,10 @@ export async function listBooks({ storageClient } = defaultClients) {
 
 export async function addBook({ bookId, title, chunks }, { storageClient } = defaultClients) {
   const index = await readIndex(storageClient);
-  const summary = { bookId, title, resumeIndex: 0 };
+  // totalChunks is cheap to record here (chunks.length is already in hand at upload
+  // time) and lets the library list show real per-book progress without reading each
+  // book's full chunks blob - see BookLibrary.jsx.
+  const summary = { bookId, title, resumeIndex: 0, totalChunks: chunks.length };
 
   await storageClient.putJson(INDEX_KEY, [...index, summary]);
   await storageClient.putJson(chunksKey(bookId), chunks);

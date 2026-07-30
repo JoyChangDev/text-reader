@@ -159,24 +159,6 @@ describe('Home', () => {
     expect(JSON.parse(audioChunkRequest.body).chunkIndex).toBe(2);
   });
 
-  test('offers voice preview before any book is opened', async () => {
-    global.fetch = fetchMock(async () => new Response(JSON.stringify({}), { status: 200 }));
-
-    render(
-      <ChakraProvider>
-        <Home />
-      </ChakraProvider>,
-    );
-
-    const previewButton = screen.getByRole('button', { name: /preview yun-jhe/i });
-    fireEvent.click(previewButton);
-
-    expect(screen.getByTestId('voice-preview-audio').src).toContain(
-      '/voice-samples/zh-TW-YunJheNeural.mp3',
-    );
-    expect(await screen.findByRole('button', { name: /stop yun-jhe/i })).toBeInTheDocument();
-  });
-
   test('going back to the library lets the reader switch to a different book', async () => {
     global.fetch = fetchMock(async (_url, { body }) => {
       const { chunkIndex } = JSON.parse(body);

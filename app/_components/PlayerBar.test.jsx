@@ -13,6 +13,9 @@ const baseProps = {
   onPlay: () => {},
   onPause: () => {},
   onRetry: () => {},
+  onJumpToNowPlaying: () => {},
+  scrollPercent: 0,
+  onScrollPercentChange: () => {},
   voice: 'zh-TW-HsiaoChenNeural',
   onVoiceChange: () => {},
   speed: 1,
@@ -25,6 +28,10 @@ function renderBar(overrides = {}) {
       <PlayerBar {...baseProps} {...overrides} />
     </ChakraProvider>,
   );
+}
+
+function openSettings() {
+  fireEvent.click(screen.getByRole('button', { name: /^settings$/i }));
 }
 
 describe('PlayerBar', () => {
@@ -82,66 +89,121 @@ describe('PlayerBar', () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
-  test('offers the voice picker with the current value selected, and reports changes', () => {
-    const onVoiceChange = vi.fn();
-    renderBar({ voice: 'zh-TW-YunJheNeural', onVoiceChange });
+  test('offers a jump-to-now-playing control, calling onJumpToNowPlaying', () => {
+    const onJumpToNowPlaying = vi.fn();
+    renderBar({ onJumpToNowPlaying });
 
-    const picker = screen.getByLabelText(/narration voice/i);
-    expect(picker).toHaveValue('zh-TW-YunJheNeural');
-    expect(
-      within(picker)
-        .getAllByRole('option')
-        .map((option) => option.value),
-    ).toEqual(['zh-TW-HsiaoChenNeural', 'zh-TW-YunJheNeural', 'zh-TW-HsiaoYuNeural']);
+    fireEvent.click(screen.getByRole('button', { name: /jump to now playing/i }));
 
-    fireEvent.change(picker, { target: { value: 'zh-TW-HsiaoYuNeural' } });
-
-    expect(onVoiceChange).toHaveBeenCalledTimes(1);
+    expect(onJumpToNowPlaying).toHaveBeenCalledTimes(1);
   });
 
-  test('offers the speed picker with the current value selected, and reports changes', () => {
-    const onSpeedChange = vi.fn();
-    renderBar({ speed: 1.5, onSpeedChange });
-
-    const picker = screen.getByLabelText(/playback speed/i);
-    expect(picker).toHaveValue('1.5');
-    expect(
-      within(picker)
-        .getAllByRole('option')
-        .map((option) => option.value),
-    ).toEqual(['0.75', '1', '1.25', '1.5', '1.75', '2']);
-
-    fireEvent.change(picker, { target: { value: '2' } });
-
-    expect(onSpeedChange).toHaveBeenCalledTimes(1);
-  });
-
-  test('enables the voice and speed pickers while paused', () => {
-    renderBar({ isPlaying: false });
-
-    expect(screen.getByLabelText(/narration voice/i)).toBeEnabled();
-    expect(screen.getByLabelText(/playback speed/i)).toBeEnabled();
-  });
-
-  test('disables the voice and speed pickers while playing', () => {
-    renderBar({ isPlaying: true });
-
-    expect(screen.getByLabelText(/narration voice/i)).toBeDisabled();
-    expect(screen.getByLabelText(/playback speed/i)).toBeDisabled();
-  });
-
-  // Full preview behavior (toggling, switching voices, resetting on end) is covered by
-  // VoicePreview's own tests - this just confirms it's actually wired in here, using
-  // the shared implementation rather than a separate copy (see ticket 06).
-  test('offers voice preview, built on the shared VoicePreview component', async () => {
+  test('"jump to now playing" and play/pause sit trailing settings, in that order', () => {
     renderBar();
 
-    const previewButton = screen.getByRole('button', { name: /preview yun-jhe/i });
-    fireEvent.click(previewButton);
+    const buttonNames = screen
+      .getAllByRole('button')
+      .map((button) => button.getAttribute('aria-label'));
 
-    expect(screen.getByTestId('voice-preview-audio').src).toContain(
-      '/voice-samples/zh-TW-YunJheNeural.mp3',
-    );
-    expect(await screen.findByRole('button', { name: /stop yun-jhe/i })).toBeInTheDocument();
+    expect(buttonNames).toEqual(['Settings', 'Jump to now playing', 'Play']);
+  });
+
+  test('shows the scroll-position indicator at the given percentage, independent of chunk/playback progress', () => {
+    renderBar({ currentIndex: 0, totalChunks: 4, scrollPercent: 40 });
+
+    expect(screen.getByRole('slider', { name: /text position/i })).toHaveValue('40');
+  });
+
+  test('dragging the scroll-position indicator reports the target percentage', () => {
+    const onScrollPercentChange = vi.fn();
+    renderBar({ onScrollPercentChange });
+
+    fireEvent.change(screen.getByRole('slider', { name: /text position/i }), {
+      target: { value: '65' },
+    });
+
+    expect(onScrollPercentChange).toHaveBeenCalledWith(65);
+  });
+
+  // Voice, speed, preview, and appearance all collapse behind the Settings disclosure
+  // (see PlayerSettingsSheet) so the persistent bar stays short - opening it surfaces
+  // the same controls this bar used to render directly.
+  describe('settings disclosure', () => {
+    test('offers the voice picker with the current value selected, and reports changes', () => {
+      const onVoiceChange = vi.fn();
+      renderBar({ voice: 'zh-TW-YunJheNeural', onVoiceChange });
+      openSettings();
+
+      const group = screen.getByRole('radiogroup', { name: /narration voice/i });
+      expect(within(group).getByRole('radio', { name: 'Yun-Jhe' })).toBeChecked();
+      expect(
+        within(group)
+          .getAllByRole('radio')
+          .map((radio) => radio.value),
+      ).toEqual(['zh-TW-HsiaoChenNeural', 'zh-TW-YunJheNeural', 'zh-TW-HsiaoYuNeural']);
+
+      fireEvent.click(within(group).getByRole('radio', { name: 'Hsiao-Yu' }));
+
+      expect(onVoiceChange).toHaveBeenCalledTimes(1);
+    });
+
+    test('offers the speed picker with the current value selected, and reports changes', () => {
+      const onSpeedChange = vi.fn();
+      renderBar({ speed: 1.5, onSpeedChange });
+      openSettings();
+
+      const group = screen.getByRole('radiogroup', { name: /playback speed/i });
+      expect(within(group).getByRole('radio', { name: '1.5x' })).toBeChecked();
+
+      fireEvent.click(within(group).getByRole('radio', { name: '2x' }));
+
+      expect(onSpeedChange).toHaveBeenCalledTimes(1);
+    });
+
+    test('enables the voice and speed pickers while paused', () => {
+      renderBar({ isPlaying: false });
+      openSettings();
+
+      const voiceGroup = screen.getByRole('radiogroup', { name: /narration voice/i });
+      within(voiceGroup)
+        .getAllByRole('radio')
+        .forEach((radio) => expect(radio).toBeEnabled());
+
+      const speedGroup = screen.getByRole('radiogroup', { name: /playback speed/i });
+      within(speedGroup)
+        .getAllByRole('radio')
+        .forEach((radio) => expect(radio).toBeEnabled());
+    });
+
+    test('disables the voice and speed pickers while playing', () => {
+      renderBar({ isPlaying: true });
+      openSettings();
+
+      const voiceGroup = screen.getByRole('radiogroup', { name: /narration voice/i });
+      within(voiceGroup)
+        .getAllByRole('radio')
+        .forEach((radio) => expect(radio).toBeDisabled());
+
+      const speedGroup = screen.getByRole('radiogroup', { name: /playback speed/i });
+      within(speedGroup)
+        .getAllByRole('radio')
+        .forEach((radio) => expect(radio).toBeDisabled());
+    });
+
+    // Full preview behavior (toggling, switching voices, resetting on end) is covered by
+    // VoicePreview's own tests - this just confirms it's actually wired in here, using
+    // the shared implementation rather than a separate copy (see ticket 06).
+    test('offers voice preview, built on the shared VoicePreview component', async () => {
+      renderBar();
+      openSettings();
+
+      const previewButton = screen.getByRole('button', { name: /preview yun-jhe/i });
+      fireEvent.click(previewButton);
+
+      expect(screen.getByTestId('voice-preview-audio').src).toContain(
+        '/voice-samples/zh-TW-YunJheNeural.mp3',
+      );
+      expect(await screen.findByRole('button', { name: /stop yun-jhe/i })).toBeInTheDocument();
+    });
   });
 });

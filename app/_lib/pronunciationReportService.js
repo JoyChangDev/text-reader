@@ -25,3 +25,15 @@ export async function submitReport(
 
   return report;
 }
+
+// For the reports-review screen (manual review only - see the module doc comment
+// above). Newest first, since that's what a reviewer catching up on new reports wants;
+// sorted at read time rather than storage time so submitReport above stays a simple
+// append.
+export async function listReports({ storageClient } = defaultClients) {
+  const reports = (await storageClient.get(REPORTS_KEY)) ?? [];
+
+  return [...reports].sort(
+    (a, b) => new Date(b.reportedAt).getTime() - new Date(a.reportedAt).getTime(),
+  );
+}

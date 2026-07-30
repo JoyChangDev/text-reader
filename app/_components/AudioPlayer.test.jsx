@@ -31,6 +31,13 @@ function libraryPatchCalls() {
   );
 }
 
+// Voice and speed pickers live behind PlayerBar's Settings disclosure (see
+// PlayerSettingsSheet) - these tests exercise them through AudioPlayer end to end, so
+// they need opening first.
+function openSettings() {
+  fireEvent.click(screen.getByRole('button', { name: /^settings$/i }));
+}
+
 describe('AudioPlayer', () => {
   beforeEach(() => {
     window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
@@ -274,13 +281,14 @@ describe('AudioPlayer voice selection', () => {
         <AudioPlayer bookId="book-1" chunks={chunks} />
       </ChakraProvider>,
     );
+    openSettings();
 
-    const picker = screen.getByLabelText(/narration voice/i);
-    expect(picker).toHaveValue('zh-TW-HsiaoChenNeural');
+    const group = screen.getByRole('radiogroup', { name: /narration voice/i });
+    expect(within(group).getByRole('radio', { name: 'Hsiao-Chen' })).toBeChecked();
     expect(
-      within(picker)
-        .getAllByRole('option')
-        .map((option) => option.value),
+      within(group)
+        .getAllByRole('radio')
+        .map((radio) => radio.value),
     ).toEqual(['zh-TW-HsiaoChenNeural', 'zh-TW-YunJheNeural', 'zh-TW-HsiaoYuNeural']);
     await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
     expect(JSON.parse(audioChunkFetchCalls()[0][1].body).voice).toBe('zh-TW-HsiaoChenNeural');
@@ -294,10 +302,13 @@ describe('AudioPlayer voice selection', () => {
     );
 
     await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
+    openSettings();
 
-    fireEvent.change(screen.getByLabelText(/narration voice/i), {
-      target: { value: 'zh-TW-YunJheNeural' },
-    });
+    fireEvent.click(
+      within(screen.getByRole('radiogroup', { name: /narration voice/i })).getByRole('radio', {
+        name: 'Yun-Jhe',
+      }),
+    );
 
     expect(getListenerSettings().voice).toBe('zh-TW-YunJheNeural');
 
@@ -341,13 +352,14 @@ describe('AudioPlayer playback speed', () => {
         <AudioPlayer bookId="book-speed" chunks={chunks} />
       </ChakraProvider>,
     );
+    openSettings();
 
-    const picker = screen.getByLabelText(/playback speed/i);
-    expect(picker).toHaveValue('1');
+    const group = screen.getByRole('radiogroup', { name: /playback speed/i });
+    expect(within(group).getByRole('radio', { name: '1x' })).toBeChecked();
     expect(
-      within(picker)
-        .getAllByRole('option')
-        .map((option) => option.value),
+      within(group)
+        .getAllByRole('radio')
+        .map((radio) => radio.value),
     ).toEqual(['0.75', '1', '1.25', '1.5', '1.75', '2']);
   });
 
@@ -362,9 +374,14 @@ describe('AudioPlayer playback speed', () => {
     const playButton = await screen.findByRole('button', { name: /^play$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /pause/i });
+    openSettings();
 
     const audioEl = screen.getByTestId('audio-element');
-    fireEvent.change(screen.getByLabelText(/playback speed/i), { target: { value: '1.5' } });
+    fireEvent.click(
+      within(screen.getByRole('radiogroup', { name: /playback speed/i })).getByRole('radio', {
+        name: '1.5x',
+      }),
+    );
 
     expect(audioEl.playbackRate).toBe(1.5);
     expect(getListenerSettings().speed).toBe(1.5);
@@ -381,8 +398,13 @@ describe('AudioPlayer playback speed', () => {
     const playButton = await screen.findByRole('button', { name: /^play$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /pause/i });
+    openSettings();
 
-    fireEvent.change(screen.getByLabelText(/playback speed/i), { target: { value: '2' } });
+    fireEvent.click(
+      within(screen.getByRole('radiogroup', { name: /playback speed/i })).getByRole('radio', {
+        name: '2x',
+      }),
+    );
 
     const audioEl = screen.getByTestId('audio-element');
     fireEvent.ended(audioEl);
@@ -584,21 +606,36 @@ describe('AudioPlayer playback lock', () => {
       </ChakraProvider>,
     );
 
+    const expectPickersEnabled = () => {
+      within(screen.getByRole('radiogroup', { name: /narration voice/i }))
+        .getAllByRole('radio')
+        .forEach((radio) => expect(radio).toBeEnabled());
+      within(screen.getByRole('radiogroup', { name: /playback speed/i }))
+        .getAllByRole('radio')
+        .forEach((radio) => expect(radio).toBeEnabled());
+    };
+    const expectPickersDisabled = () => {
+      within(screen.getByRole('radiogroup', { name: /narration voice/i }))
+        .getAllByRole('radio')
+        .forEach((radio) => expect(radio).toBeDisabled());
+      within(screen.getByRole('radiogroup', { name: /playback speed/i }))
+        .getAllByRole('radio')
+        .forEach((radio) => expect(radio).toBeDisabled());
+    };
+
     const playButton = await screen.findByRole('button', { name: /^play$/i });
-    expect(screen.getByLabelText(/narration voice/i)).toBeEnabled();
-    expect(screen.getByLabelText(/playback speed/i)).toBeEnabled();
+    openSettings();
+    expectPickersEnabled();
 
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /pause/i });
 
-    expect(screen.getByLabelText(/narration voice/i)).toBeDisabled();
-    expect(screen.getByLabelText(/playback speed/i)).toBeDisabled();
+    expectPickersDisabled();
 
     fireEvent.click(screen.getByRole('button', { name: /pause/i }));
 
     expect(await screen.findByRole('button', { name: /^play$/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/narration voice/i)).toBeEnabled();
-    expect(screen.getByLabelText(/playback speed/i)).toBeEnabled();
+    expectPickersEnabled();
   });
 
   test('clicking a sentence while playing has no effect', async () => {

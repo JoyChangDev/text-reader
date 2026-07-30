@@ -15,3 +15,16 @@ export async function submitReport({ bookTitle, phrase, description }) {
 
   return response.json();
 }
+
+// Backs the reports-review screen (PronunciationReportList) - every report ever
+// submitted, newest first.
+export async function listReports() {
+  const response = await fetch('/api/pronunciation-reports');
+
+  if (!response.ok) {
+    throw new Error('Listing pronunciation reports failed');
+  }
+
+  const { reports } = await response.json();
+  return reports;
+}

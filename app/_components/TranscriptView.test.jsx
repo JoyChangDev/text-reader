@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { submitReport } from '@/app/_lib/pronunciationReports';
@@ -152,10 +153,18 @@ describe('TranscriptView', () => {
     expect(window.Element.prototype.scrollIntoView).not.toHaveBeenCalled();
   });
 
-  test('the "jump to now playing" button scrolls to the active sentence, reusing the same auto-scroll behavior', async () => {
+  // The scroll-position indicator and "jump to now playing" control both moved into
+  // PlayerBar (a sibling, wired up by AudioPlayer) - see TranscriptView's own doc
+  // comment. What used to be UI interactions here are now calls through the ref this
+  // component exposes (write direction) and assertions on onScrollPercentChange (read
+  // direction), but the underlying behavior guarantees are unchanged.
+
+  test('ref.jumpToNowPlaying() scrolls to the active sentence, reusing the same auto-scroll behavior', async () => {
+    const ref = createRef();
     render(
       <ChakraProvider>
         <TranscriptView
+          ref={ref}
           chunks={twoSentenceChunks}
           currentIndex={1}
           activeSentenceIndex={1}
@@ -168,15 +177,17 @@ describe('TranscriptView', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     window.Element.prototype.scrollIntoView.mockClear();
 
-    fireEvent.click(screen.getByRole('button', { name: /jump to now playing/i }));
+    ref.current.jumpToNowPlaying();
 
     expect(window.Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
   });
 
-  test('the "jump to now playing" button scrolls even while auto-scroll is suspended from a recent manual scroll', async () => {
+  test('ref.jumpToNowPlaying() scrolls even while auto-scroll is suspended from a recent manual scroll', async () => {
+    const ref = createRef();
     render(
       <ChakraProvider>
         <TranscriptView
+          ref={ref}
           chunks={twoSentenceChunks}
           currentIndex={1}
           activeSentenceIndex={1}
@@ -190,12 +201,13 @@ describe('TranscriptView', () => {
     fireEvent.scroll(screen.getByRole('log', { name: /book text/i }));
     window.Element.prototype.scrollIntoView.mockClear();
 
-    fireEvent.click(screen.getByRole('button', { name: /jump to now playing/i }));
+    ref.current.jumpToNowPlaying();
 
     expect(window.Element.prototype.scrollIntoView).toHaveBeenCalledTimes(1);
   });
 
   test("reports scroll position as a percentage derived purely from the transcript container's own scroll geometry", () => {
+    const onScrollPercentChange = vi.fn();
     render(
       <ChakraProvider>
         <TranscriptView
@@ -203,9 +215,11 @@ describe('TranscriptView', () => {
           currentIndex={0}
           activeSentenceIndex={0}
           onSentenceClick={() => {}}
+          onScrollPercentChange={onScrollPercentChange}
         />
       </ChakraProvider>,
     );
+    onScrollPercentChange.mockClear();
 
     const container = screen.getByRole('log', { name: /book text/i });
     Object.defineProperty(container, 'scrollHeight', { value: 1000, configurable: true });
@@ -214,10 +228,11 @@ describe('TranscriptView', () => {
 
     fireEvent.scroll(container);
 
-    expect(screen.getByRole('slider', { name: /text position/i })).toHaveValue('50');
+    expect(onScrollPercentChange).toHaveBeenCalledWith(50);
   });
 
   test('reports 0% when the container has no scrollable range, rather than dividing by zero', () => {
+    const onScrollPercentChange = vi.fn();
     render(
       <ChakraProvider>
         <TranscriptView
@@ -225,9 +240,11 @@ describe('TranscriptView', () => {
           currentIndex={0}
           activeSentenceIndex={0}
           onSentenceClick={() => {}}
+          onScrollPercentChange={onScrollPercentChange}
         />
       </ChakraProvider>,
     );
+    onScrollPercentChange.mockClear();
 
     const container = screen.getByRole('log', { name: /book text/i });
     Object.defineProperty(container, 'scrollHeight', { value: 500, configurable: true });
@@ -236,14 +253,16 @@ describe('TranscriptView', () => {
 
     fireEvent.scroll(container);
 
-    expect(screen.getByRole('slider', { name: /text position/i })).toHaveValue('0');
+    expect(onScrollPercentChange).toHaveBeenCalledWith(0);
   });
 
-  test('dragging the indicator scrolls the transcript to the target percentage, without touching sentence seeking', () => {
+  test('ref.seekToScrollPercent() scrolls the transcript to the target percentage, without touching sentence seeking', () => {
+    const ref = createRef();
     const onSentenceClick = vi.fn();
     render(
       <ChakraProvider>
         <TranscriptView
+          ref={ref}
           chunks={twoSentenceChunks}
           currentIndex={0}
           activeSentenceIndex={0}
@@ -256,18 +275,18 @@ describe('TranscriptView', () => {
     Object.defineProperty(container, 'scrollHeight', { value: 1000, configurable: true });
     Object.defineProperty(container, 'clientHeight', { value: 500, configurable: true });
 
-    fireEvent.change(screen.getByRole('slider', { name: /text position/i }), {
-      target: { value: '40' },
-    });
+    ref.current.seekToScrollPercent(40);
 
     expect(container.scrollTop).toBe(200);
     expect(onSentenceClick).not.toHaveBeenCalled();
   });
 
-  test('clicking "jump to now playing" re-arms auto-scroll, so the next sentence change follows immediately instead of staying suspended', async () => {
+  test('calling ref.jumpToNowPlaying() re-arms auto-scroll, so the next sentence change follows immediately instead of staying suspended', async () => {
+    const ref = createRef();
     const { rerender } = render(
       <ChakraProvider>
         <TranscriptView
+          ref={ref}
           chunks={twoSentenceChunks}
           currentIndex={0}
           activeSentenceIndex={0}
@@ -279,14 +298,15 @@ describe('TranscriptView', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     fireEvent.scroll(screen.getByRole('log', { name: /book text/i }));
-    fireEvent.click(screen.getByRole('button', { name: /jump to now playing/i }));
+    ref.current.jumpToNowPlaying();
     window.Element.prototype.scrollIntoView.mockClear();
 
-    // Without the button's click having re-armed auto-scroll, this next sentence change
+    // Without jumpToNowPlaying() having re-armed auto-scroll, this next sentence change
     // would still read as suspended (the manual scroll's 4s idle window hasn't elapsed).
     rerender(
       <ChakraProvider>
         <TranscriptView
+          ref={ref}
           chunks={twoSentenceChunks}
           currentIndex={0}
           activeSentenceIndex={1}

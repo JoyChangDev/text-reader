@@ -1,6 +1,16 @@
 import { NextResponse } from 'next/server';
 
-import { submitReport } from '@/app/_lib/pronunciationReportService';
+import { listReports, submitReport } from '@/app/_lib/pronunciationReportService';
+
+export async function GET() {
+  try {
+    const reports = await listReports();
+    return NextResponse.json({ reports });
+  } catch (error) {
+    console.error('Listing pronunciation reports failed', error);
+    return NextResponse.json({ error: 'Listing pronunciation reports failed' }, { status: 502 });
+  }
+}
 
 export async function POST(request) {
   const { bookTitle, phrase, description } = await request.json();

@@ -40,3 +40,10 @@ only from inside the player.
   removed from that file). `PlayerBar.test.jsx` and `page.test.jsx` each carry one
   lighter smoke test proving the component is actually wired in at that call site,
   rather than re-testing the shared behavior twice more.
+- Follow-up (2026-07-30): `PlayerSettingsSheet` (added after this ticket landed) now
+  hosts its own `<VoicePreview />` alongside the voice picker, so the upload/library
+  screen's standalone preview became a redundant second copy. Removed `<VoicePreview />`
+  and its "Preview voices" heading from `app/page.jsx`, along with the matching smoke
+  test in `page.test.jsx` - preview is now only reachable from inside the settings
+  sheet. The second bullet above ("Voice preview is available ... from the upload/
+  library screen") no longer reflects current behavior.

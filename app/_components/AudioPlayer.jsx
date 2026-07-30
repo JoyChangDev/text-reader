@@ -1,7 +1,8 @@
 'use client';
 
 import { Box, Button } from '@chakra-ui/react';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { FiChevronLeft } from 'react-icons/fi';
 
 import { getListenerSettings, updateListenerSettings } from '@/app/_lib/listenerSettings';
 import { useBookPlayer } from '@/app/_lib/useBookPlayer';
@@ -31,6 +32,22 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, title, o
     seekToSentence,
     retryChunk,
   } = useBookPlayer({ bookId, chunks, initialIndex, voice, speed });
+
+  // TranscriptView owns the scroll container and active-sentence refs this all needs
+  // (see TranscriptView's own doc comment) - it reports its own scroll percentage up
+  // via onScrollPercentChange (read direction) and exposes jumpToNowPlaying/
+  // seekToScrollPercent via an imperative handle (write direction) so PlayerBar, a
+  // sibling, can drive both without either component owning the other's internals.
+  const transcriptRef = useRef(null);
+  const [scrollPercent, setScrollPercent] = useState(0);
+
+  const handleJumpToNowPlaying = useCallback(() => {
+    transcriptRef.current?.jumpToNowPlaying();
+  }, []);
+
+  const handleScrollPercentChange = useCallback((percent) => {
+    transcriptRef.current?.seekToScrollPercent(percent);
+  }, []);
 
   // Prospective only: this only affects chunks fetched from here on - chunks already
   // cached/generated under the previous voice keep playing as-is (see ticket 02).
@@ -63,16 +80,26 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, title, o
       h="100vh"
       overflow="hidden"
     >
-      <Button variant="plain" alignSelf="start" m={2} onClick={onBackToLibrary}>
-        Back to library
+      <Button
+        variant="plain"
+        color="foregroundMuted"
+        alignSelf="start"
+        px={4}
+        pt={3}
+        pb={1}
+        onClick={onBackToLibrary}
+      >
+        <FiChevronLeft /> Back to library
       </Button>
       <TranscriptView
+        ref={transcriptRef}
         chunks={chunks}
         currentIndex={currentIndex}
         activeSentenceIndex={activeSentenceIndex}
         isPlaying={isPlaying}
         onSentenceClick={seekToSentence}
         bookTitle={title}
+        onScrollPercentChange={setScrollPercent}
       />
       <PlayerBar
         currentIndex={currentIndex}
@@ -83,6 +110,9 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, title, o
         onPlay={play}
         onPause={pause}
         onRetry={handleRetry}
+        onJumpToNowPlaying={handleJumpToNowPlaying}
+        scrollPercent={scrollPercent}
+        onScrollPercentChange={handleScrollPercentChange}
         voice={voice}
         onVoiceChange={handleVoiceChange}
         speed={speed}

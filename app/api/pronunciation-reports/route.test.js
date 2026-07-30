@@ -1,16 +1,40 @@
 import { describe, expect, test, vi } from 'vitest';
 
-import { submitReport } from '@/app/_lib/pronunciationReportService';
+import { listReports, submitReport } from '@/app/_lib/pronunciationReportService';
 
 vi.mock('@/app/_lib/pronunciationReportService', () => ({
+  listReports: vi.fn(),
   submitReport: vi.fn(),
 }));
 
-const { POST } = await import('./route');
+const { GET, POST } = await import('./route');
 
 function jsonRequest(body) {
   return { json: () => Promise.resolve(body) };
 }
+
+describe('GET /api/pronunciation-reports', () => {
+  test('returns the reports from listReports', async () => {
+    const reports = [
+      { bookTitle: 'First Book', phrase: '你好', reportedAt: '2026-07-30T12:00:00.000Z' },
+    ];
+    listReports.mockResolvedValueOnce(reports);
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ reports });
+  });
+
+  test('returns a 502 when listing fails', async () => {
+    listReports.mockRejectedValueOnce(new Error('blob get failed'));
+
+    const response = await GET();
+
+    expect(response.status).toBe(502);
+  });
+});
 
 describe('POST /api/pronunciation-reports', () => {
   test('rejects a request missing bookTitle or phrase with 400', async () => {

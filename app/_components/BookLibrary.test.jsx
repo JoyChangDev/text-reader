@@ -46,6 +46,47 @@ describe('BookLibrary', () => {
     expect(screen.getByText('Second Book')).toBeInTheDocument();
   });
 
+  test('shows a progress percent derived from resumeIndex/totalChunks', async () => {
+    listBooks.mockResolvedValue([
+      { bookId: 'book-1', title: 'First Book', resumeIndex: 2, totalChunks: 5 },
+    ]);
+
+    render(
+      <ChakraProvider>
+        <BookLibrary onSelect={vi.fn()} />
+      </ChakraProvider>,
+    );
+
+    expect(await screen.findByText('50%')).toBeInTheDocument();
+  });
+
+  test('shows a Completed badge instead of a percent once resumeIndex reaches the last chunk', async () => {
+    listBooks.mockResolvedValue([
+      { bookId: 'book-1', title: 'First Book', resumeIndex: 4, totalChunks: 5 },
+    ]);
+
+    render(
+      <ChakraProvider>
+        <BookLibrary onSelect={vi.fn()} />
+      </ChakraProvider>,
+    );
+
+    expect(await screen.findByText('Completed')).toBeInTheDocument();
+    expect(screen.queryByText('100%')).not.toBeInTheDocument();
+  });
+
+  test('falls back to a plain resume line for legacy entries without totalChunks', async () => {
+    listBooks.mockResolvedValue([{ bookId: 'book-1', title: 'First Book', resumeIndex: 2 }]);
+
+    render(
+      <ChakraProvider>
+        <BookLibrary onSelect={vi.fn()} />
+      </ChakraProvider>,
+    );
+
+    expect(await screen.findByText('Resumed at chunk 3')).toBeInTheDocument();
+  });
+
   test('selecting a book calls onSelect with its bookId', async () => {
     listBooks.mockResolvedValue([{ bookId: 'book-1', title: 'First Book', resumeIndex: 0 }]);
     const onSelect = vi.fn();

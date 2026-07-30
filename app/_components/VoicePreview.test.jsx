@@ -1,18 +1,59 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { AVAILABLE_VOICES } from '@/app/_lib/listenerSettings';
+
 import ChakraProvider from '../_providers/chakra';
-import VoicePreview from './VoicePreview';
+import { useVoicePreview, VoicePreviewButton } from './VoicePreview';
+
+// Stands in for a real call site (see PlayerSettingsSheet) - one shared hook instance,
+// one VoicePreviewButton per voice, and the single <audio> element every button preview
+// plays through.
+function VoicePreviewHarness() {
+  const { previewingVoice, togglePreviewVoice, audioProps } = useVoicePreview();
+
+  return (
+    <>
+      {AVAILABLE_VOICES.map((voice) => (
+        <VoicePreviewButton
+          key={voice.value}
+          voice={voice}
+          previewingVoice={previewingVoice}
+          onToggle={togglePreviewVoice}
+        />
+      ))}
+      <audio {...audioProps} />
+    </>
+  );
+}
 
 function renderPreview() {
   return render(
     <ChakraProvider>
-      <VoicePreview />
+      <VoicePreviewHarness />
     </ChakraProvider>,
   );
 }
 
-describe('VoicePreview', () => {
+// Mirrors PlayerSettingsSheet's actual layout: each voice's preview button sits inside
+// the <label> that wraps that voice's own radio input.
+function LabelWrappedPreview({ voice }) {
+  const { previewingVoice, togglePreviewVoice, audioProps } = useVoicePreview();
+
+  return (
+    <label>
+      <input type="radio" name="decoy" defaultChecked={false} />
+      <VoicePreviewButton
+        voice={voice}
+        previewingVoice={previewingVoice}
+        onToggle={togglePreviewVoice}
+      />
+      <audio {...audioProps} />
+    </label>
+  );
+}
+
+describe('useVoicePreview / VoicePreviewButton', () => {
   beforeEach(() => {
     window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
     window.HTMLMediaElement.prototype.pause = vi.fn();
@@ -77,5 +118,17 @@ describe('VoicePreview', () => {
     fireEvent.ended(screen.getByTestId('voice-preview-audio'));
 
     expect(await screen.findByRole('button', { name: /preview hsiao-chen/i })).toBeInTheDocument();
+  });
+
+  test("clicking preview inside a label does not activate that label's associated control", () => {
+    render(
+      <ChakraProvider>
+        <LabelWrappedPreview voice={AVAILABLE_VOICES[0]} />
+      </ChakraProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }));
+
+    expect(screen.getByRole('radio')).not.toBeChecked();
   });
 });
