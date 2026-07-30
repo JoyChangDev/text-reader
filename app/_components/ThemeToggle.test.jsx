@@ -16,31 +16,30 @@ function renderToggle() {
 }
 
 describe('ThemeToggle', () => {
-  test('defaults to following the system theme', () => {
+  test('defaults to the paper preset', () => {
     renderToggle();
 
-    expect(screen.getByLabelText(/theme/i)).toHaveValue('system');
+    expect(screen.getByLabelText(/theme/i)).toHaveValue('paper');
   });
 
-  // ColorModeProvider's `value` map remaps next-themes' own 'dark'/'light' resolution
-  // onto the 'night'/'paper' classes chakra.jsx's presets key off of (see ADR 0002) -
-  // picking "Dark"/"Light" here still works, it just lands a different class name.
-  test("switching to Dark sets next-themes' active theme to the night preset on <html>", () => {
+  test('offers exactly the three presets chakra.jsx defines conditions for', () => {
     renderToggle();
 
-    fireEvent.change(screen.getByLabelText(/theme/i), { target: { value: 'dark' } });
-
-    expect(document.documentElement.classList.contains('night')).toBe(true);
-    expect(document.documentElement.classList.contains('paper')).toBe(false);
+    const options = screen.getAllByRole('option').map((option) => option.value);
+    expect(options).toEqual(['paper', 'night', 'soft']);
   });
 
-  test("switching to Light sets next-themes' active theme to the paper preset on <html>", () => {
-    renderToggle();
+  test.each(['paper', 'night', 'soft'])(
+    "switching to %s sets next-themes' active theme to the %s class on <html>",
+    (value) => {
+      renderToggle();
 
-    fireEvent.change(screen.getByLabelText(/theme/i), { target: { value: 'dark' } });
-    fireEvent.change(screen.getByLabelText(/theme/i), { target: { value: 'light' } });
+      fireEvent.change(screen.getByLabelText(/theme/i), { target: { value } });
 
-    expect(document.documentElement.classList.contains('paper')).toBe(true);
-    expect(document.documentElement.classList.contains('night')).toBe(false);
-  });
+      expect(document.documentElement.classList.contains(value)).toBe(true);
+      ['paper', 'night', 'soft']
+        .filter((other) => other !== value)
+        .forEach((other) => expect(document.documentElement.classList.contains(other)).toBe(false));
+    },
+  );
 });
