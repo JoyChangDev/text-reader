@@ -14,13 +14,18 @@ export default function Home() {
 
   const handleUploaded = useCallback(async ({ bookId, chunks, title }) => {
     await addBook({ bookId, title, chunks });
-    setBook({ bookId, chunks, initialIndex: 0 });
+    setBook({ bookId, chunks, initialIndex: 0, title });
   }, []);
 
   const handleSelectBook = useCallback(async (bookId) => {
     const entry = await getBook(bookId);
     if (!entry) return;
-    setBook({ bookId: entry.bookId, chunks: entry.chunks, initialIndex: entry.resumeIndex });
+    setBook({
+      bookId: entry.bookId,
+      chunks: entry.chunks,
+      initialIndex: entry.resumeIndex,
+      title: entry.title,
+    });
   }, []);
 
   if (!book) {
@@ -45,6 +50,7 @@ export default function Home() {
       bookId={book.bookId}
       chunks={book.chunks}
       initialIndex={book.initialIndex}
+      title={book.title}
       onBackToLibrary={() => setBook(null)}
     />
   );

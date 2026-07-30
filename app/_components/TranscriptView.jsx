@@ -6,6 +6,7 @@ import { FiTarget } from 'react-icons/fi';
 
 import { splitIntoSentences } from '@/app/_lib/chunkText';
 
+import PronunciationReportForm from './PronunciationReportForm';
 import ScrollPositionIndicator from './ScrollPositionIndicator';
 
 // How long to leave auto-scroll suspended after the reader scrolls manually, before
@@ -41,6 +42,7 @@ export default function TranscriptView({
   activeSentenceIndex,
   isPlaying,
   onSentenceClick,
+  bookTitle,
 }) {
   // Every chunk's raw text is already available client-side (it was chunked before any
   // audio was generated), so the whole book can be shown - and clicked into - up front,
@@ -56,6 +58,7 @@ export default function TranscriptView({
   const resumeAutoScrollTimeoutRef = useRef(null);
   const isProgrammaticScrollRef = useRef(false);
   const [scrollPercent, setScrollPercent] = useState(0);
+  const [selectedPhrase, setSelectedPhrase] = useState(null);
 
   const updateScrollPercent = useCallback(() => {
     setScrollPercent(computeScrollPercent(scrollContainerRef.current));
@@ -126,6 +129,13 @@ export default function TranscriptView({
     scrollToActiveSentence();
   }, [scrollToActiveSentence]);
 
+  // Native text selection (see ticket 10) - a non-empty selection surfaces the "report
+  // pronunciation issue" affordance, pre-filled with the selected phrase.
+  const handleTextSelection = useCallback(() => {
+    const text = window.getSelection?.().toString().trim();
+    if (text) setSelectedPhrase(text);
+  }, []);
+
   return (
     <Box display="flex" flexDirection="column" flex="1" minH={0} w="full">
       <ScrollPositionIndicator
@@ -145,9 +155,19 @@ export default function TranscriptView({
         >
           <FiTarget />
         </Button>
+        {selectedPhrase && (
+          <PronunciationReportForm
+            key={selectedPhrase}
+            phrase={selectedPhrase}
+            bookTitle={bookTitle}
+            onDismiss={() => setSelectedPhrase(null)}
+          />
+        )}
         <Box
           ref={scrollContainerRef}
           onScroll={handleManualScroll}
+          onMouseUp={handleTextSelection}
+          onTouchEnd={handleTextSelection}
           h="full"
           w="full"
           overflowY="auto"

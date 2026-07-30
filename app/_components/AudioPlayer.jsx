@@ -13,7 +13,7 @@ import TranscriptView from './TranscriptView';
 // buffer of upcoming chunks generates in the background (see useBookPlayer). Renders
 // the whole book's text via TranscriptView (scrollable, sentence highlighting/seeking)
 // with a persistent PlayerBar fixed at the bottom of the viewport (see ticket 07).
-export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackToLibrary }) {
+export default function AudioPlayer({ bookId, chunks, initialIndex = 0, title, onBackToLibrary }) {
   const [voice, setVoice] = useState(() => getListenerSettings().voice);
   const [speed, setSpeed] = useState(() => getListenerSettings().speed);
   const {
@@ -72,6 +72,7 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, onBackTo
         activeSentenceIndex={activeSentenceIndex}
         isPlaying={isPlaying}
         onSentenceClick={seekToSentence}
+        bookTitle={title}
       />
       <PlayerBar
         currentIndex={currentIndex}
