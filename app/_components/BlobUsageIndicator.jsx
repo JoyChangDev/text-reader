@@ -1,6 +1,6 @@
 'use client';
 
-import { Button, HStack, Text } from '@chakra-ui/react';
+import { Box, Button, HStack, Text } from '@chakra-ui/react';
 import { useEffect, useRef, useState } from 'react';
 
 import { cleanupBlobs, getUsage } from '@/app/_lib/blobUsage';
@@ -42,12 +42,28 @@ export default function BlobUsageIndicator() {
 
   if (!usage) return null;
 
+  const rounded = Math.round(usage.percent);
+
   return (
-    <HStack>
-      <Text>{Math.round(usage.percent)}% of storage used</Text>
-      <Button size="sm" variant="outline" onClick={handleCleanup} disabled={cleaningUp}>
-        {cleaningUp ? 'Cleaning up…' : 'Clean up now'}
-      </Button>
-    </HStack>
+    <Box
+      w="full"
+      bg="backgroundElevated"
+      borderWidth="1px"
+      borderColor="hairline"
+      borderRadius="lg"
+      p={3}
+    >
+      <HStack justify="space-between" mb={2}>
+        <Text fontSize="sm" color="foregroundMuted">
+          {rounded}% of storage used
+        </Text>
+        <Button size="sm" variant="outline" onClick={handleCleanup} disabled={cleaningUp}>
+          {cleaningUp ? 'Cleaning up…' : 'Clean up now'}
+        </Button>
+      </HStack>
+      <Box h="1.5" w="full" borderRadius="full" bg="backgroundSunken" overflow="hidden">
+        <Box h="full" bg="accent" w={`${rounded}%`} />
+      </Box>
+    </Box>
   );
 }

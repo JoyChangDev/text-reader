@@ -29,7 +29,17 @@ export default function Home() {
 
   if (!book) {
     return (
-      <VStack align="start" gap={6}>
+      <VStack
+        align="start"
+        gap={6}
+        bg="background"
+        color="foreground"
+        minH="100vh"
+        maxW="640px"
+        mx="auto"
+        px={4}
+        py={8}
+      >
         <BookUploader onReady={handleUploaded} />
         <BookLibrary onSelect={handleSelectBook} />
         <BlobUsageIndicator />

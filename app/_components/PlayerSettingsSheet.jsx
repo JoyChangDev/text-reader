@@ -1,6 +1,6 @@
 'use client';
 
-import { Box, Button, HStack, NativeSelect, Text, VStack } from '@chakra-ui/react';
+import { Box, HStack, IconButton, NativeSelect, Text, VStack } from '@chakra-ui/react';
 import { useState } from 'react';
 import { FiSettings, FiX } from 'react-icons/fi';
 
@@ -26,92 +26,117 @@ export default function PlayerSettingsSheet({
   const [open, setOpen] = useState(false);
 
   return (
-    <Box position="relative">
-      <Button
+    <Box>
+      <IconButton
         aria-label="Settings"
         variant={open ? 'solid' : 'outline'}
+        borderRadius="full"
+        borderColor="hairlineStrong"
         onClick={() => setOpen((current) => !current)}
       >
         <FiSettings />
-      </Button>
+      </IconButton>
       {open && (
-        <VStack
-          align="start"
-          gap={4}
-          position="absolute"
-          bottom="calc(100% + 8px)"
-          left={0}
-          zIndex={1}
-          bg="background"
-          color="foreground"
-          p={4}
-          borderRadius="md"
-          borderWidth="1px"
-          boxShadow="md"
-          minW="64"
-        >
-          <HStack justify="space-between" w="full">
-            <Text fontWeight="bold">Settings</Text>
-            <Button
-              aria-label="Close settings"
-              variant="plain"
-              size="sm"
-              onClick={() => setOpen(false)}
-            >
-              <FiX />
-            </Button>
-          </HStack>
+        <>
+          {/* Tapping outside the sheet dismisses it, same as the drag handle/close
+              button - a fixed overlay works here without a portal since none of this
+              tree applies a transform, which is the one thing that would otherwise
+              make `position: fixed` relative to something other than the viewport. */}
+          <Box
+            position="fixed"
+            inset={0}
+            bg="blackAlpha.500"
+            zIndex={10}
+            onClick={() => setOpen(false)}
+          />
+          <VStack
+            align="start"
+            gap={4}
+            position="fixed"
+            left={0}
+            right={0}
+            bottom={0}
+            zIndex={11}
+            bg="backgroundElevated"
+            color="foreground"
+            borderTopWidth="1px"
+            borderColor="hairlineStrong"
+            borderTopRadius="2xl"
+            boxShadow="dark-lg"
+            maxH="82vh"
+            overflowY="auto"
+            px={5}
+            pb={5}
+          >
+            <Box w="9" h="1.5" borderRadius="full" bg="hairlineStrong" mx="auto" mt={3} mb={1} />
 
-          <VStack align="start" gap={2} w="full">
-            <Text as="label" fontSize="sm" htmlFor="settings-voice">
-              Narration voice
-            </Text>
-            <NativeSelect.Root disabled={disabled}>
-              <NativeSelect.Field
-                id="settings-voice"
-                aria-label="Narration voice"
-                value={voice}
-                onChange={onVoiceChange}
+            <HStack justify="space-between" w="full">
+              <Text fontWeight="bold">Settings</Text>
+              <IconButton
+                aria-label="Close settings"
+                variant="plain"
+                size="sm"
+                onClick={() => setOpen(false)}
               >
-                {AVAILABLE_VOICES.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </NativeSelect.Field>
-              <NativeSelect.Indicator />
-            </NativeSelect.Root>
-            <HStack wrap="wrap">
-              <VoicePreview />
+                <FiX />
+              </IconButton>
             </HStack>
-          </VStack>
 
-          <VStack align="start" gap={2} w="full">
-            <Text as="label" fontSize="sm" htmlFor="settings-speed">
-              Playback speed
-            </Text>
-            <NativeSelect.Root disabled={disabled}>
-              <NativeSelect.Field
-                id="settings-speed"
-                aria-label="Playback speed"
-                value={speed}
-                onChange={onSpeedChange}
-              >
-                {AVAILABLE_SPEEDS.map((option) => (
-                  <option key={option} value={option}>
-                    {option}x
-                  </option>
-                ))}
-              </NativeSelect.Field>
-              <NativeSelect.Indicator />
-            </NativeSelect.Root>
-          </VStack>
+            <VStack align="start" gap={2} w="full">
+              <Text as="label" fontSize="sm" color="foregroundMuted" htmlFor="settings-voice">
+                Narration voice
+              </Text>
+              <NativeSelect.Root disabled={disabled}>
+                <NativeSelect.Field
+                  id="settings-voice"
+                  aria-label="Narration voice"
+                  value={voice}
+                  onChange={onVoiceChange}
+                  borderColor="hairlineStrong"
+                >
+                  {AVAILABLE_VOICES.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </NativeSelect.Field>
+                <NativeSelect.Indicator />
+              </NativeSelect.Root>
+              <HStack wrap="wrap">
+                <VoicePreview />
+              </HStack>
+            </VStack>
 
-          <VStack align="start" gap={2} w="full">
-            <Text fontSize="sm">Appearance</Text>
-            <ThemeToggle />
+            <VStack align="start" gap={2} w="full">
+              <Text as="label" fontSize="sm" color="foregroundMuted" htmlFor="settings-speed">
+                Playback speed
+              </Text>
+              <NativeSelect.Root disabled={disabled}>
+                <NativeSelect.Field
+                  id="settings-speed"
+                  aria-label="Playback speed"
+                  value={speed}
+                  onChange={onSpeedChange}
+                  borderColor="hairlineStrong"
+                >
+                  {AVAILABLE_SPEEDS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}x
+                    </option>
+                  ))}
+                </NativeSelect.Field>
+                <NativeSelect.Indicator />
+              </NativeSelect.Root>
+            </VStack>
+
+            <VStack align="start" gap={2} w="full" pb={2}>
+              <Text fontSize="sm" color="foregroundMuted">
+                Appearance
+              </Text>
+              <ThemeToggle />
+            </VStack>
           </VStack>
-        </VStack>
+        </>
       )}
     </Box>
   );

@@ -1,6 +1,6 @@
 'use client';
 
-import { Box, Button, HStack, Text } from '@chakra-ui/react';
+import { Box, HStack, IconButton, Text } from '@chakra-ui/react';
 import { FiArrowUp, FiPause, FiPlay, FiRefreshCw } from 'react-icons/fi';
 
 import PlayerSettingsSheet from './PlayerSettingsSheet';
@@ -32,43 +32,83 @@ export default function PlayerBar({
   onSpeedChange,
 }) {
   return (
-    <Box as="footer" flexShrink={0} w="full" bg="background" borderTopWidth="1px" px={4} py={3}>
-      <Text fontSize="sm" mb={2}>
-        Chunk {currentIndex + 1} of {totalChunks}
-      </Text>
-      {currentChunkErrored && (
-        <Text color="danger" role="alert" mb={2}>
-          Couldn&apos;t generate audio for this chunk.
+    <Box
+      as="footer"
+      flexShrink={0}
+      w="full"
+      bg="background"
+      borderTopWidth="1px"
+      borderColor="hairline"
+    >
+      <Box maxW="640px" mx="auto" px={4} pt={2} pb={3}>
+        <Text fontSize="xs" color="foregroundFaint" mb={2}>
+          Chunk {currentIndex + 1} of {totalChunks}
         </Text>
-      )}
-      <ScrollPositionIndicator percent={scrollPercent} onPercentChange={onScrollPercentChange} />
-      <HStack wrap="wrap">
-        <PlayerSettingsSheet
-          voice={voice}
-          onVoiceChange={onVoiceChange}
-          speed={speed}
-          onSpeedChange={onSpeedChange}
-          disabled={isPlaying}
-        />
-        <HStack ml="auto">
-          <Button aria-label="Jump to now playing" variant="outline" onClick={onJumpToNowPlaying}>
-            <FiArrowUp />
-          </Button>
-          {isPlaying ? (
-            <Button aria-label="Pause" onClick={onPause}>
-              <FiPause />
-            </Button>
-          ) : currentChunkErrored ? (
-            <Button aria-label="Retry" onClick={onRetry}>
-              <FiRefreshCw />
-            </Button>
-          ) : (
-            <Button aria-label="Play" onClick={onPlay} disabled={!currentChunkReady}>
-              <FiPlay />
-            </Button>
-          )}
+        {currentChunkErrored && (
+          <Text color="danger" role="alert" mb={2}>
+            Couldn&apos;t generate audio for this chunk.
+          </Text>
+        )}
+        <ScrollPositionIndicator percent={scrollPercent} onPercentChange={onScrollPercentChange} />
+        <HStack wrap="wrap">
+          <PlayerSettingsSheet
+            voice={voice}
+            onVoiceChange={onVoiceChange}
+            speed={speed}
+            onSpeedChange={onSpeedChange}
+            disabled={isPlaying}
+          />
+          <HStack ml="auto" gap={2}>
+            <IconButton
+              aria-label="Jump to now playing"
+              variant="outline"
+              borderRadius="full"
+              borderColor="hairlineStrong"
+              onClick={onJumpToNowPlaying}
+            >
+              <FiArrowUp />
+            </IconButton>
+            {isPlaying ? (
+              <IconButton
+                aria-label="Pause"
+                borderRadius="full"
+                boxSize="13"
+                bg="accent"
+                color="accentContrast"
+                _hover={{ opacity: 0.9 }}
+                onClick={onPause}
+              >
+                <FiPause />
+              </IconButton>
+            ) : currentChunkErrored ? (
+              <IconButton
+                aria-label="Retry"
+                borderRadius="full"
+                boxSize="13"
+                bg="accent"
+                color="accentContrast"
+                _hover={{ opacity: 0.9 }}
+                onClick={onRetry}
+              >
+                <FiRefreshCw />
+              </IconButton>
+            ) : (
+              <IconButton
+                aria-label="Play"
+                borderRadius="full"
+                boxSize="13"
+                bg="accent"
+                color="accentContrast"
+                _hover={{ opacity: 0.9 }}
+                onClick={onPlay}
+                disabled={!currentChunkReady}
+              >
+                <FiPlay />
+              </IconButton>
+            )}
+          </HStack>
         </HStack>
-      </HStack>
+      </Box>
     </Box>
   );
 }

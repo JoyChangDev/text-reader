@@ -1,7 +1,8 @@
 'use client';
 
-import { Box, Button, Text, Textarea, VStack } from '@chakra-ui/react';
+import { Box, Button, IconButton, Text, Textarea, VStack } from '@chakra-ui/react';
 import { useState } from 'react';
+import { FiX } from 'react-icons/fi';
 
 import { submitReport } from '@/app/_lib/pronunciationReports';
 
@@ -32,6 +33,10 @@ export default function PronunciationReportForm({ phrase, bookTitle, onDismiss }
     return (
       <Button
         size="sm"
+        borderRadius="full"
+        bg="accent"
+        color="accentContrast"
+        _hover={{ opacity: 0.9 }}
         position="absolute"
         top={4}
         right={4}
@@ -55,12 +60,15 @@ export default function PronunciationReportForm({ phrase, bookTitle, onDismiss }
         position="absolute"
         top={4}
         right={4}
+        left={4}
         zIndex={1}
-        bg="background"
+        bg="backgroundElevated"
         color="foreground"
-        p={3}
-        borderRadius="md"
-        boxShadow="md"
+        p={4}
+        borderWidth="1px"
+        borderColor="hairlineStrong"
+        borderRadius="xl"
+        boxShadow="dark-lg"
       >
         <Text role="status">Thanks, we&apos;ll take a look.</Text>
         <Button size="sm" variant="plain" onClick={onDismiss}>
@@ -77,36 +85,79 @@ export default function PronunciationReportForm({ phrase, bookTitle, onDismiss }
       position="absolute"
       top={4}
       right={4}
+      left={4}
       zIndex={1}
-      bg="background"
+      bg="backgroundElevated"
       color="foreground"
-      p={3}
-      borderRadius="md"
-      boxShadow="md"
+      p={4}
+      borderWidth="1px"
+      borderColor="hairlineStrong"
+      borderRadius="xl"
+      boxShadow="dark-lg"
       w="xs"
+      maxW="full"
     >
       <VStack align="start" gap={2}>
-        <Text fontWeight="bold">Report pronunciation issue</Text>
-        <Text>{bookTitle}</Text>
-        <Text>{phrase}</Text>
-        <Text as="label" htmlFor="pronunciation-report-description">
+        <Box display="flex" alignItems="flex-start" justifyContent="space-between" w="full">
+          <Text fontWeight="bold" fontSize="sm">
+            Report pronunciation issue
+          </Text>
+          <IconButton
+            aria-label="Close"
+            variant="plain"
+            size="xs"
+            color="foregroundFaint"
+            onClick={onDismiss}
+          >
+            <FiX />
+          </IconButton>
+        </Box>
+        <Text fontSize="xs" color="foregroundMuted">
+          {bookTitle}
+        </Text>
+        <Text
+          display="inline-block"
+          bg="activeSentenceBg"
+          color="activeSentenceFg"
+          borderRadius="md"
+          px={2}
+          py={1}
+          fontSize="sm"
+        >
+          {phrase}
+        </Text>
+        <Text
+          as="label"
+          fontSize="xs"
+          color="foregroundMuted"
+          htmlFor="pronunciation-report-description"
+        >
           Description (optional)
         </Text>
         <Textarea
           id="pronunciation-report-description"
           value={description}
           onChange={(event) => setDescription(event.target.value)}
+          borderColor="hairlineStrong"
+          resize="none"
         />
         {status === 'error' && (
-          <Text role="alert" color="danger">
+          <Text role="alert" color="danger" fontSize="sm">
             Couldn&apos;t submit the report. Please try again.
           </Text>
         )}
-        <Box>
-          <Button type="submit" size="sm" disabled={status === 'submitting'}>
+        <Box display="flex" gap={2}>
+          <Button
+            type="submit"
+            size="sm"
+            bg="accent"
+            color="accentContrast"
+            _hover={{ opacity: 0.9 }}
+            disabled={status === 'submitting'}
+          >
             {status === 'submitting' ? 'Submitting…' : 'Submit'}
           </Button>
-          <Button size="sm" variant="plain" onClick={onDismiss}>
+          <Button size="sm" variant="ghost" onClick={onDismiss}>
             Cancel
           </Button>
         </Box>

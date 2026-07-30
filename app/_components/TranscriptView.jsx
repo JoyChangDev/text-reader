@@ -169,12 +169,16 @@ const TranscriptView = forwardRef(function TranscriptView(
           onTouchEnd={handleTextSelection}
           h="full"
           w="full"
+          maxW="640px"
+          mx="auto"
           overflowY="auto"
+          px={5}
+          py={4}
           role="log"
           aria-label="Book text"
         >
           {chunks.map((_, chunkIndex) => (
-            <Text as="p" key={chunkIndex} mb={2}>
+            <Text as="p" key={chunkIndex} mb={4} fontSize="md" lineHeight="1.85">
               {sentencesByChunk[chunkIndex].map((sentence, sentenceIndex) => {
                 const isActive =
                   chunkIndex === currentIndex && sentenceIndex === activeSentenceIndex;
@@ -188,6 +192,7 @@ const TranscriptView = forwardRef(function TranscriptView(
                     data-active={isActive ? 'true' : undefined}
                     bg={isActive ? 'activeSentenceBg' : undefined}
                     color={isActive ? 'activeSentenceFg' : undefined}
+                    borderRadius="sm"
                     cursor={isPlaying ? 'default' : 'pointer'}
                     onClick={
                       isPlaying ? undefined : () => onSentenceClick(chunkIndex, sentenceIndex)

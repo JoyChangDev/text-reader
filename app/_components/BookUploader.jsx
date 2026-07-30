@@ -2,6 +2,7 @@
 
 import { Input, Text, VStack } from '@chakra-ui/react';
 import { useState } from 'react';
+import { FiUploadCloud } from 'react-icons/fi';
 
 // Lets the reader pick or drop a .txt file, reads it client-side, and chunks it
 // via /api/chunks. Hands the resulting { bookId, chunks } up to the parent once ready.
@@ -48,18 +49,34 @@ export default function BookUploader({ onReady }) {
 
   return (
     <VStack
-      bg="background"
+      bg="backgroundElevated"
       color="foreground"
-      align="start"
+      align="center"
       gap={2}
+      w="full"
+      borderWidth="1.5px"
+      borderStyle="dashed"
+      borderColor="hairlineStrong"
+      borderRadius="xl"
+      px={4}
+      py={7}
+      textAlign="center"
       onDrop={handleDrop}
       onDragOver={handleDragOver}
       data-testid="book-dropzone"
     >
-      <Text as="label" htmlFor="book-upload">
+      <FiUploadCloud size={26} color="var(--chakra-colors-foreground-faint)" />
+      <Text as="label" htmlFor="book-upload" fontWeight="600" fontSize="sm">
         Upload a .txt file to start listening, or drop one here
       </Text>
-      <Input id="book-upload" type="file" accept=".txt" onChange={handleFileChange} />
+      <Input
+        id="book-upload"
+        type="file"
+        accept=".txt"
+        onChange={handleFileChange}
+        w="auto"
+        borderColor="hairlineStrong"
+      />
       {error && (
         <Text color="danger" role="alert">
           {error}

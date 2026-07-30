@@ -2,6 +2,7 @@
 
 import { Box, Button } from '@chakra-ui/react';
 import { useCallback, useRef, useState } from 'react';
+import { FiChevronLeft } from 'react-icons/fi';
 
 import { getListenerSettings, updateListenerSettings } from '@/app/_lib/listenerSettings';
 import { useBookPlayer } from '@/app/_lib/useBookPlayer';
@@ -79,8 +80,16 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, title, o
       h="100vh"
       overflow="hidden"
     >
-      <Button variant="plain" alignSelf="start" m={2} onClick={onBackToLibrary}>
-        Back to library
+      <Button
+        variant="plain"
+        color="foregroundMuted"
+        alignSelf="start"
+        px={4}
+        pt={3}
+        pb={1}
+        onClick={onBackToLibrary}
+      >
+        <FiChevronLeft /> Back to library
       </Button>
       <TranscriptView
         ref={transcriptRef}
