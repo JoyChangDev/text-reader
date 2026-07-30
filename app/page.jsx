@@ -23,7 +23,7 @@ export default function Home() {
 
   const handleUploaded = useCallback(async ({ bookId, chunks, title }) => {
     await addBook({ bookId, title, chunks });
-    setBook({ bookId, chunks, initialIndex: 0, title });
+    setBook({ bookId, chunks, initialIndex: 0, initialSentenceIndex: 0, title });
   }, []);
 
   const handleSelectBook = useCallback(async (bookId) => {
@@ -33,6 +33,9 @@ export default function Home() {
       bookId: entry.bookId,
       chunks: entry.chunks,
       initialIndex: entry.resumeIndex,
+      // Legacy entries saved before Sentence-level tracking existed have no
+      // resumeSentenceIndex - fall back to the start of the resumed Chunk (see ticket 05).
+      initialSentenceIndex: entry.resumeSentenceIndex ?? 0,
       title: entry.title,
     });
   }, []);
@@ -73,7 +76,7 @@ export default function Home() {
               color="foregroundMuted"
               _hover={{ color: 'foreground' }}
             >
-              Pronunciation reports
+              發音回報
             </Box>
           </HStack>
         </Box>
@@ -87,6 +90,7 @@ export default function Home() {
       bookId={book.bookId}
       chunks={book.chunks}
       initialIndex={book.initialIndex}
+      initialSentenceIndex={book.initialSentenceIndex}
       title={book.title}
       onBackToLibrary={() => setBook(null)}
     />

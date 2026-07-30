@@ -42,7 +42,7 @@ describe('BlobUsageIndicator', () => {
     );
     await screen.findByText(/50%/);
 
-    fireEvent.click(screen.getByRole('button', { name: /clean up now/i }));
+    fireEvent.click(screen.getByRole('button', { name: /立即清理/ }));
 
     expect(cleanupBlobs).toHaveBeenCalled();
     await waitFor(() => expect(screen.getByText(/10%/)).toBeInTheDocument());
@@ -60,11 +60,9 @@ describe('BlobUsageIndicator', () => {
     );
     await screen.findByText(/50%/);
 
-    fireEvent.click(screen.getByRole('button', { name: /clean up now/i }));
+    fireEvent.click(screen.getByRole('button', { name: /立即清理/ }));
 
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /clean up now/i })).toBeEnabled(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /立即清理/ })).toBeEnabled());
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
   });

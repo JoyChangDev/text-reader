@@ -34,13 +34,13 @@ export default function PronunciationReportList() {
   return (
     <VStack align="start" gap={4} w="full">
       <Box>
-        <Heading size="md">Pronunciation reports</Heading>
+        <Heading size="md">發音回報</Heading>
         <Text fontSize="sm" color="foregroundMuted">
-          {reports.length} {reports.length === 1 ? 'report' : 'reports'}, newest first
+          共 {reports.length} 筆回報，依最新排序
         </Text>
       </Box>
       {reports.length === 0 ? (
-        <Text color="foregroundMuted">No pronunciation issues have been reported yet.</Text>
+        <Text color="foregroundMuted">目前尚無發音回報。</Text>
       ) : (
         <VStack align="stretch" gap={0} w="full">
           {reports.map((report, index) => (
@@ -84,7 +84,7 @@ export default function PronunciationReportList() {
                 </Text>
               ) : (
                 <Text fontSize="sm" color="foregroundFaint" fontStyle="italic" mt={2}>
-                  No description provided
+                  未提供描述
                 </Text>
               )}
             </Box>

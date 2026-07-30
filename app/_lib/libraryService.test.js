@@ -37,7 +37,7 @@ describe('libraryService', () => {
   describe('addBook', () => {
     test('appends a summary to the index and stores chunks under their own blob', async () => {
       const summary = await addBook(
-        { bookId: 'book-1', title: 'First Book', chunks: ['一。', '二。'] },
+        { bookId: 'book-1', title: 'First Book', chunks: ['一。二。', '三。'] },
         { storageClient },
       );
 
@@ -45,12 +45,21 @@ describe('libraryService', () => {
         bookId: 'book-1',
         title: 'First Book',
         resumeIndex: 0,
+        resumeSentenceIndex: 0,
         totalChunks: 2,
+        sentenceCountsByChunk: [2, 1],
       });
       expect(blobs.get('library/index')).toEqual([
-        { bookId: 'book-1', title: 'First Book', resumeIndex: 0, totalChunks: 2 },
+        {
+          bookId: 'book-1',
+          title: 'First Book',
+          resumeIndex: 0,
+          resumeSentenceIndex: 0,
+          totalChunks: 2,
+          sentenceCountsByChunk: [2, 1],
+        },
       ]);
-      expect(blobs.get('library/book-1/chunks')).toEqual(['一。', '二。']);
+      expect(blobs.get('library/book-1/chunks')).toEqual(['一。二。', '三。']);
     });
 
     test('does not replace an existing index entry when adding another book', async () => {
@@ -61,8 +70,22 @@ describe('libraryService', () => {
       );
 
       expect(blobs.get('library/index')).toEqual([
-        { bookId: 'book-1', title: 'First Book', resumeIndex: 0, totalChunks: 1 },
-        { bookId: 'book-2', title: 'Second Book', resumeIndex: 0, totalChunks: 1 },
+        {
+          bookId: 'book-1',
+          title: 'First Book',
+          resumeIndex: 0,
+          resumeSentenceIndex: 0,
+          totalChunks: 1,
+          sentenceCountsByChunk: [1],
+        },
+        {
+          bookId: 'book-2',
+          title: 'Second Book',
+          resumeIndex: 0,
+          resumeSentenceIndex: 0,
+          totalChunks: 1,
+          sentenceCountsByChunk: [1],
+        },
       ]);
     });
   });
@@ -82,7 +105,9 @@ describe('libraryService', () => {
         bookId: 'book-1',
         title: 'First Book',
         resumeIndex: 0,
+        resumeSentenceIndex: 0,
         totalChunks: 2,
+        sentenceCountsByChunk: [1, 1],
         chunks: ['一。', '二。'],
       });
     });
@@ -96,27 +121,52 @@ describe('libraryService', () => {
         { storageClient },
       );
 
-      await updateResumeIndex('book-2', 3, { storageClient });
+      await updateResumeIndex(
+        'book-2',
+        { resumeIndex: 3, resumeSentenceIndex: 1 },
+        { storageClient },
+      );
 
-      expect(await getBook('book-1', { storageClient })).toMatchObject({ resumeIndex: 0 });
-      expect(await getBook('book-2', { storageClient })).toMatchObject({ resumeIndex: 3 });
+      expect(await getBook('book-1', { storageClient })).toMatchObject({
+        resumeIndex: 0,
+        resumeSentenceIndex: 0,
+      });
+      expect(await getBook('book-2', { storageClient })).toMatchObject({
+        resumeIndex: 3,
+        resumeSentenceIndex: 1,
+      });
     });
 
     test('returns null and leaves the index untouched for an unknown id', async () => {
       await addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }, { storageClient });
 
-      const result = await updateResumeIndex('missing', 5, { storageClient });
+      const result = await updateResumeIndex(
+        'missing',
+        { resumeIndex: 5, resumeSentenceIndex: 0 },
+        { storageClient },
+      );
 
       expect(result).toBeNull();
       expect(await getBook('book-1', { storageClient })).toMatchObject({ resumeIndex: 0 });
     });
 
-    test('persists across separate calls, as if surviving a page reload', async () => {
+    test('persists resumeIndex and resumeSentenceIndex together, atomically, across separate calls', async () => {
       await addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }, { storageClient });
-      await updateResumeIndex('book-1', 5, { storageClient });
+      await updateResumeIndex(
+        'book-1',
+        { resumeIndex: 5, resumeSentenceIndex: 2 },
+        { storageClient },
+      );
 
       expect(await listBooks({ storageClient })).toEqual([
-        { bookId: 'book-1', title: 'First Book', resumeIndex: 5, totalChunks: 1 },
+        {
+          bookId: 'book-1',
+          title: 'First Book',
+          resumeIndex: 5,
+          resumeSentenceIndex: 2,
+          totalChunks: 1,
+          sentenceCountsByChunk: [1],
+        },
       ]);
     });
   });
@@ -149,7 +199,14 @@ describe('libraryService', () => {
       await deleteBook('book-1', { storageClient });
 
       expect(await listBooks({ storageClient })).toEqual([
-        { bookId: 'book-2', title: 'Second Book', resumeIndex: 0, totalChunks: 1 },
+        {
+          bookId: 'book-2',
+          title: 'Second Book',
+          resumeIndex: 0,
+          resumeSentenceIndex: 0,
+          totalChunks: 1,
+          sentenceCountsByChunk: [1],
+        },
       ]);
     });
 

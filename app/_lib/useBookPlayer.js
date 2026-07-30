@@ -7,6 +7,10 @@ import { chunkFetchPlan } from './chunkFetchPlan';
 import { deriveSentenceSpans } from './sentenceSpans';
 
 const LOOKAHEAD = 2;
+// Natural playback can advance the active sentence roughly every few seconds - this
+// coalesces those persistence writes into one trailing call instead of a network
+// request on every single sentence boundary (see ticket 05).
+const RESUME_PERSIST_DEBOUNCE_MS = 400;
 
 // Assigns a chunk's audio into a physical <audio> element and stamps which chunk index
 // it now holds - shared by the standby-preload effect and the active element's
@@ -26,11 +30,18 @@ function loadAudioInto(audio, loadedIndexRef, index, url, speed) {
 // ticket 05, the ping-pong preloading below). `initialIndex` lets a caller resume a
 // book at a previously-saved position (see ticket 07); the current chunk index is
 // kept persisted back to the library as the resume position.
-export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed = 1 }) {
+export function useBookPlayer({
+  bookId,
+  chunks,
+  initialIndex = 0,
+  initialSentenceIndex = 0,
+  voice,
+  speed = 1,
+}) {
   const [chunkAudio, setChunkAudio] = useState({});
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [wantsToPlay, setWantsToPlay] = useState(false);
-  const [activeSentenceIndex, setActiveSentenceIndex] = useState(0);
+  const [activeSentenceIndex, setActiveSentenceIndex] = useState(initialSentenceIndex);
   const [currentTimeSeconds, setCurrentTimeSeconds] = useState(0);
   // Which physical <audio> element is the "active" (playing) one vs. the "standby"
   // (preloading) one - flips on each natural chunk advance whose next chunk was
@@ -46,8 +57,17 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
   const primaryLoadedIndexRef = useRef(null);
   const secondaryLoadedIndexRef = useRef(null);
   // A cross-chunk jump-to-sentence request, applied once its target chunk's audio
-  // finishes loading (see the "load and play" effect below).
-  const pendingSeekRef = useRef(null);
+  // finishes loading (see the "load and play" effect below). Primed with the saved
+  // (initialIndex, initialSentenceIndex) pair on mount rather than starting null, so
+  // pressing play for the first time resumes at the exact saved Sentence instead of the
+  // start of its Chunk - reusing the same seek-once-ready mechanism a Sentence click
+  // uses, rather than a separate resume path (see ticket 05). A no-op when
+  // initialSentenceIndex is 0: audio.currentTime already starts there on its own.
+  const pendingSeekRef = useRef(
+    initialSentenceIndex > 0
+      ? { chunkIndex: initialIndex, sentenceIndex: initialSentenceIndex }
+      : null,
+  );
   // The chunk index a seek was just applied to, so the chunk-change reset effect below
   // doesn't clobber it back to sentence 0. Needed specifically when a jump's target chunk
   // is already ready: the load-and-play effect (declared above the reset effect, so it
@@ -214,16 +234,48 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
     if (secondaryAudioRef.current) secondaryAudioRef.current.playbackRate = speed;
   }, [speed]);
 
-  // Persist the reading position as it advances, so reopening this book later
-  // (see BookLibrary) resumes here rather than from the start. Now a network call
-  // (see ticket 07) rather than a synchronous localStorage write, so a failure is
-  // caught here - fire-and-forget from the caller's perspective, since there's no
-  // UI in this ticket's scope for surfacing a failed resume-position save.
+  // The (Chunk, Sentence) pair most recently sent to the library, so the debounced
+  // effect below can tell "already persisted by an explicit seekToSentence call" apart
+  // from "still needs persisting" without a mutable trigger flag - starts at null so the
+  // very first render always persists once (see ticket 05).
+  const lastPersistedRef = useRef(null);
+  const persistTimeoutRef = useRef(null);
+
+  // Persist the reading position - both Chunk and Sentence together, as one atomic pair
+  // - so reopening this book later (see BookLibrary) resumes at the exact Sentence
+  // rather than just the Chunk. A network call, so a failure is caught here -
+  // fire-and-forget from the caller's perspective, since there's no UI in this ticket's
+  // scope for surfacing a failed resume-position save.
+  const persistResumePosition = useCallback(
+    (chunkIndex, sentenceIndex) => {
+      lastPersistedRef.current = { chunkIndex, sentenceIndex };
+      updateResumeIndex(bookId, {
+        resumeIndex: chunkIndex,
+        resumeSentenceIndex: sentenceIndex,
+      }).catch((error) => {
+        console.error('Failed to persist resume position', error);
+      });
+    },
+    [bookId],
+  );
+
+  // Debounced/coalesced (see RESUME_PERSIST_DEBOUNCE_MS) because natural playback
+  // advances the active Sentence roughly every few seconds - an explicit Sentence click
+  // (seekToSentence below) persists immediately instead, via persistResumePosition
+  // directly, and updates lastPersistedRef synchronously so this effect's own later run
+  // (once React actually applies that state change) finds nothing left to do.
   useEffect(() => {
-    updateResumeIndex(bookId, currentIndex).catch((error) => {
-      console.error('Failed to persist resume position', error);
-    });
-  }, [bookId, currentIndex]);
+    const last = lastPersistedRef.current;
+    if (last && last.chunkIndex === currentIndex && last.sentenceIndex === activeSentenceIndex) {
+      return undefined;
+    }
+
+    persistTimeoutRef.current = setTimeout(
+      () => persistResumePosition(currentIndex, activeSentenceIndex),
+      RESUME_PERSIST_DEBOUNCE_MS,
+    );
+    return () => clearTimeout(persistTimeoutRef.current);
+  }, [currentIndex, activeSentenceIndex, persistResumePosition]);
 
   // A chunk change (natural advance or a cross-chunk jump) starts its sentence
   // highlight at the top; timeupdate corrects it once playback is under way. Skipped
@@ -299,6 +351,10 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
   const seekToSentence = useCallback(
     (chunkIndex, sentenceIndex) => {
       const entry = chunkAudio[chunkIndex];
+      // An explicit click always persists this reading position right away, bypassing
+      // the debounce natural playback advance goes through (see ticket 05).
+      clearTimeout(persistTimeoutRef.current);
+      persistResumePosition(chunkIndex, sentenceIndex);
       // "Already loaded" means the active <audio> element's src already points at this
       // chunk (playback of it has started at least once) - not merely that its audio is
       // ready, since assigning a fresh src (done by the load-and-play effect below)
@@ -326,7 +382,15 @@ export function useBookPlayer({ bookId, chunks, initialIndex = 0, voice, speed =
         setCurrentIndex(chunkIndex);
       }
     },
-    [chunkAudio, currentIndex, currentSentenceSpans, applySeek, fetchChunk, activeLoadedIndexRef],
+    [
+      chunkAudio,
+      currentIndex,
+      currentSentenceSpans,
+      applySeek,
+      fetchChunk,
+      activeLoadedIndexRef,
+      persistResumePosition,
+    ],
   );
 
   return {

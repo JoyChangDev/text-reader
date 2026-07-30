@@ -15,11 +15,13 @@ function renderToggle() {
   );
 }
 
+const LABEL_BY_VALUE = { paper: '紙感', night: '夜間', soft: '柔和' };
+
 describe('ThemeToggle', () => {
   test('defaults to the paper preset', () => {
     renderToggle();
 
-    expect(screen.getByRole('radio', { name: 'Paper' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: '紙感' })).toBeChecked();
   });
 
   test('offers exactly the three presets chakra.jsx defines conditions for', () => {
@@ -34,7 +36,7 @@ describe('ThemeToggle', () => {
     (value) => {
       renderToggle();
 
-      fireEvent.click(screen.getByRole('radio', { name: new RegExp(`^${value}$`, 'i') }));
+      fireEvent.click(screen.getByRole('radio', { name: LABEL_BY_VALUE[value] }));
 
       expect(document.documentElement.classList.contains(value)).toBe(true);
       ['paper', 'night', 'soft']

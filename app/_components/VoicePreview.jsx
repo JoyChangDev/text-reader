@@ -61,7 +61,7 @@ export function VoicePreviewButton({ voice, previewingVoice, onToggle }) {
 
   return (
     <IconButton
-      aria-label={isPlaying ? `Stop ${voice.label}` : `Preview ${voice.label}`}
+      aria-label={isPlaying ? `停止 ${voice.label}` : `試聽 ${voice.label}`}
       size="xs"
       variant="outline"
       borderRadius="full"

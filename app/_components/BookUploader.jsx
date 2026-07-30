@@ -31,7 +31,7 @@ export default function BookUploader({ onReady }) {
       const { chunks } = await response.json();
       onReady({ bookId: crypto.randomUUID(), chunks, title: file.name });
     } catch {
-      setError("Couldn't process that file. Please try again.");
+      setError('無法處理這個檔案，請再試一次。');
     }
   }
 
@@ -68,7 +68,7 @@ export default function BookUploader({ onReady }) {
     >
       <FiUploadCloud size={26} color="var(--chakra-colors-foreground-faint)" />
       <Text as="label" htmlFor="book-upload" fontWeight="600" fontSize="sm">
-        Upload a .txt file to start listening, or drop one here
+        上傳 .txt 檔案開始聆聽，或將檔案拖曳到這裡
       </Text>
       {/* The native input stays in the DOM (and keeps its id/label association, so
           getByLabelText/fireEvent.change still work exactly as before) but is visually
@@ -93,7 +93,7 @@ export default function BookUploader({ onReady }) {
         _hover={{ opacity: 0.9 }}
         onClick={() => inputRef.current?.click()}
       >
-        Choose file
+        選擇檔案
       </Button>
       {error && (
         <Text color="danger" role="alert">

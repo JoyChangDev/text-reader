@@ -35,7 +35,7 @@ function libraryPatchCalls() {
 // PlayerSettingsSheet) - these tests exercise them through AudioPlayer end to end, so
 // they need opening first.
 function openSettings() {
-  fireEvent.click(screen.getByRole('button', { name: /^settings$/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^設定$/i }));
 }
 
 describe('AudioPlayer', () => {
@@ -70,14 +70,12 @@ describe('AudioPlayer', () => {
       0, 1, 2,
     ]);
 
-    expect(screen.getByText('Chunk 1 of 4')).toBeInTheDocument();
-
-    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
     expect(playButton).toBeEnabled();
     fireEvent.click(playButton);
 
     await waitFor(() => expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole('button', { name: /pause/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /暫停/i })).toBeInTheDocument();
 
     const audioEl = screen.getByTestId('audio-element');
     expect(audioEl.src).toBe('https://blob.test/0');
@@ -93,16 +91,15 @@ describe('AudioPlayer', () => {
 
     await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(4));
     expect(JSON.parse(audioChunkFetchCalls()[3][1].body).chunkIndex).toBe(3);
-    expect(screen.getByText('Chunk 2 of 4')).toBeInTheDocument();
     // Still the same src it was preloaded with - no fresh load happened at swap time.
     expect(standbyEl.src).toBe('https://blob.test/1');
     expect(standbyEl).toHaveAttribute('data-active', 'true');
 
-    const pauseButton = screen.getByRole('button', { name: /pause/i });
+    const pauseButton = screen.getByRole('button', { name: /暫停/i });
     fireEvent.click(pauseButton);
 
     expect(window.HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1);
-    expect(await screen.findByRole('button', { name: /^play$/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^播放$/i })).toBeInTheDocument();
   });
 
   test('stops signalling as playing if the chunk lined up next already failed to generate', async () => {
@@ -124,9 +121,9 @@ describe('AudioPlayer', () => {
       </ChakraProvider>,
     );
 
-    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /pause/i });
+    await screen.findByRole('button', { name: /暫停/i });
 
     const audioEl = screen.getByTestId('audio-element');
     fireEvent.ended(audioEl);
@@ -134,9 +131,9 @@ describe('AudioPlayer', () => {
     // Chunk 1 (fetched ahead of time) came back as an error, not ready - rather
     // than silently stalling with Pause still showing, playback stops signalling
     // as active and a visible error + retry control take over (ticket 08).
-    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn't generate audio/i);
-    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^play$/i })).not.toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/語音產生失敗/i);
+    expect(screen.getByRole('button', { name: /重試/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^播放$/i })).not.toBeInTheDocument();
     expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
   });
 
@@ -146,8 +143,6 @@ describe('AudioPlayer', () => {
         <AudioPlayer bookId="book-resume" chunks={chunks} initialIndex={2} />
       </ChakraProvider>,
     );
-
-    expect(screen.getByText('Chunk 3 of 4')).toBeInTheDocument();
 
     // Look-ahead from index 2 (current + 2) covers chunks 2 and 3 only - chunks
     // 0 and 1 were already heard in an earlier session and are never requested.
@@ -179,16 +174,16 @@ describe('AudioPlayer', () => {
       </ChakraProvider>,
     );
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn't generate audio/i);
-    const retryButton = screen.getByRole('button', { name: /retry/i });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/語音產生失敗/i);
+    const retryButton = screen.getByRole('button', { name: /重試/i });
     // No misleading disabled "Play" button alongside the error.
-    expect(screen.queryByRole('button', { name: /^play$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^播放$/i })).not.toBeInTheDocument();
 
     fireEvent.click(retryButton);
 
     await waitFor(() => expect(chunk0Attempts).toBe(2));
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
-    expect(await screen.findByRole('button', { name: /^play$/i })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: /^播放$/i })).toBeEnabled();
   });
 
   test('a failed look-ahead chunk does not block unrelated cached chunks, and retrying it resumes playback without losing position', async () => {
@@ -220,16 +215,15 @@ describe('AudioPlayer', () => {
       true,
     );
 
-    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /pause/i });
+    await screen.findByRole('button', { name: /暫停/i });
 
     const audioEl = screen.getByTestId('audio-element');
     fireEvent.ended(audioEl);
 
     // Advanced to the errored chunk 1 - position moves forward, error surfaces.
-    expect(screen.getByText('Chunk 2 of 3')).toBeInTheDocument();
-    const retryButton = await screen.findByRole('button', { name: /retry/i });
+    const retryButton = await screen.findByRole('button', { name: /重試/i });
 
     fireEvent.click(retryButton);
 
@@ -237,7 +231,7 @@ describe('AudioPlayer', () => {
     // Retry succeeded and playback resumed on its own - the reader was already
     // mid-playback, so a successful retry shouldn't require a second Play click.
     await waitFor(() => expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2));
-    expect(screen.getByText('Chunk 2 of 3')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   test('calls onBackToLibrary when the reader asks to switch books', async () => {
@@ -249,7 +243,7 @@ describe('AudioPlayer', () => {
       </ChakraProvider>,
     );
 
-    fireEvent.click(screen.getByText(/back to library/i));
+    fireEvent.click(screen.getByText(/返回書庫/i));
 
     expect(onBackToLibrary).toHaveBeenCalledTimes(1);
   });
@@ -283,7 +277,7 @@ describe('AudioPlayer voice selection', () => {
     );
     openSettings();
 
-    const group = screen.getByRole('radiogroup', { name: /narration voice/i });
+    const group = screen.getByRole('radiogroup', { name: /朗讀聲音/i });
     expect(within(group).getByRole('radio', { name: 'Hsiao-Chen' })).toBeChecked();
     expect(
       within(group)
@@ -305,7 +299,7 @@ describe('AudioPlayer voice selection', () => {
     openSettings();
 
     fireEvent.click(
-      within(screen.getByRole('radiogroup', { name: /narration voice/i })).getByRole('radio', {
+      within(screen.getByRole('radiogroup', { name: /朗讀聲音/i })).getByRole('radio', {
         name: 'Yun-Jhe',
       }),
     );
@@ -315,9 +309,9 @@ describe('AudioPlayer voice selection', () => {
     // Chunk 3 finishes playing chunk 0 and is topped up next - it's the first
     // request made after the voice change, so it's the first to use it.
     const audioEl = screen.getByTestId('audio-element');
-    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /pause/i });
+    await screen.findByRole('button', { name: /暫停/i });
     fireEvent.ended(audioEl);
 
     await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(4));
@@ -354,7 +348,7 @@ describe('AudioPlayer playback speed', () => {
     );
     openSettings();
 
-    const group = screen.getByRole('radiogroup', { name: /playback speed/i });
+    const group = screen.getByRole('radiogroup', { name: /播放速度/i });
     expect(within(group).getByRole('radio', { name: '1x' })).toBeChecked();
     expect(
       within(group)
@@ -371,14 +365,14 @@ describe('AudioPlayer playback speed', () => {
     );
 
     await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
-    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /pause/i });
+    await screen.findByRole('button', { name: /暫停/i });
     openSettings();
 
     const audioEl = screen.getByTestId('audio-element');
     fireEvent.click(
-      within(screen.getByRole('radiogroup', { name: /playback speed/i })).getByRole('radio', {
+      within(screen.getByRole('radiogroup', { name: /播放速度/i })).getByRole('radio', {
         name: '1.5x',
       }),
     );
@@ -395,13 +389,13 @@ describe('AudioPlayer playback speed', () => {
     );
 
     await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
-    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /pause/i });
+    await screen.findByRole('button', { name: /暫停/i });
     openSettings();
 
     fireEvent.click(
-      within(screen.getByRole('radiogroup', { name: /playback speed/i })).getByRole('radio', {
+      within(screen.getByRole('radiogroup', { name: /播放速度/i })).getByRole('radio', {
         name: '2x',
       }),
     );
@@ -409,11 +403,10 @@ describe('AudioPlayer playback speed', () => {
     const audioEl = screen.getByTestId('audio-element');
     fireEvent.ended(audioEl);
 
-    await waitFor(() => expect(screen.getByText('Chunk 2 of 4')).toBeInTheDocument());
     // Chunk 1 swapped onto the standby element (see ticket 05) - it's the one actually
     // playing now, so it's the one that must carry the selected speed.
     const activeEl = screen.getByTestId('audio-element-standby');
-    expect(activeEl).toHaveAttribute('data-active', 'true');
+    await waitFor(() => expect(activeEl).toHaveAttribute('data-active', 'true'));
     await waitFor(() => expect(activeEl.playbackRate).toBe(2));
   });
 });
@@ -460,9 +453,9 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     );
 
     await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(2));
-    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /pause/i });
+    await screen.findByRole('button', { name: /暫停/i });
 
     const audioEl = screen.getByTestId('audio-element');
     audioEl.currentTime = 1.5;
@@ -486,7 +479,7 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     );
 
     await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(2));
-    await waitFor(() => expect(screen.getByRole('button', { name: /^play$/i })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: /^播放$/i })).toBeEnabled());
 
     const audioEl = screen.getByTestId('audio-element');
     fireEvent.click(screen.getByTestId('sentence-0-1'));
@@ -495,13 +488,13 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     // updates immediately, but nothing plays until Play is pressed.
     expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true');
     expect(audioEl.currentTime).toBe(0);
-    expect(screen.getByRole('button', { name: /^play$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^播放$/i })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /^play$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^播放$/i }));
 
     await waitFor(() => expect(audioEl.currentTime).toBe(1));
     expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true');
-    expect(await screen.findByRole('button', { name: /pause/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /暫停/i })).toBeInTheDocument();
   });
 
   test('clicking a sentence in a not-yet-generated chunk generates only that chunk - not the ones skipped over - then seeks there once play is pressed', async () => {
@@ -540,7 +533,9 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
 
     fireEvent.click(screen.getByTestId('sentence-6-1'));
 
-    await waitFor(() => expect(screen.getByText('Chunk 7 of 8')).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId('sentence-6-1')).toHaveAttribute('data-active', 'true'),
+    );
 
     const requestedChunkIndexes = () =>
       audioChunkFetchCalls().map(([, init]) => JSON.parse(init.body).chunkIndex);
@@ -556,7 +551,7 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     const audioEl = screen.getByTestId('audio-element');
     expect(audioEl.currentTime).toBe(0);
 
-    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
     await waitFor(() => expect(playButton).toBeEnabled());
     fireEvent.click(playButton);
 
@@ -607,34 +602,34 @@ describe('AudioPlayer playback lock', () => {
     );
 
     const expectPickersEnabled = () => {
-      within(screen.getByRole('radiogroup', { name: /narration voice/i }))
+      within(screen.getByRole('radiogroup', { name: /朗讀聲音/i }))
         .getAllByRole('radio')
         .forEach((radio) => expect(radio).toBeEnabled());
-      within(screen.getByRole('radiogroup', { name: /playback speed/i }))
+      within(screen.getByRole('radiogroup', { name: /播放速度/i }))
         .getAllByRole('radio')
         .forEach((radio) => expect(radio).toBeEnabled());
     };
     const expectPickersDisabled = () => {
-      within(screen.getByRole('radiogroup', { name: /narration voice/i }))
+      within(screen.getByRole('radiogroup', { name: /朗讀聲音/i }))
         .getAllByRole('radio')
         .forEach((radio) => expect(radio).toBeDisabled());
-      within(screen.getByRole('radiogroup', { name: /playback speed/i }))
+      within(screen.getByRole('radiogroup', { name: /播放速度/i }))
         .getAllByRole('radio')
         .forEach((radio) => expect(radio).toBeDisabled());
     };
 
-    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
     openSettings();
     expectPickersEnabled();
 
     fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /pause/i });
+    await screen.findByRole('button', { name: /暫停/i });
 
     expectPickersDisabled();
 
-    fireEvent.click(screen.getByRole('button', { name: /pause/i }));
+    fireEvent.click(screen.getByRole('button', { name: /暫停/i }));
 
-    expect(await screen.findByRole('button', { name: /^play$/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^播放$/i })).toBeInTheDocument();
     expectPickersEnabled();
   });
 
@@ -645,9 +640,9 @@ describe('AudioPlayer playback lock', () => {
       </ChakraProvider>,
     );
 
-    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /pause/i });
+    await screen.findByRole('button', { name: /暫停/i });
 
     const audioEl = screen.getByTestId('audio-element');
     expect(screen.getByTestId('sentence-0-0')).toHaveAttribute('data-active', 'true');
@@ -659,7 +654,6 @@ describe('AudioPlayer playback lock', () => {
     expect(screen.getByTestId('sentence-0-0')).toHaveAttribute('data-active', 'true');
     expect(screen.getByTestId('sentence-1-1')).not.toHaveAttribute('data-active');
     expect(audioEl.currentTime).toBe(0);
-    expect(screen.getByText('Chunk 1 of 2')).toBeInTheDocument();
   });
 
   test('clicking a different sentence in the already-loaded chunk while paused seeks immediately, without resuming playback', async () => {
@@ -669,12 +663,12 @@ describe('AudioPlayer playback lock', () => {
       </ChakraProvider>,
     );
 
-    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /pause/i });
+    await screen.findByRole('button', { name: /暫停/i });
 
-    fireEvent.click(screen.getByRole('button', { name: /pause/i }));
-    await screen.findByRole('button', { name: /^play$/i });
+    fireEvent.click(screen.getByRole('button', { name: /暫停/i }));
+    await screen.findByRole('button', { name: /^播放$/i });
 
     const audioEl = screen.getByTestId('audio-element');
     fireEvent.click(screen.getByTestId('sentence-0-1'));
@@ -684,11 +678,11 @@ describe('AudioPlayer playback lock', () => {
     // playback on its own (see ticket 02, the alreadyLoaded branch of seekToSentence).
     expect(audioEl.currentTime).toBe(1);
     expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true');
-    expect(screen.getByRole('button', { name: /^play$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^播放$/i })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /^play$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^播放$/i }));
 
-    expect(await screen.findByRole('button', { name: /pause/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /暫停/i })).toBeInTheDocument();
     expect(audioEl.currentTime).toBe(1);
   });
 });
@@ -719,9 +713,9 @@ describe('AudioPlayer chunk-to-chunk audio preloading', () => {
       </ChakraProvider>,
     );
 
-    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /pause/i });
+    await screen.findByRole('button', { name: /暫停/i });
 
     // Buffered into the standby element while chunk 0 is still playing - not yet the
     // active one.
@@ -745,9 +739,9 @@ describe('AudioPlayer chunk-to-chunk audio preloading', () => {
       </ChakraProvider>,
     );
 
-    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /pause/i });
+    await screen.findByRole('button', { name: /暫停/i });
 
     const primaryEl = screen.getByTestId('audio-element');
     const standbyEl = screen.getByTestId('audio-element-standby');
@@ -756,11 +750,10 @@ describe('AudioPlayer chunk-to-chunk audio preloading', () => {
 
     fireEvent.ended(primaryEl);
 
-    await waitFor(() => expect(screen.getByText('Chunk 2 of 4')).toBeInTheDocument());
+    await waitFor(() => expect(standbyEl).toHaveAttribute('data-active', 'true'));
     // Still exactly the src it was preloaded with - proves no fresh load happened at
     // the moment of the swap.
     expect(standbyEl.src).toBe(preloadedSrc);
-    expect(standbyEl).toHaveAttribute('data-active', 'true');
     expect(primaryEl).not.toHaveAttribute('data-active');
     // The now-standby element (previously active) starts buffering chunk 2 in turn.
     await waitFor(() => expect(primaryEl.src).toBe('https://blob.test/2'));
@@ -789,9 +782,9 @@ describe('AudioPlayer chunk-to-chunk audio preloading', () => {
       }),
     );
 
-    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /pause/i });
+    await screen.findByRole('button', { name: /暫停/i });
 
     const primaryEl = screen.getByTestId('audio-element');
     const standbyEl = screen.getByTestId('audio-element-standby');
@@ -802,7 +795,13 @@ describe('AudioPlayer chunk-to-chunk audio preloading', () => {
 
     // No swap happened (nothing was buffered) - the primary element stays "active".
     expect(primaryEl).toHaveAttribute('data-active', 'true');
-    expect(screen.getByText('Chunk 2 of 4')).toBeInTheDocument();
+    // Advancing to chunk 1 tops up the look-ahead buffer with chunk 3, proving the
+    // position moved forward even without a standby swap.
+    await waitFor(() =>
+      expect(audioChunkFetchCalls().map(([, init]) => JSON.parse(init.body).chunkIndex)).toContain(
+        3,
+      ),
+    );
 
     resolvers[1](
       new Response(JSON.stringify({ url: 'https://blob.test/1', boundaries: [] }), {
@@ -835,7 +834,7 @@ describe('AudioPlayer resume-index persistence', () => {
     vi.restoreAllMocks();
   });
 
-  test('persists the current chunk index to the library as the book advances', async () => {
+  test('persists the current chunk and sentence index together to the library as the book advances', async () => {
     render(
       <ChakraProvider>
         <AudioPlayer bookId="book-persist" chunks={chunks} />
@@ -845,15 +844,234 @@ describe('AudioPlayer resume-index persistence', () => {
     await waitFor(() =>
       expect(libraryPatchCalls().map(([url]) => url)).toContain('/api/library/book-persist'),
     );
-    expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({ resumeIndex: 0 });
+    expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
+      resumeIndex: 0,
+      resumeSentenceIndex: 0,
+    });
 
-    const playButton = await screen.findByRole('button', { name: /^play$/i });
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /pause/i });
+    await screen.findByRole('button', { name: /暫停/i });
     fireEvent.ended(screen.getByTestId('audio-element'));
 
     await waitFor(() =>
-      expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({ resumeIndex: 1 }),
+      expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
+        resumeIndex: 1,
+        resumeSentenceIndex: 0,
+      }),
     );
+  });
+
+  test('an explicit Sentence click persists the new reading position immediately', async () => {
+    const twoSentenceChunks = ['第一句。第二句。', '第三句。第四句。'];
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-persist-click" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(2));
+    fireEvent.click(screen.getByTestId('sentence-0-1'));
+
+    await waitFor(() =>
+      expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
+        resumeIndex: 0,
+        resumeSentenceIndex: 1,
+      }),
+    );
+  });
+
+  test('natural playback advancing the active Sentence persists the new Sentence position', async () => {
+    const boundaries = [
+      { text: '第一句', offset: 0, duration: 10_000_000 },
+      { text: '第二句', offset: 10_000_000, duration: 10_000_000 },
+    ];
+    mockAudioChunkFetch(({ body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      return new Response(JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries }), {
+        status: 200,
+      });
+    });
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-persist-tick" chunks={['第一句。第二句。']} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /暫停/i });
+
+    const audioEl = screen.getByTestId('audio-element');
+    audioEl.currentTime = 1.5;
+    fireEvent.timeUpdate(audioEl);
+
+    await waitFor(() =>
+      expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
+        resumeIndex: 0,
+        resumeSentenceIndex: 1,
+      }),
+    );
+  });
+
+  test('scrolling the transcript and dragging the position slider never persist a reading position', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-persist-scroll" chunks={chunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() =>
+      expect(libraryPatchCalls().map(([url]) => url)).toContain('/api/library/book-persist-scroll'),
+    );
+    const patchCallCountAfterMount = libraryPatchCalls().length;
+
+    const container = screen.getByRole('log', { name: /書籍內文/i });
+    Object.defineProperty(container, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(container, 'clientHeight', { value: 500, configurable: true });
+    container.scrollTop = 250;
+    fireEvent.scroll(container);
+
+    fireEvent.change(screen.getByRole('slider', { name: /文字位置/i }), {
+      target: { value: '65' },
+    });
+
+    // Give any debounced persistence effect a chance to fire before asserting it didn't.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(libraryPatchCalls()).toHaveLength(patchCallCountAfterMount);
+  });
+});
+
+describe('AudioPlayer resume-to-saved-sentence without autoplay', () => {
+  const twoSentenceChunks = ['第一句。第二句。', '第三句。第四句。'];
+  const boundariesByChunk = {
+    0: [
+      { text: '第一句', offset: 0, duration: 10_000_000 },
+      { text: '第二句', offset: 10_000_000, duration: 10_000_000 },
+    ],
+    1: [
+      { text: '第三句', offset: 0, duration: 10_000_000 },
+      { text: '第四句', offset: 10_000_000, duration: 10_000_000 },
+    ],
+  };
+
+  beforeEach(() => {
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.pause = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
+
+    mockAudioChunkFetch(({ body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      return new Response(
+        JSON.stringify({
+          url: `https://blob.test/${chunkIndex}`,
+          boundaries: boundariesByChunk[chunkIndex] ?? [],
+        }),
+        { status: 200 },
+      );
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('opening a Book with a saved (resumeIndex, resumeSentenceIndex) renders at that Sentence without audio playing', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer
+          bookId="book-resume-sentence"
+          chunks={twoSentenceChunks}
+          initialIndex={1}
+          initialSentenceIndex={1}
+        />
+      </ChakraProvider>,
+    );
+
+    expect(await screen.findByTestId('sentence-1-1')).toHaveAttribute('data-active', 'true');
+    expect(window.HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /^播放$/i })).toBeInTheDocument();
+  });
+
+  test('pressing play right after opening resumes exactly at the saved Sentence, not the start of its Chunk', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer
+          bookId="book-resume-sentence-2"
+          chunks={twoSentenceChunks}
+          initialIndex={1}
+          initialSentenceIndex={1}
+        />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+
+    const audioEl = screen.getByTestId('audio-element');
+    await waitFor(() => expect(audioEl.currentTime).toBe(1));
+    expect(screen.getByTestId('sentence-1-1')).toHaveAttribute('data-active', 'true');
+  });
+});
+
+describe('AudioPlayer report mode wiring', () => {
+  const twoSentenceChunks = ['第一句。第二句。', '第三句。第四句。'];
+
+  beforeEach(() => {
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.pause = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
+
+    mockAudioChunkFetch(({ body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      return new Response(
+        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
+        { status: 200 },
+      );
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function selectText(text) {
+    window.getSelection = vi.fn(() => ({ toString: () => text }));
+    fireEvent.mouseUp(screen.getByRole('log', { name: /書籍內文/i }));
+  }
+
+  test('toggling report mode from the bottom bar disables Sentence-click seeking and surfaces the report form on selection', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-report" chunks={twoSentenceChunks} title="A Book" />
+      </ChakraProvider>,
+    );
+
+    // Sanity: clicking works normally before report mode is entered.
+    fireEvent.click(screen.getByTestId('sentence-0-1'));
+    expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true');
+
+    fireEvent.click(screen.getByRole('button', { name: /回報發音問題/i }));
+
+    fireEvent.click(screen.getByTestId('sentence-1-0'));
+    // Still queued on the earlier sentence - the report-mode click was a no-op.
+    expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true');
+    expect(screen.getByTestId('sentence-1-0')).not.toHaveAttribute('data-active');
+
+    selectText('第一句');
+    expect(screen.getByTestId('pronunciation-report-modal')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+
+    expect(screen.queryByTestId('pronunciation-report-modal')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /回報發音問題/i })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+
+    // Report mode has fully exited - Sentence-click seeking works again.
+    fireEvent.click(screen.getByTestId('sentence-1-0'));
+    expect(screen.getByTestId('sentence-1-0')).toHaveAttribute('data-active', 'true');
   });
 });

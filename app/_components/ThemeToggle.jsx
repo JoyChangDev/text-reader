@@ -4,9 +4,9 @@ import { Box, ClientOnly, Skeleton, VisuallyHidden } from '@chakra-ui/react';
 import { useTheme } from 'next-themes';
 
 const THEME_OPTIONS = [
-  { value: 'paper', label: 'Paper' },
-  { value: 'night', label: 'Night' },
-  { value: 'soft', label: 'Soft' },
+  { value: 'paper', label: '紙感' },
+  { value: 'night', label: '夜間' },
+  { value: 'soft', label: '柔和' },
 ];
 
 // next-themes only knows the persisted theme after mount (it reads localStorage
@@ -29,7 +29,7 @@ export default function ThemeToggle() {
 
   return (
     <ClientOnly fallback={<Skeleton w="40" h="8" />}>
-      <Box role="radiogroup" aria-label="Theme" display="flex" gap={2} flexWrap="wrap">
+      <Box role="radiogroup" aria-label="外觀主題" display="flex" gap={2} flexWrap="wrap">
         {THEME_OPTIONS.map((option) => {
           const checked = current === option.value;
           return (

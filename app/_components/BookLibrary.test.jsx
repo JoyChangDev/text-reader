@@ -60,6 +60,29 @@ describe('BookLibrary', () => {
     expect(await screen.findByText('50%')).toBeInTheDocument();
   });
 
+  test('shows a Sentence-level percent when sentenceCountsByChunk is available, taking precedence over Chunk-level data', async () => {
+    listBooks.mockResolvedValue([
+      {
+        bookId: 'book-1',
+        title: 'First Book',
+        resumeIndex: 1,
+        resumeSentenceIndex: 0,
+        totalChunks: 5,
+        sentenceCountsByChunk: [2, 2],
+      },
+    ]);
+
+    render(
+      <ChakraProvider>
+        <BookLibrary onSelect={vi.fn()} />
+      </ChakraProvider>,
+    );
+
+    // Sentence-level (2 of 4 -> 67%) differs from what the Chunk-level fallback would
+    // show (resumeIndex 1 of 5 -> 25%), proving the Sentence-level path is used.
+    expect(await screen.findByText('67%')).toBeInTheDocument();
+  });
+
   test('shows a Completed badge instead of a percent once resumeIndex reaches the last chunk', async () => {
     listBooks.mockResolvedValue([
       { bookId: 'book-1', title: 'First Book', resumeIndex: 4, totalChunks: 5 },
@@ -71,11 +94,11 @@ describe('BookLibrary', () => {
       </ChakraProvider>,
     );
 
-    expect(await screen.findByText('Completed')).toBeInTheDocument();
+    expect(await screen.findByText('已完成')).toBeInTheDocument();
     expect(screen.queryByText('100%')).not.toBeInTheDocument();
   });
 
-  test('falls back to a plain resume line for legacy entries without totalChunks', async () => {
+  test('shows no progress line for a book with no usable progress data', async () => {
     listBooks.mockResolvedValue([{ bookId: 'book-1', title: 'First Book', resumeIndex: 2 }]);
 
     render(
@@ -84,7 +107,8 @@ describe('BookLibrary', () => {
       </ChakraProvider>,
     );
 
-    expect(await screen.findByText('Resumed at chunk 3')).toBeInTheDocument();
+    await screen.findByText('First Book');
+    expect(screen.queryByText(/chunk/i)).not.toBeInTheDocument();
   });
 
   test('selecting a book calls onSelect with its bookId', async () => {
@@ -116,7 +140,7 @@ describe('BookLibrary', () => {
     );
     await screen.findByText('First Book');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete First Book' }));
+    fireEvent.click(screen.getByRole('button', { name: '刪除 First Book' }));
 
     expect(deleteBook).toHaveBeenCalledWith('book-1');
     await waitFor(() => expect(screen.queryByText('First Book')).not.toBeInTheDocument());
@@ -134,7 +158,7 @@ describe('BookLibrary', () => {
     );
     await screen.findByText('First Book');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete First Book' }));
+    fireEvent.click(screen.getByRole('button', { name: '刪除 First Book' }));
 
     await waitFor(() => expect(deleteBook).toHaveBeenCalledWith('book-1'));
     expect(screen.getByText('First Book')).toBeInTheDocument();

@@ -15,7 +15,7 @@ const twoSentenceChunks = ['第一句。第二句。', '第三句。第四句。
 
 function selectText(text) {
   window.getSelection = vi.fn(() => ({ toString: () => text }));
-  fireEvent.mouseUp(screen.getByRole('log', { name: /book text/i }));
+  fireEvent.mouseUp(screen.getByRole('log', { name: /書籍內文/i }));
 }
 
 describe('TranscriptView', () => {
@@ -90,7 +90,7 @@ describe('TranscriptView', () => {
     expect(onSentenceClick).not.toHaveBeenCalled();
   });
 
-  test('auto-scrolls to the active sentence when it changes', () => {
+  test('auto-scrolls to the active sentence when it changes, immediately rather than smoothly', () => {
     const { rerender } = render(
       <ChakraProvider>
         <TranscriptView
@@ -102,7 +102,9 @@ describe('TranscriptView', () => {
       </ChakraProvider>,
     );
 
-    expect(window.Element.prototype.scrollIntoView).toHaveBeenCalled();
+    expect(window.Element.prototype.scrollIntoView).toHaveBeenCalledWith(
+      expect.objectContaining({ behavior: 'auto' }),
+    );
     window.Element.prototype.scrollIntoView.mockClear();
 
     rerender(
@@ -116,7 +118,26 @@ describe('TranscriptView', () => {
       </ChakraProvider>,
     );
 
-    expect(window.Element.prototype.scrollIntoView).toHaveBeenCalled();
+    expect(window.Element.prototype.scrollIntoView).toHaveBeenCalledWith(
+      expect.objectContaining({ behavior: 'auto' }),
+    );
+  });
+
+  test("hides the transcript scroll container's native scrollbar while keeping it scrollable", () => {
+    render(
+      <ChakraProvider>
+        <TranscriptView
+          chunks={twoSentenceChunks}
+          currentIndex={0}
+          activeSentenceIndex={0}
+          onSentenceClick={() => {}}
+        />
+      </ChakraProvider>,
+    );
+
+    const container = screen.getByRole('log', { name: /書籍內文/i });
+    expect(container).toHaveStyle({ overflowY: 'auto' });
+    expect(getComputedStyle(container).scrollbarWidth).toBe('none');
   });
 
   test('suspends auto-scroll after a manual scroll, instead of fighting the reader', async () => {
@@ -135,7 +156,7 @@ describe('TranscriptView', () => {
     // "was that us?" flag before firing a scroll that must read as manual.
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    fireEvent.scroll(screen.getByRole('log', { name: /book text/i }));
+    fireEvent.scroll(screen.getByRole('log', { name: /書籍內文/i }));
     window.Element.prototype.scrollIntoView.mockClear();
 
     rerender(
@@ -198,7 +219,7 @@ describe('TranscriptView', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    fireEvent.scroll(screen.getByRole('log', { name: /book text/i }));
+    fireEvent.scroll(screen.getByRole('log', { name: /書籍內文/i }));
     window.Element.prototype.scrollIntoView.mockClear();
 
     ref.current.jumpToNowPlaying();
@@ -221,7 +242,7 @@ describe('TranscriptView', () => {
     );
     onScrollPercentChange.mockClear();
 
-    const container = screen.getByRole('log', { name: /book text/i });
+    const container = screen.getByRole('log', { name: /書籍內文/i });
     Object.defineProperty(container, 'scrollHeight', { value: 1000, configurable: true });
     Object.defineProperty(container, 'clientHeight', { value: 500, configurable: true });
     container.scrollTop = 250;
@@ -246,7 +267,7 @@ describe('TranscriptView', () => {
     );
     onScrollPercentChange.mockClear();
 
-    const container = screen.getByRole('log', { name: /book text/i });
+    const container = screen.getByRole('log', { name: /書籍內文/i });
     Object.defineProperty(container, 'scrollHeight', { value: 500, configurable: true });
     Object.defineProperty(container, 'clientHeight', { value: 500, configurable: true });
     container.scrollTop = 0;
@@ -271,7 +292,7 @@ describe('TranscriptView', () => {
       </ChakraProvider>,
     );
 
-    const container = screen.getByRole('log', { name: /book text/i });
+    const container = screen.getByRole('log', { name: /書籍內文/i });
     Object.defineProperty(container, 'scrollHeight', { value: 1000, configurable: true });
     Object.defineProperty(container, 'clientHeight', { value: 500, configurable: true });
 
@@ -297,7 +318,7 @@ describe('TranscriptView', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    fireEvent.scroll(screen.getByRole('log', { name: /book text/i }));
+    fireEvent.scroll(screen.getByRole('log', { name: /書籍內文/i }));
     ref.current.jumpToNowPlaying();
     window.Element.prototype.scrollIntoView.mockClear();
 
@@ -319,8 +340,8 @@ describe('TranscriptView', () => {
     expect(window.Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
-  describe('reporting a pronunciation issue', () => {
-    test('does not show the report affordance before any text is selected', () => {
+  describe('report mode', () => {
+    test('a text selection made outside of report mode never surfaces the report form', () => {
       render(
         <ChakraProvider>
           <TranscriptView
@@ -329,36 +350,17 @@ describe('TranscriptView', () => {
             activeSentenceIndex={0}
             onSentenceClick={() => {}}
             bookTitle="First Book"
-          />
-        </ChakraProvider>,
-      );
-
-      expect(
-        screen.queryByRole('button', { name: /report pronunciation issue/i }),
-      ).not.toBeInTheDocument();
-    });
-
-    test('selecting text surfaces the report affordance', () => {
-      render(
-        <ChakraProvider>
-          <TranscriptView
-            chunks={twoSentenceChunks}
-            currentIndex={0}
-            activeSentenceIndex={0}
-            onSentenceClick={() => {}}
-            bookTitle="First Book"
+            reportMode={false}
           />
         </ChakraProvider>,
       );
 
       selectText('第一句');
 
-      expect(
-        screen.getByRole('button', { name: /report pronunciation issue/i }),
-      ).toBeInTheDocument();
+      expect(screen.queryByTestId('pronunciation-report-modal')).not.toBeInTheDocument();
     });
 
-    test('a collapsed (empty) selection does not surface the affordance', () => {
+    test('a non-empty selection made while report mode is active surfaces the report form', () => {
       render(
         <ChakraProvider>
           <TranscriptView
@@ -367,18 +369,72 @@ describe('TranscriptView', () => {
             activeSentenceIndex={0}
             onSentenceClick={() => {}}
             bookTitle="First Book"
+            reportMode
+          />
+        </ChakraProvider>,
+      );
+
+      selectText('第一句');
+
+      expect(screen.getByTestId('pronunciation-report-modal')).toBeInTheDocument();
+      expect(screen.getByText('第一句')).toBeInTheDocument();
+      expect(screen.getByText('First Book')).toBeInTheDocument();
+    });
+
+    test('a collapsed (empty) selection does not surface the form, even in report mode', () => {
+      render(
+        <ChakraProvider>
+          <TranscriptView
+            chunks={twoSentenceChunks}
+            currentIndex={0}
+            activeSentenceIndex={0}
+            onSentenceClick={() => {}}
+            bookTitle="First Book"
+            reportMode
           />
         </ChakraProvider>,
       );
 
       selectText('');
 
-      expect(
-        screen.queryByRole('button', { name: /report pronunciation issue/i }),
-      ).not.toBeInTheDocument();
+      expect(screen.queryByTestId('pronunciation-report-modal')).not.toBeInTheDocument();
     });
 
-    test('opening the form pre-fills the selected phrase and the book title', () => {
+    test('leaving report mode (prop flips to false) closes any open form', () => {
+      const { rerender } = render(
+        <ChakraProvider>
+          <TranscriptView
+            chunks={twoSentenceChunks}
+            currentIndex={0}
+            activeSentenceIndex={0}
+            onSentenceClick={() => {}}
+            bookTitle="First Book"
+            reportMode
+          />
+        </ChakraProvider>,
+      );
+
+      selectText('第一句');
+      expect(screen.getByTestId('pronunciation-report-modal')).toBeInTheDocument();
+
+      rerender(
+        <ChakraProvider>
+          <TranscriptView
+            chunks={twoSentenceChunks}
+            currentIndex={0}
+            activeSentenceIndex={0}
+            onSentenceClick={() => {}}
+            bookTitle="First Book"
+            reportMode={false}
+          />
+        </ChakraProvider>,
+      );
+
+      expect(screen.queryByTestId('pronunciation-report-modal')).not.toBeInTheDocument();
+    });
+
+    test('dismissing the form calls onExitReportMode, restoring ordinary Sentence-click seeking', () => {
+      const onExitReportMode = vi.fn();
       render(
         <ChakraProvider>
           <TranscriptView
@@ -387,101 +443,36 @@ describe('TranscriptView', () => {
             activeSentenceIndex={0}
             onSentenceClick={() => {}}
             bookTitle="First Book"
+            reportMode
+            onExitReportMode={onExitReportMode}
           />
         </ChakraProvider>,
       );
 
       selectText('第一句');
-      fireEvent.click(screen.getByRole('button', { name: /report pronunciation issue/i }));
+      fireEvent.click(screen.getByRole('button', { name: /取消/ }));
 
-      expect(screen.getByText('第一句')).toBeInTheDocument();
-      expect(screen.getByText('First Book')).toBeInTheDocument();
+      expect(onExitReportMode).toHaveBeenCalledTimes(1);
     });
 
-    test('submitting the form reports the issue and gives visible confirmation', async () => {
-      submitReport.mockResolvedValueOnce({
-        bookTitle: 'First Book',
-        phrase: '第一句',
-        description: 'sounds off',
-        reportedAt: '2026-07-30T12:00:00.000Z',
-      });
-
+    test('Sentence-click seeking is blocked while report mode is active, independent of isPlaying', () => {
+      const onSentenceClick = vi.fn();
       render(
         <ChakraProvider>
           <TranscriptView
             chunks={twoSentenceChunks}
             currentIndex={0}
             activeSentenceIndex={0}
-            onSentenceClick={() => {}}
-            bookTitle="First Book"
+            isPlaying={false}
+            onSentenceClick={onSentenceClick}
+            reportMode
           />
         </ChakraProvider>,
       );
 
-      selectText('第一句');
-      fireEvent.click(screen.getByRole('button', { name: /report pronunciation issue/i }));
-      fireEvent.change(screen.getByLabelText(/description/i), {
-        target: { value: 'sounds off' },
-      });
-      fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
+      fireEvent.click(screen.getByTestId('sentence-1-0'));
 
-      expect(submitReport).toHaveBeenCalledWith({
-        bookTitle: 'First Book',
-        phrase: '第一句',
-        description: 'sounds off',
-      });
-      expect(await screen.findByRole('status')).toHaveTextContent(/thanks/i);
-    });
-
-    test('shows an error and re-enables the form when submitting the report fails', async () => {
-      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-      submitReport.mockRejectedValueOnce(new Error('Submitting the pronunciation report failed'));
-
-      render(
-        <ChakraProvider>
-          <TranscriptView
-            chunks={twoSentenceChunks}
-            currentIndex={0}
-            activeSentenceIndex={0}
-            onSentenceClick={() => {}}
-            bookTitle="First Book"
-          />
-        </ChakraProvider>,
-      );
-
-      selectText('第一句');
-      fireEvent.click(screen.getByRole('button', { name: /report pronunciation issue/i }));
-      fireEvent.click(screen.getByRole('button', { name: /^submit$/i }));
-
-      expect(await screen.findByRole('alert')).toHaveTextContent(/couldn.t submit/i);
-      expect(screen.getByRole('button', { name: /^submit$/i })).toBeEnabled();
-      expect(consoleError).toHaveBeenCalled();
-      consoleError.mockRestore();
-    });
-
-    test('selecting a new phrase replaces a previous report in progress', () => {
-      render(
-        <ChakraProvider>
-          <TranscriptView
-            chunks={twoSentenceChunks}
-            currentIndex={0}
-            activeSentenceIndex={0}
-            onSentenceClick={() => {}}
-            bookTitle="First Book"
-          />
-        </ChakraProvider>,
-      );
-
-      selectText('第一句');
-      fireEvent.click(screen.getByRole('button', { name: /report pronunciation issue/i }));
-      expect(screen.getByText('第一句')).toBeInTheDocument();
-
-      selectText('第三句');
-
-      expect(
-        screen.getByRole('button', { name: /report pronunciation issue/i }),
-      ).toBeInTheDocument();
-      expect(screen.queryByText('第一句')).not.toBeInTheDocument();
+      expect(onSentenceClick).not.toHaveBeenCalled();
     });
   });
 });

@@ -30,11 +30,11 @@ export async function getBook(bookId) {
   return response.json();
 }
 
-export async function updateResumeIndex(bookId, resumeIndex) {
+export async function updateResumeIndex(bookId, { resumeIndex, resumeSentenceIndex }) {
   const response = await fetch(`${BASE_URL}/${bookId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resumeIndex }),
+    body: JSON.stringify({ resumeIndex, resumeSentenceIndex }),
   });
 
   return response.json();

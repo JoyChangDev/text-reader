@@ -30,7 +30,7 @@ describe('BookUploader', () => {
     );
 
     const file = makeTxtFile('第一段。第二段。');
-    const input = screen.getByLabelText(/upload/i);
+    const input = screen.getByLabelText(/上傳/);
     fireEvent.change(input, { target: { files: [file] } });
 
     await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
@@ -79,10 +79,10 @@ describe('BookUploader', () => {
     );
 
     const file = makeTxtFile('第一段。');
-    const input = screen.getByLabelText(/upload/i);
+    const input = screen.getByLabelText(/上傳/);
     fireEvent.change(input, { target: { files: [file] } });
 
-    expect(await screen.findByText(/couldn't process/i)).toBeInTheDocument();
+    expect(await screen.findByText(/無法處理/)).toBeInTheDocument();
     expect(onReady).not.toHaveBeenCalled();
   });
 });

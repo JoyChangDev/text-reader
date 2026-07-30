@@ -1,7 +1,7 @@
 'use client';
 
 import { Box, HStack, IconButton, Text } from '@chakra-ui/react';
-import { FiArrowUp, FiPause, FiPlay, FiRefreshCw } from 'react-icons/fi';
+import { FiArrowUp, FiFlag, FiPause, FiPlay, FiRefreshCw } from 'react-icons/fi';
 
 import PlayerSettingsSheet from './PlayerSettingsSheet';
 import ScrollPositionIndicator from './ScrollPositionIndicator';
@@ -13,10 +13,10 @@ import ScrollPositionIndicator from './ScrollPositionIndicator';
 // playback speed, voice preview, and appearance all collapse behind PlayerSettingsSheet
 // so this bar's persistent row stays short - "jump to now playing" and play/pause sit
 // at the opposite (trailing) end of that row from the settings disclosure, grouped
-// together since they're both transport actions.
+// together since they're both transport actions. The report-mode toggle sits right next
+// to the settings disclosure (see ticket 06) - both are mode-entry controls, distinct
+// from the transport actions on the trailing end.
 export default function PlayerBar({
-  currentIndex,
-  totalChunks,
   isPlaying,
   currentChunkReady,
   currentChunkErrored,
@@ -30,6 +30,8 @@ export default function PlayerBar({
   onVoiceChange,
   speed,
   onSpeedChange,
+  reportMode,
+  onToggleReportMode,
 }) {
   return (
     <Box
@@ -41,12 +43,9 @@ export default function PlayerBar({
       borderColor="hairline"
     >
       <Box maxW="640px" mx="auto" px={4} pt={2} pb={3}>
-        <Text fontSize="xs" color="foregroundFaint" mb={2}>
-          Chunk {currentIndex + 1} of {totalChunks}
-        </Text>
         {currentChunkErrored && (
           <Text color="danger" role="alert" mb={2}>
-            Couldn&apos;t generate audio for this chunk.
+            此段落的語音產生失敗。
           </Text>
         )}
         <ScrollPositionIndicator percent={scrollPercent} onPercentChange={onScrollPercentChange} />
@@ -58,9 +57,19 @@ export default function PlayerBar({
             onSpeedChange={onSpeedChange}
             disabled={isPlaying}
           />
+          <IconButton
+            aria-label="回報發音問題"
+            aria-pressed={reportMode}
+            variant={reportMode ? 'solid' : 'outline'}
+            borderRadius="full"
+            borderColor="hairlineStrong"
+            onClick={onToggleReportMode}
+          >
+            <FiFlag />
+          </IconButton>
           <HStack ml="auto" gap={2}>
             <IconButton
-              aria-label="Jump to now playing"
+              aria-label="跳到目前播放位置"
               variant="outline"
               borderRadius="full"
               borderColor="hairlineStrong"
@@ -70,7 +79,7 @@ export default function PlayerBar({
             </IconButton>
             {isPlaying ? (
               <IconButton
-                aria-label="Pause"
+                aria-label="暫停"
                 borderRadius="full"
                 boxSize="13"
                 bg="accent"
@@ -82,7 +91,7 @@ export default function PlayerBar({
               </IconButton>
             ) : currentChunkErrored ? (
               <IconButton
-                aria-label="Retry"
+                aria-label="重試"
                 borderRadius="full"
                 boxSize="13"
                 bg="accent"
@@ -94,7 +103,7 @@ export default function PlayerBar({
               </IconButton>
             ) : (
               <IconButton
-                aria-label="Play"
+                aria-label="播放"
                 borderRadius="full"
                 boxSize="13"
                 bg="accent"

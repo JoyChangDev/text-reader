@@ -20,14 +20,17 @@ export async function GET(request, { params }) {
 
 export async function PATCH(request, { params }) {
   const { bookId } = await params;
-  const { resumeIndex } = await request.json();
+  const { resumeIndex, resumeSentenceIndex } = await request.json();
 
   if (resumeIndex === undefined || resumeIndex === null) {
     return NextResponse.json({ error: 'resumeIndex is required' }, { status: 400 });
   }
+  if (resumeSentenceIndex === undefined || resumeSentenceIndex === null) {
+    return NextResponse.json({ error: 'resumeSentenceIndex is required' }, { status: 400 });
+  }
 
   try {
-    const book = await updateResumeIndex(bookId, resumeIndex);
+    const book = await updateResumeIndex(bookId, { resumeIndex, resumeSentenceIndex });
     if (!book) {
       return NextResponse.json({ error: 'book not found' }, { status: 404 });
     }

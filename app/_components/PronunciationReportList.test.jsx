@@ -28,9 +28,7 @@ describe('PronunciationReportList', () => {
 
     renderList();
 
-    expect(
-      await screen.findByText('No pronunciation issues have been reported yet.'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('目前尚無發音回報。')).toBeInTheDocument();
   });
 
   test('lists every report with its book, phrase, and description', async () => {
@@ -63,7 +61,7 @@ describe('PronunciationReportList', () => {
 
     renderList();
 
-    expect(await screen.findByText('No description provided')).toBeInTheDocument();
+    expect(await screen.findByText('未提供描述')).toBeInTheDocument();
   });
 
   test('shows the total report count', async () => {
@@ -74,7 +72,7 @@ describe('PronunciationReportList', () => {
 
     renderList();
 
-    expect(await screen.findByText('2 reports, newest first')).toBeInTheDocument();
+    expect(await screen.findByText('共 2 筆回報，依最新排序')).toBeInTheDocument();
   });
 
   test('renders reports in the order returned by listReports, without re-sorting client-side', async () => {

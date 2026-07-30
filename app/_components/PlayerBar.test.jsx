@@ -5,8 +5,6 @@ import ChakraProvider from '../_providers/chakra';
 import PlayerBar from './PlayerBar';
 
 const baseProps = {
-  currentIndex: 0,
-  totalChunks: 4,
   isPlaying: false,
   currentChunkReady: true,
   currentChunkErrored: false,
@@ -20,6 +18,8 @@ const baseProps = {
   onVoiceChange: () => {},
   speed: 1,
   onSpeedChange: () => {},
+  reportMode: false,
+  onToggleReportMode: () => {},
 };
 
 function renderBar(overrides = {}) {
@@ -31,7 +31,7 @@ function renderBar(overrides = {}) {
 }
 
 function openSettings() {
-  fireEvent.click(screen.getByRole('button', { name: /^settings$/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^設定$/i }));
 }
 
 describe('PlayerBar', () => {
@@ -44,17 +44,30 @@ describe('PlayerBar', () => {
     vi.restoreAllMocks();
   });
 
-  test('shows the current chunk position', () => {
-    renderBar({ currentIndex: 1, totalChunks: 4 });
+  test('never renders chunk-index text, in any state', () => {
+    const { rerender } = renderBar();
+    expect(screen.queryByText(/chunk/i)).not.toBeInTheDocument();
 
-    expect(screen.getByText('Chunk 2 of 4')).toBeInTheDocument();
+    rerender(
+      <ChakraProvider>
+        <PlayerBar {...baseProps} isPlaying />
+      </ChakraProvider>,
+    );
+    expect(screen.queryByText(/chunk/i)).not.toBeInTheDocument();
+
+    rerender(
+      <ChakraProvider>
+        <PlayerBar {...baseProps} currentChunkErrored currentChunkReady={false} />
+      </ChakraProvider>,
+    );
+    expect(screen.queryByText(/^chunk /i)).not.toBeInTheDocument();
   });
 
   test('shows an enabled play control when the current chunk is ready, and calls onPlay', () => {
     const onPlay = vi.fn();
     renderBar({ isPlaying: false, currentChunkReady: true, onPlay });
 
-    const playButton = screen.getByRole('button', { name: /^play$/i });
+    const playButton = screen.getByRole('button', { name: /^播放$/i });
     expect(playButton).toBeEnabled();
     fireEvent.click(playButton);
 
@@ -64,14 +77,14 @@ describe('PlayerBar', () => {
   test('disables play while the current chunk is not ready', () => {
     renderBar({ currentChunkReady: false });
 
-    expect(screen.getByRole('button', { name: /^play$/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^播放$/i })).toBeDisabled();
   });
 
   test('shows pause while playing, and calls onPause', () => {
     const onPause = vi.fn();
     renderBar({ isPlaying: true, onPause });
 
-    const pauseButton = screen.getByRole('button', { name: /pause/i });
+    const pauseButton = screen.getByRole('button', { name: /暫停/i });
     fireEvent.click(pauseButton);
 
     expect(onPause).toHaveBeenCalledTimes(1);
@@ -81,10 +94,10 @@ describe('PlayerBar', () => {
     const onRetry = vi.fn();
     renderBar({ currentChunkErrored: true, currentChunkReady: false, onRetry });
 
-    expect(screen.queryByRole('button', { name: /^play$/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent(/couldn't generate audio/i);
+    expect(screen.queryByRole('button', { name: /^播放$/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(/語音產生失敗/i);
 
-    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+    fireEvent.click(screen.getByRole('button', { name: /重試/i }));
 
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
@@ -93,32 +106,61 @@ describe('PlayerBar', () => {
     const onJumpToNowPlaying = vi.fn();
     renderBar({ onJumpToNowPlaying });
 
-    fireEvent.click(screen.getByRole('button', { name: /jump to now playing/i }));
+    fireEvent.click(screen.getByRole('button', { name: /跳到目前播放位置/i }));
 
     expect(onJumpToNowPlaying).toHaveBeenCalledTimes(1);
   });
 
-  test('"jump to now playing" and play/pause sit trailing settings, in that order', () => {
+  test('the report toggle sits next to settings, and "jump to now playing"/play sit trailing, in that order', () => {
     renderBar();
 
     const buttonNames = screen
       .getAllByRole('button')
       .map((button) => button.getAttribute('aria-label'));
 
-    expect(buttonNames).toEqual(['Settings', 'Jump to now playing', 'Play']);
+    expect(buttonNames).toEqual(['設定', '回報發音問題', '跳到目前播放位置', '播放']);
+  });
+
+  describe('report mode toggle', () => {
+    test('reflects the current report-mode state', () => {
+      const { rerender } = renderBar({ reportMode: false });
+      expect(screen.getByRole('button', { name: /回報發音問題/i })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      );
+
+      rerender(
+        <ChakraProvider>
+          <PlayerBar {...baseProps} reportMode />
+        </ChakraProvider>,
+      );
+      expect(screen.getByRole('button', { name: /回報發音問題/i })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
+
+    test('calls onToggleReportMode when clicked', () => {
+      const onToggleReportMode = vi.fn();
+      renderBar({ onToggleReportMode });
+
+      fireEvent.click(screen.getByRole('button', { name: /回報發音問題/i }));
+
+      expect(onToggleReportMode).toHaveBeenCalledTimes(1);
+    });
   });
 
   test('shows the scroll-position indicator at the given percentage, independent of chunk/playback progress', () => {
-    renderBar({ currentIndex: 0, totalChunks: 4, scrollPercent: 40 });
+    renderBar({ scrollPercent: 40 });
 
-    expect(screen.getByRole('slider', { name: /text position/i })).toHaveValue('40');
+    expect(screen.getByRole('slider', { name: /文字位置/i })).toHaveValue('40');
   });
 
   test('dragging the scroll-position indicator reports the target percentage', () => {
     const onScrollPercentChange = vi.fn();
     renderBar({ onScrollPercentChange });
 
-    fireEvent.change(screen.getByRole('slider', { name: /text position/i }), {
+    fireEvent.change(screen.getByRole('slider', { name: /文字位置/i }), {
       target: { value: '65' },
     });
 
@@ -134,7 +176,7 @@ describe('PlayerBar', () => {
       renderBar({ voice: 'zh-TW-YunJheNeural', onVoiceChange });
       openSettings();
 
-      const group = screen.getByRole('radiogroup', { name: /narration voice/i });
+      const group = screen.getByRole('radiogroup', { name: /朗讀聲音/i });
       expect(within(group).getByRole('radio', { name: 'Yun-Jhe' })).toBeChecked();
       expect(
         within(group)
@@ -152,7 +194,7 @@ describe('PlayerBar', () => {
       renderBar({ speed: 1.5, onSpeedChange });
       openSettings();
 
-      const group = screen.getByRole('radiogroup', { name: /playback speed/i });
+      const group = screen.getByRole('radiogroup', { name: /播放速度/i });
       expect(within(group).getByRole('radio', { name: '1.5x' })).toBeChecked();
 
       fireEvent.click(within(group).getByRole('radio', { name: '2x' }));
@@ -164,12 +206,12 @@ describe('PlayerBar', () => {
       renderBar({ isPlaying: false });
       openSettings();
 
-      const voiceGroup = screen.getByRole('radiogroup', { name: /narration voice/i });
+      const voiceGroup = screen.getByRole('radiogroup', { name: /朗讀聲音/i });
       within(voiceGroup)
         .getAllByRole('radio')
         .forEach((radio) => expect(radio).toBeEnabled());
 
-      const speedGroup = screen.getByRole('radiogroup', { name: /playback speed/i });
+      const speedGroup = screen.getByRole('radiogroup', { name: /播放速度/i });
       within(speedGroup)
         .getAllByRole('radio')
         .forEach((radio) => expect(radio).toBeEnabled());
@@ -179,12 +221,12 @@ describe('PlayerBar', () => {
       renderBar({ isPlaying: true });
       openSettings();
 
-      const voiceGroup = screen.getByRole('radiogroup', { name: /narration voice/i });
+      const voiceGroup = screen.getByRole('radiogroup', { name: /朗讀聲音/i });
       within(voiceGroup)
         .getAllByRole('radio')
         .forEach((radio) => expect(radio).toBeDisabled());
 
-      const speedGroup = screen.getByRole('radiogroup', { name: /playback speed/i });
+      const speedGroup = screen.getByRole('radiogroup', { name: /播放速度/i });
       within(speedGroup)
         .getAllByRole('radio')
         .forEach((radio) => expect(radio).toBeDisabled());
@@ -197,13 +239,13 @@ describe('PlayerBar', () => {
       renderBar();
       openSettings();
 
-      const previewButton = screen.getByRole('button', { name: /preview yun-jhe/i });
+      const previewButton = screen.getByRole('button', { name: /試聽 yun-jhe/i });
       fireEvent.click(previewButton);
 
       expect(screen.getByTestId('voice-preview-audio').src).toContain(
         '/voice-samples/zh-TW-YunJheNeural.mp3',
       );
-      expect(await screen.findByRole('button', { name: /stop yun-jhe/i })).toBeInTheDocument();
+      expect(await screen.findByRole('button', { name: /停止 yun-jhe/i })).toBeInTheDocument();
     });
   });
 });

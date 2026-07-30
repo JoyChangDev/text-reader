@@ -55,10 +55,10 @@ export default function BlobUsageIndicator() {
     >
       <HStack justify="space-between" mb={2}>
         <Text fontSize="sm" color="foregroundMuted">
-          {rounded}% of storage used
+          已使用 {rounded}% 儲存空間
         </Text>
         <Button size="sm" variant="outline" onClick={handleCleanup} disabled={cleaningUp}>
-          {cleaningUp ? 'Cleaning up…' : 'Clean up now'}
+          {cleaningUp ? '清理中…' : '立即清理'}
         </Button>
       </HStack>
       <Box h="1.5" w="full" borderRadius="full" bg="backgroundSunken" overflow="hidden">

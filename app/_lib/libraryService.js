@@ -1,4 +1,5 @@
 import { createBlobStorageClient } from './blobStorageClient';
+import { splitIntoSentences } from './chunkText';
 
 const INDEX_KEY = 'library/index';
 const chunksKey = (bookId) => `library/${bookId}/chunks`;
@@ -24,8 +25,19 @@ export async function addBook({ bookId, title, chunks }, { storageClient } = def
   const index = await readIndex(storageClient);
   // totalChunks is cheap to record here (chunks.length is already in hand at upload
   // time) and lets the library list show real per-book progress without reading each
-  // book's full chunks blob - see BookLibrary.jsx.
-  const summary = { bookId, title, resumeIndex: 0, totalChunks: chunks.length };
+  // book's full chunks blob - see BookLibrary.jsx. sentenceCountsByChunk is computed the
+  // same way here, via the same splitIntoSentences helper TranscriptView uses for
+  // rendering, so the Sentence-level percentage (see bookProgress.js) never needs to
+  // re-read a book's full chunk text later either (see ticket 04).
+  const sentenceCountsByChunk = chunks.map((chunk) => splitIntoSentences(chunk).length);
+  const summary = {
+    bookId,
+    title,
+    resumeIndex: 0,
+    resumeSentenceIndex: 0,
+    totalChunks: chunks.length,
+    sentenceCountsByChunk,
+  };
 
   await storageClient.putJson(INDEX_KEY, [...index, summary]);
   await storageClient.putJson(chunksKey(bookId), chunks);
@@ -42,12 +54,18 @@ export async function getBook(bookId, { storageClient } = defaultClients) {
   return { ...summary, chunks };
 }
 
-export async function updateResumeIndex(bookId, resumeIndex, { storageClient } = defaultClients) {
+// Reading position is always saved as one atomic (Chunk, Sentence) pair - never two
+// separate writes that could disagree (see ticket 05).
+export async function updateResumeIndex(
+  bookId,
+  { resumeIndex, resumeSentenceIndex },
+  { storageClient } = defaultClients,
+) {
   const index = await readIndex(storageClient);
   if (!index.some((book) => book.bookId === bookId)) return null;
 
   const updatedIndex = index.map((book) =>
-    book.bookId === bookId ? { ...book, resumeIndex } : book,
+    book.bookId === bookId ? { ...book, resumeIndex, resumeSentenceIndex } : book,
   );
   await storageClient.putJson(INDEX_KEY, updatedIndex);
 

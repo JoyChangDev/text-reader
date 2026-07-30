@@ -14,7 +14,14 @@ import TranscriptView from './TranscriptView';
 // buffer of upcoming chunks generates in the background (see useBookPlayer). Renders
 // the whole book's text via TranscriptView (scrollable, sentence highlighting/seeking)
 // with a persistent PlayerBar fixed at the bottom of the viewport (see ticket 07).
-export default function AudioPlayer({ bookId, chunks, initialIndex = 0, title, onBackToLibrary }) {
+export default function AudioPlayer({
+  bookId,
+  chunks,
+  initialIndex = 0,
+  initialSentenceIndex = 0,
+  title,
+  onBackToLibrary,
+}) {
   const [voice, setVoice] = useState(() => getListenerSettings().voice);
   const [speed, setSpeed] = useState(() => getListenerSettings().speed);
   const {
@@ -31,7 +38,7 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, title, o
     handleTimeUpdate,
     seekToSentence,
     retryChunk,
-  } = useBookPlayer({ bookId, chunks, initialIndex, voice, speed });
+  } = useBookPlayer({ bookId, chunks, initialIndex, initialSentenceIndex, voice, speed });
 
   // TranscriptView owns the scroll container and active-sentence refs this all needs
   // (see TranscriptView's own doc comment) - it reports its own scroll percentage up
@@ -40,6 +47,13 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, title, o
   // sibling, can drive both without either component owning the other's internals.
   const transcriptRef = useRef(null);
   const [scrollPercent, setScrollPercent] = useState(0);
+
+  // Report mode is lifted here (rather than owned by TranscriptView, which surfaces the
+  // selection that feeds it) since both PlayerBar's toggle and TranscriptView's
+  // Sentence-click gating need to read/drive it (see ticket 06).
+  const [reportMode, setReportMode] = useState(false);
+  const handleToggleReportMode = useCallback(() => setReportMode((current) => !current), []);
+  const handleExitReportMode = useCallback(() => setReportMode(false), []);
 
   const handleJumpToNowPlaying = useCallback(() => {
     transcriptRef.current?.jumpToNowPlaying();
@@ -89,7 +103,7 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, title, o
         pb={1}
         onClick={onBackToLibrary}
       >
-        <FiChevronLeft /> Back to library
+        <FiChevronLeft /> 返回書庫
       </Button>
       <TranscriptView
         ref={transcriptRef}
@@ -99,11 +113,11 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, title, o
         isPlaying={isPlaying}
         onSentenceClick={seekToSentence}
         bookTitle={title}
+        reportMode={reportMode}
+        onExitReportMode={handleExitReportMode}
         onScrollPercentChange={setScrollPercent}
       />
       <PlayerBar
-        currentIndex={currentIndex}
-        totalChunks={chunks.length}
         isPlaying={isPlaying}
         currentChunkReady={currentChunkReady}
         currentChunkErrored={currentChunkErrored}
@@ -117,6 +131,8 @@ export default function AudioPlayer({ bookId, chunks, initialIndex = 0, title, o
         onVoiceChange={handleVoiceChange}
         speed={speed}
         onSpeedChange={handleSpeedChange}
+        reportMode={reportMode}
+        onToggleReportMode={handleToggleReportMode}
       />
       {/* A ping-pong pair, not one element per role: which one is "active" (playing) vs.
           "standby" (preloading the next chunk in the background) flips over time as

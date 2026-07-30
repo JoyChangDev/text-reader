@@ -20,7 +20,7 @@ export default function PronunciationReportsPage() {
           color="foregroundMuted"
           _hover={{ color: 'foreground' }}
         >
-          <FiChevronLeft /> Back to library
+          <FiChevronLeft /> 返回書庫
         </Box>
         <PronunciationReportList />
       </VStack>

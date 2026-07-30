@@ -66,17 +66,22 @@ describe('bookLibrary', () => {
   });
 
   describe('updateResumeIndex', () => {
-    test('PATCHes /api/library/[bookId] with the new resume index', async () => {
-      const summary = { bookId: 'book-1', title: 'First Book', resumeIndex: 5 };
+    test('PATCHes /api/library/[bookId] with the new resume index and resume sentence index together', async () => {
+      const summary = {
+        bookId: 'book-1',
+        title: 'First Book',
+        resumeIndex: 5,
+        resumeSentenceIndex: 2,
+      };
       global.fetch.mockResolvedValue(new Response(JSON.stringify(summary), { status: 200 }));
 
-      const result = await updateResumeIndex('book-1', 5);
+      const result = await updateResumeIndex('book-1', { resumeIndex: 5, resumeSentenceIndex: 2 });
 
       expect(result).toEqual(summary);
       expect(global.fetch).toHaveBeenCalledWith('/api/library/book-1', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resumeIndex: 5 }),
+        body: JSON.stringify({ resumeIndex: 5, resumeSentenceIndex: 2 }),
       });
     });
   });

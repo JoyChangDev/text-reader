@@ -26,7 +26,7 @@ export default function ScrollPositionIndicator({ percent, onPercentChange }) {
         <Box
           as="input"
           type="range"
-          aria-label="Text position"
+          aria-label="文字位置"
           min={0}
           max={100}
           step={1}

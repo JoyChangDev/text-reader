@@ -34,10 +34,11 @@ function fetchMock(handleOther) {
       return new Response(JSON.stringify(book), { status: 200 });
     }
     if (bookIdMatch && options.method === 'PATCH') {
-      const { resumeIndex } = JSON.parse(options.body);
+      const { resumeIndex, resumeSentenceIndex } = JSON.parse(options.body);
       const book = libraryBooks.find((entry) => entry.bookId === bookIdMatch[1]);
       if (!book) return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
       book.resumeIndex = resumeIndex;
+      book.resumeSentenceIndex = resumeSentenceIndex;
       return new Response(JSON.stringify(book), { status: 200 });
     }
     if (url === '/api/blob-usage') {
@@ -80,11 +81,10 @@ describe('Home', () => {
     );
 
     const file = new File(['第一段。第二段。'], 'book.txt', { type: 'text/plain' });
-    const input = screen.getByLabelText(/upload/i);
+    const input = screen.getByLabelText(/上傳/);
     fireEvent.change(input, { target: { files: [file] } });
 
-    await waitFor(() => expect(screen.getByText('Chunk 1 of 2')).toBeInTheDocument());
-    expect(await screen.findByRole('button', { name: /^play$/i })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole('button', { name: /^播放$/i })).toBeEnabled());
 
     // Uploading added a new library entry without touching any existing ones.
     await waitFor(async () => {
@@ -114,7 +114,7 @@ describe('Home', () => {
     );
 
     const file = new File(['新。'], 'new-book.txt', { type: 'text/plain' });
-    const input = screen.getByLabelText(/upload/i);
+    const input = screen.getByLabelText(/上傳/);
     fireEvent.change(input, { target: { files: [file] } });
 
     await waitFor(async () => expect(await listBooks()).toHaveLength(2));
@@ -135,7 +135,7 @@ describe('Home', () => {
       title: 'Saved Book',
       chunks: ['第一段。', '第二段。', '第三段。'],
     });
-    await updateResumeIndex('saved-book', 2);
+    await updateResumeIndex('saved-book', { resumeIndex: 2, resumeSentenceIndex: 0 });
 
     render(
       <ChakraProvider>
@@ -145,7 +145,6 @@ describe('Home', () => {
 
     fireEvent.click(await screen.findByText('Saved Book'));
 
-    await waitFor(() => expect(screen.getByText('Chunk 3 of 3')).toBeInTheDocument());
     // Only the saved-forward chunk is requested - chunks 0 and 1 were already
     // heard in an earlier session and are never re-requested.
     await waitFor(() =>
@@ -177,12 +176,12 @@ describe('Home', () => {
     );
 
     fireEvent.click(await screen.findByText('Book A'));
-    await waitFor(() => expect(screen.getByText('Chunk 1 of 1')).toBeInTheDocument());
+    expect(await screen.findByRole('button', { name: /^播放$/i })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText(/back to library/i));
+    fireEvent.click(screen.getByText(/返回書庫/i));
     await waitFor(() => expect(screen.getByText('Book B')).toBeInTheDocument());
 
     fireEvent.click(screen.getByText('Book B'));
-    await waitFor(() => expect(screen.getByText('Chunk 1 of 1')).toBeInTheDocument());
+    expect(await screen.findByRole('button', { name: /^播放$/i })).toBeInTheDocument();
   });
 });

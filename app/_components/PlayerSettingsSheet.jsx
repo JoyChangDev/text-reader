@@ -30,7 +30,7 @@ export default function PlayerSettingsSheet({
   return (
     <Box>
       <IconButton
-        aria-label="Settings"
+        aria-label="設定"
         variant={open ? 'solid' : 'outline'}
         borderRadius="full"
         borderColor="hairlineStrong"
@@ -45,6 +45,7 @@ export default function PlayerSettingsSheet({
               tree applies a transform, which is the one thing that would otherwise
               make `position: fixed` relative to something other than the viewport. */}
           <Box
+            data-testid="settings-sheet-backdrop"
             position="fixed"
             inset={0}
             bg="blackAlpha.500"
@@ -52,12 +53,15 @@ export default function PlayerSettingsSheet({
             onClick={() => setOpen(false)}
           />
           <VStack
+            data-testid="settings-sheet-panel"
             align="start"
             gap={4}
             position="fixed"
             left={0}
             right={0}
             bottom={0}
+            maxW="640px"
+            mx="auto"
             zIndex={11}
             bg="backgroundElevated"
             color="foreground"
@@ -69,13 +73,17 @@ export default function PlayerSettingsSheet({
             overflowY="auto"
             px={5}
             pb={5}
+            css={{
+              scrollbarWidth: 'none',
+              '&::-webkit-scrollbar': { display: 'none' },
+            }}
           >
             <Box w="9" h="1.5" borderRadius="full" bg="hairlineStrong" mx="auto" mt={3} mb={1} />
 
             <HStack justify="space-between" w="full">
-              <Text fontWeight="bold">Settings</Text>
+              <Text fontWeight="bold">設定</Text>
               <IconButton
-                aria-label="Close settings"
+                aria-label="關閉設定"
                 variant="plain"
                 size="sm"
                 onClick={() => setOpen(false)}
@@ -86,18 +94,12 @@ export default function PlayerSettingsSheet({
 
             <VStack align="start" gap={2} w="full">
               <Text fontSize="sm" color="foregroundMuted">
-                Narration voice
+                朗讀聲音
               </Text>
               {/* A list of real radio rows, not a NativeSelect - the demo this was
                   aligned to shows every voice at once (name + preview button per row)
                   rather than behind a closed dropdown. */}
-              <VStack
-                role="radiogroup"
-                aria-label="Narration voice"
-                align="stretch"
-                gap={0}
-                w="full"
-              >
+              <VStack role="radiogroup" aria-label="朗讀聲音" align="stretch" gap={0} w="full">
                 {AVAILABLE_VOICES.map((option) => (
                   <HStack
                     as="label"
@@ -141,17 +143,11 @@ export default function PlayerSettingsSheet({
 
             <VStack align="start" gap={2} w="full">
               <Text fontSize="sm" color="foregroundMuted">
-                Playback speed
+                播放速度
               </Text>
               {/* Segmented pills of real radio inputs, same pattern as ThemeToggle -
                   every preset visible and tappable at once, matching the demo. */}
-              <Box
-                role="radiogroup"
-                aria-label="Playback speed"
-                display="flex"
-                gap={2}
-                flexWrap="wrap"
-              >
+              <Box role="radiogroup" aria-label="播放速度" display="flex" gap={2} flexWrap="wrap">
                 {AVAILABLE_SPEEDS.map((option) => {
                   const checked = Number(speed) === option;
                   return (
@@ -191,7 +187,7 @@ export default function PlayerSettingsSheet({
 
             <VStack align="start" gap={2} w="full" pb={2}>
               <Text fontSize="sm" color="foregroundMuted">
-                Appearance
+                外觀
               </Text>
               <ThemeToggle />
             </VStack>

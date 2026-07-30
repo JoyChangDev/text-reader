@@ -25,8 +25,9 @@ const AUTO_SCROLL_RESUME_DELAY_MS = 4000;
 // ticket 02), auto-scrolls to keep it visible, and reports clicks (chunkIndex,
 // sentenceIndex) - including on a sentence in a chunk that hasn't been generated yet -
 // via onSentenceClick, so the caller can drive seeking (see ticket 01). Sentence
-// clicking is disabled while playing, so an accidental tap can't derail playback -
-// scrolling itself is never affected either way (see ticket 02). Split out of
+// clicking is disabled while playing, or while report mode is active (see ticket 06),
+// so an accidental tap can't derail playback - scrolling itself is never affected
+// either way (see ticket 02). Split out of
 // AudioPlayer as its own component so it can scroll independently of the persistent
 // PlayerBar (see ticket 07).
 //
@@ -45,6 +46,8 @@ const TranscriptView = forwardRef(function TranscriptView(
     isPlaying,
     onSentenceClick,
     bookTitle,
+    reportMode = false,
+    onExitReportMode = () => {},
     onScrollPercentChange = () => {},
   },
   ref,
@@ -115,7 +118,7 @@ const TranscriptView = forwardRef(function TranscriptView(
     if (!node) return undefined;
 
     isProgrammaticScrollRef.current = true;
-    node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    node.scrollIntoView({ block: 'center', behavior: 'auto' });
     return setTimeout(() => {
       isProgrammaticScrollRef.current = false;
     }, 0);
@@ -144,12 +147,30 @@ const TranscriptView = forwardRef(function TranscriptView(
     seekToScrollPercent,
   ]);
 
-  // Native text selection (see ticket 10) - a non-empty selection surfaces the "report
-  // pronunciation issue" affordance, pre-filled with the selected phrase.
+  // Report mode is an explicit opt-in from the bottom bar (see ticket 06) - outside of
+  // it, an incidental selection made while just reading must never surface the report
+  // affordance (that was the whole problem this ticket fixes). Leaving report mode -
+  // whichever way that happens - clears out any in-progress selection/form too, so
+  // re-entering it later always starts fresh.
+  useEffect(() => {
+    if (!reportMode) setSelectedPhrase(null);
+  }, [reportMode]);
+
+  // Native text selection (see ticket 06) - while report mode is active, a non-empty
+  // selection surfaces the report form, pre-filled with the selected phrase.
   const handleTextSelection = useCallback(() => {
+    if (!reportMode) return;
     const text = window.getSelection?.().toString().trim();
     if (text) setSelectedPhrase(text);
-  }, []);
+  }, [reportMode]);
+
+  // Cancelling from the form and a successful submission both fully exit report mode
+  // (not just this one phrase's form), restoring ordinary Sentence-click seeking (see
+  // ticket 06).
+  const handleReportDismiss = useCallback(() => {
+    setSelectedPhrase(null);
+    onExitReportMode();
+  }, [onExitReportMode]);
 
   return (
     <Box display="flex" flexDirection="column" flex="1" minH={0} w="full">
@@ -159,7 +180,7 @@ const TranscriptView = forwardRef(function TranscriptView(
             key={selectedPhrase}
             phrase={selectedPhrase}
             bookTitle={bookTitle}
-            onDismiss={() => setSelectedPhrase(null)}
+            onDismiss={handleReportDismiss}
           />
         )}
         <Box
@@ -175,13 +196,21 @@ const TranscriptView = forwardRef(function TranscriptView(
           px={5}
           py={4}
           role="log"
-          aria-label="Book text"
+          aria-label="書籍內文"
+          css={{
+            scrollbarWidth: 'none',
+            '&::-webkit-scrollbar': { display: 'none' },
+          }}
         >
           {chunks.map((_, chunkIndex) => (
             <Text as="p" key={chunkIndex} mb={4} fontSize="md" lineHeight="1.85">
               {sentencesByChunk[chunkIndex].map((sentence, sentenceIndex) => {
                 const isActive =
                   chunkIndex === currentIndex && sentenceIndex === activeSentenceIndex;
+                // Report mode disables Sentence-click seeking unconditionally, on top of
+                // (not instead of) the existing playing-state gate - a report-mode tap
+                // must never move playback (see ticket 06).
+                const clickDisabled = isPlaying || reportMode;
 
                 return (
                   <Text
@@ -193,9 +222,9 @@ const TranscriptView = forwardRef(function TranscriptView(
                     bg={isActive ? 'activeSentenceBg' : undefined}
                     color={isActive ? 'activeSentenceFg' : undefined}
                     borderRadius="sm"
-                    cursor={isPlaying ? 'default' : 'pointer'}
+                    cursor={clickDisabled ? 'default' : 'pointer'}
                     onClick={
-                      isPlaying ? undefined : () => onSentenceClick(chunkIndex, sentenceIndex)
+                      clickDisabled ? undefined : () => onSentenceClick(chunkIndex, sentenceIndex)
                     }
                   >
                     {sentence}

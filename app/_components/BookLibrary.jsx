@@ -51,7 +51,7 @@ export default function BookLibrary({ onSelect }) {
         letterSpacing="wide"
         textTransform="uppercase"
       >
-        Your library
+        我的書庫
       </Heading>
       <VStack align="stretch" gap={2} w="full">
         {books.map((book) => {
@@ -98,7 +98,7 @@ export default function BookLibrary({ onSelect }) {
                         borderRadius="full"
                         px="2"
                       >
-                        Completed
+                        已完成
                       </Text>
                     ) : (
                       <Text
@@ -111,16 +111,10 @@ export default function BookLibrary({ onSelect }) {
                       </Text>
                     )}
                   </Box>
-                ) : (
-                  book.resumeIndex > 0 && (
-                    <Text fontSize="xs" color="foregroundFaint" mt="1">
-                      Resumed at chunk {book.resumeIndex + 1}
-                    </Text>
-                  )
-                )}
+                ) : null}
               </Box>
               <IconButton
-                aria-label={`Delete ${book.title}`}
+                aria-label={`刪除 ${book.title}`}
                 variant="ghost"
                 size="sm"
                 borderRadius="full"

@@ -24,7 +24,7 @@ function renderSheet(overrides = {}) {
 }
 
 function openSheet() {
-  fireEvent.click(screen.getByRole('button', { name: /^settings$/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^設定$/i }));
 }
 
 describe('PlayerSettingsSheet', () => {
@@ -40,35 +40,35 @@ describe('PlayerSettingsSheet', () => {
   test('starts collapsed, showing only the settings toggle', () => {
     renderSheet();
 
-    expect(screen.getByRole('button', { name: /^settings$/i })).toBeInTheDocument();
-    expect(screen.queryByRole('radiogroup', { name: /narration voice/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^設定$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: /朗讀聲音/i })).not.toBeInTheDocument();
   });
 
   test('opens to reveal the voice, speed, and appearance controls', () => {
     renderSheet();
     openSheet();
 
-    expect(screen.getByRole('radiogroup', { name: /narration voice/i })).toBeInTheDocument();
-    expect(screen.getByRole('radiogroup', { name: /playback speed/i })).toBeInTheDocument();
-    expect(screen.getByRole('radiogroup', { name: /^theme$/i })).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: /朗讀聲音/i })).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: /播放速度/i })).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: /^外觀主題$/i })).toBeInTheDocument();
   });
 
   test('clicking the toggle again collapses it', () => {
     renderSheet();
     openSheet();
 
-    fireEvent.click(screen.getByRole('button', { name: /^settings$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^設定$/i }));
 
-    expect(screen.queryByRole('radiogroup', { name: /narration voice/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: /朗讀聲音/i })).not.toBeInTheDocument();
   });
 
   test('the close button collapses it', () => {
     renderSheet();
     openSheet();
 
-    fireEvent.click(screen.getByRole('button', { name: /close settings/i }));
+    fireEvent.click(screen.getByRole('button', { name: /關閉設定/i }));
 
-    expect(screen.queryByRole('radiogroup', { name: /narration voice/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: /朗讀聲音/i })).not.toBeInTheDocument();
   });
 
   test('offers the voice picker with the current value selected, and reports changes', () => {
@@ -76,7 +76,7 @@ describe('PlayerSettingsSheet', () => {
     renderSheet({ voice: 'zh-TW-YunJheNeural', onVoiceChange });
     openSheet();
 
-    const group = screen.getByRole('radiogroup', { name: /narration voice/i });
+    const group = screen.getByRole('radiogroup', { name: /朗讀聲音/i });
     expect(within(group).getByRole('radio', { name: 'Yun-Jhe' })).toBeChecked();
     expect(
       within(group)
@@ -94,7 +94,7 @@ describe('PlayerSettingsSheet', () => {
     renderSheet({ speed: 1.5, onSpeedChange });
     openSheet();
 
-    const group = screen.getByRole('radiogroup', { name: /playback speed/i });
+    const group = screen.getByRole('radiogroup', { name: /播放速度/i });
     expect(within(group).getByRole('radio', { name: '1.5x' })).toBeChecked();
 
     fireEvent.click(within(group).getByRole('radio', { name: '2x' }));
@@ -106,17 +106,17 @@ describe('PlayerSettingsSheet', () => {
     renderSheet({ disabled: true });
     openSheet();
 
-    const voiceGroup = screen.getByRole('radiogroup', { name: /narration voice/i });
+    const voiceGroup = screen.getByRole('radiogroup', { name: /朗讀聲音/i });
     within(voiceGroup)
       .getAllByRole('radio')
       .forEach((radio) => expect(radio).toBeDisabled());
 
-    const speedGroup = screen.getByRole('radiogroup', { name: /playback speed/i });
+    const speedGroup = screen.getByRole('radiogroup', { name: /播放速度/i });
     within(speedGroup)
       .getAllByRole('radio')
       .forEach((radio) => expect(radio).toBeDisabled());
 
-    expect(screen.getByRole('button', { name: /preview hsiao-chen/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /試聽 hsiao-chen/i })).toBeEnabled();
   });
 
   // Full preview behavior is covered by VoicePreview's own tests - this just confirms
@@ -125,12 +125,12 @@ describe('PlayerSettingsSheet', () => {
     renderSheet();
     openSheet();
 
-    fireEvent.click(screen.getByRole('button', { name: /preview yun-jhe/i }));
+    fireEvent.click(screen.getByRole('button', { name: /試聽 yun-jhe/i }));
 
     expect(screen.getByTestId('voice-preview-audio').src).toContain(
       '/voice-samples/zh-TW-YunJheNeural.mp3',
     );
-    expect(await screen.findByRole('button', { name: /stop yun-jhe/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /停止 yun-jhe/i })).toBeInTheDocument();
   });
 
   // Full theme-switching behavior is covered by ThemeToggle's own tests - this just
@@ -139,6 +139,23 @@ describe('PlayerSettingsSheet', () => {
     renderSheet();
     openSheet();
 
-    expect(screen.getByRole('radiogroup', { name: /^theme$/i })).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: /^外觀主題$/i })).toBeInTheDocument();
+  });
+
+  test('caps the panel at a comfortable reading width while the backdrop stays full-viewport', () => {
+    renderSheet();
+    openSheet();
+
+    expect(screen.getByTestId('settings-sheet-panel')).toHaveStyle({ maxWidth: '640px' });
+    expect(screen.getByTestId('settings-sheet-backdrop')).toHaveStyle({ inset: '0px' });
+  });
+
+  test("hides the panel's native scrollbar while it stays scrollable", () => {
+    renderSheet();
+    openSheet();
+
+    const panel = screen.getByTestId('settings-sheet-panel');
+    expect(panel).toHaveStyle({ overflowY: 'auto' });
+    expect(getComputedStyle(panel).scrollbarWidth).toBe('none');
   });
 });
