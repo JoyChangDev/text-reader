@@ -31,6 +31,13 @@ function libraryPatchCalls() {
   );
 }
 
+// Voice and speed pickers live behind PlayerBar's Settings disclosure (see
+// PlayerSettingsSheet) - these tests exercise them through AudioPlayer end to end, so
+// they need opening first.
+function openSettings() {
+  fireEvent.click(screen.getByRole('button', { name: /^settings$/i }));
+}
+
 describe('AudioPlayer', () => {
   beforeEach(() => {
     window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
@@ -274,6 +281,7 @@ describe('AudioPlayer voice selection', () => {
         <AudioPlayer bookId="book-1" chunks={chunks} />
       </ChakraProvider>,
     );
+    openSettings();
 
     const picker = screen.getByLabelText(/narration voice/i);
     expect(picker).toHaveValue('zh-TW-HsiaoChenNeural');
@@ -294,6 +302,7 @@ describe('AudioPlayer voice selection', () => {
     );
 
     await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
+    openSettings();
 
     fireEvent.change(screen.getByLabelText(/narration voice/i), {
       target: { value: 'zh-TW-YunJheNeural' },
@@ -341,6 +350,7 @@ describe('AudioPlayer playback speed', () => {
         <AudioPlayer bookId="book-speed" chunks={chunks} />
       </ChakraProvider>,
     );
+    openSettings();
 
     const picker = screen.getByLabelText(/playback speed/i);
     expect(picker).toHaveValue('1');
@@ -362,6 +372,7 @@ describe('AudioPlayer playback speed', () => {
     const playButton = await screen.findByRole('button', { name: /^play$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /pause/i });
+    openSettings();
 
     const audioEl = screen.getByTestId('audio-element');
     fireEvent.change(screen.getByLabelText(/playback speed/i), { target: { value: '1.5' } });
@@ -381,6 +392,7 @@ describe('AudioPlayer playback speed', () => {
     const playButton = await screen.findByRole('button', { name: /^play$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /pause/i });
+    openSettings();
 
     fireEvent.change(screen.getByLabelText(/playback speed/i), { target: { value: '2' } });
 
@@ -585,6 +597,7 @@ describe('AudioPlayer playback lock', () => {
     );
 
     const playButton = await screen.findByRole('button', { name: /^play$/i });
+    openSettings();
     expect(screen.getByLabelText(/narration voice/i)).toBeEnabled();
     expect(screen.getByLabelText(/playback speed/i)).toBeEnabled();
 
