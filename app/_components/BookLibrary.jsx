@@ -38,7 +38,7 @@ export default function BookLibrary({ onSelect }) {
     }
   };
 
-  if (books.length === 0) return null;
+  if (!Array.isArray(books) || books.length === 0) return null;
 
   return (
     <VStack bg="background" color="foreground" align="start" gap={2}>
