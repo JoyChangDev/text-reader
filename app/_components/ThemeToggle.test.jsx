@@ -22,22 +22,25 @@ describe('ThemeToggle', () => {
     expect(screen.getByLabelText(/theme/i)).toHaveValue('system');
   });
 
-  test("switching to Dark sets next-themes' active theme to dark on <html>", () => {
+  // ColorModeProvider's `value` map remaps next-themes' own 'dark'/'light' resolution
+  // onto the 'night'/'paper' classes chakra.jsx's presets key off of (see ADR 0002) -
+  // picking "Dark"/"Light" here still works, it just lands a different class name.
+  test("switching to Dark sets next-themes' active theme to the night preset on <html>", () => {
     renderToggle();
 
     fireEvent.change(screen.getByLabelText(/theme/i), { target: { value: 'dark' } });
 
-    expect(document.documentElement.classList.contains('dark')).toBe(true);
-    expect(document.documentElement.classList.contains('light')).toBe(false);
+    expect(document.documentElement.classList.contains('night')).toBe(true);
+    expect(document.documentElement.classList.contains('paper')).toBe(false);
   });
 
-  test("switching to Light sets next-themes' active theme to light on <html>", () => {
+  test("switching to Light sets next-themes' active theme to the paper preset on <html>", () => {
     renderToggle();
 
     fireEvent.change(screen.getByLabelText(/theme/i), { target: { value: 'dark' } });
     fireEvent.change(screen.getByLabelText(/theme/i), { target: { value: 'light' } });
 
-    expect(document.documentElement.classList.contains('light')).toBe(true);
-    expect(document.documentElement.classList.contains('dark')).toBe(false);
+    expect(document.documentElement.classList.contains('paper')).toBe(true);
+    expect(document.documentElement.classList.contains('night')).toBe(false);
   });
 });
