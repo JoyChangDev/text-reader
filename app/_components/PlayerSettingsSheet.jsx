@@ -7,7 +7,7 @@ import { FiSettings, FiX } from 'react-icons/fi';
 import { AVAILABLE_SPEEDS, AVAILABLE_VOICES } from '@/app/_lib/listenerSettings';
 
 import ThemeToggle from './ThemeToggle';
-import VoicePreview from './VoicePreview';
+import { useVoicePreview, VoicePreviewButton } from './VoicePreview';
 
 // Collapses the narration voice, playback speed, and appearance pickers that used to
 // sit inline in PlayerBar behind a single disclosure, so the persistent bar stays
@@ -25,6 +25,7 @@ export default function PlayerSettingsSheet({
   disabled,
 }) {
   const [open, setOpen] = useState(false);
+  const { previewingVoice, togglePreviewVoice, audioProps } = useVoicePreview();
 
   return (
     <Box>
@@ -102,6 +103,7 @@ export default function PlayerSettingsSheet({
                     as="label"
                     key={option.value}
                     w="full"
+                    justify="space-between"
                     py={2}
                     borderTopWidth="1px"
                     borderColor="hairline"
@@ -109,27 +111,32 @@ export default function PlayerSettingsSheet({
                     cursor={disabled ? 'not-allowed' : 'pointer'}
                     opacity={disabled ? 0.6 : 1}
                   >
-                    <Box
-                      as="input"
-                      type="radio"
-                      name="settings-voice"
-                      value={option.value}
-                      checked={voice === option.value}
-                      disabled={disabled}
-                      onChange={onVoiceChange}
-                      css={{ accentColor: 'var(--chakra-colors-accent)' }}
-                      boxSize="4"
-                      flexShrink={0}
+                    <HStack gap={2} minW={0}>
+                      <Box
+                        as="input"
+                        type="radio"
+                        name="settings-voice"
+                        value={option.value}
+                        checked={voice === option.value}
+                        disabled={disabled}
+                        onChange={onVoiceChange}
+                        css={{ accentColor: 'var(--chakra-colors-accent)' }}
+                        boxSize="4"
+                        flexShrink={0}
+                      />
+                      <Text fontSize="sm" fontWeight="600">
+                        {option.label}
+                      </Text>
+                    </HStack>
+                    <VoicePreviewButton
+                      voice={option}
+                      previewingVoice={previewingVoice}
+                      onToggle={togglePreviewVoice}
                     />
-                    <Text fontSize="sm" fontWeight="600">
-                      {option.label}
-                    </Text>
                   </HStack>
                 ))}
               </VStack>
-              <HStack wrap="wrap">
-                <VoicePreview />
-              </HStack>
+              <audio {...audioProps} />
             </VStack>
 
             <VStack align="start" gap={2} w="full">

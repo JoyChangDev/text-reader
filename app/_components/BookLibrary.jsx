@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { FiTrash2 } from 'react-icons/fi';
 
 import { deleteBook, listBooks } from '@/app/_lib/bookLibrary';
+import { summarizeBookProgress } from '@/app/_lib/bookProgress';
 
 // Lists previously uploaded books from the local library so the reader can
 // resume one. Reads the library on mount rather than on every render, so a
@@ -53,48 +54,84 @@ export default function BookLibrary({ onSelect }) {
         Your library
       </Heading>
       <VStack align="stretch" gap={2} w="full">
-        {books.map((book) => (
-          <HStack
-            key={book.bookId}
-            bg="backgroundElevated"
-            borderWidth="1px"
-            borderColor="hairline"
-            borderRadius="lg"
-            gap={2}
-            pr={2}
-          >
-            <Box
-              as="button"
-              type="button"
-              onClick={() => onSelect(book.bookId)}
-              flex="1"
-              minW={0}
-              textAlign="left"
-              px={4}
-              py={3}
-              cursor="pointer"
+        {books.map((book) => {
+          const progress = summarizeBookProgress(book);
+
+          return (
+            <HStack
+              key={book.bookId}
+              bg="backgroundElevated"
+              borderWidth="1px"
+              borderColor="hairline"
+              borderRadius="lg"
+              gap={2}
+              pr={2}
             >
-              <Text fontWeight="600" fontSize="sm" truncate>
-                {book.title}
-              </Text>
-              {book.resumeIndex > 0 && (
-                <Text fontSize="xs" color="foregroundFaint" mt="1">
-                  Resumed at chunk {book.resumeIndex + 1}
+              <Box
+                as="button"
+                type="button"
+                onClick={() => onSelect(book.bookId)}
+                flex="1"
+                minW={0}
+                textAlign="left"
+                px={4}
+                py={3}
+                cursor="pointer"
+              >
+                <Text fontWeight="600" fontSize="sm" truncate>
+                  {book.title}
                 </Text>
-              )}
-            </Box>
-            <IconButton
-              aria-label={`Delete ${book.title}`}
-              variant="ghost"
-              size="sm"
-              borderRadius="full"
-              flexShrink={0}
-              onClick={() => handleDelete(book.bookId)}
-            >
-              <FiTrash2 />
-            </IconButton>
-          </HStack>
-        ))}
+                {progress ? (
+                  <Box mt="2">
+                    <Box h="1" w="full" borderRadius="full" bg="backgroundSunken" overflow="hidden">
+                      <Box h="full" bg="accent" w={`${progress.percent}%`} />
+                    </Box>
+                    {progress.isComplete ? (
+                      <Text
+                        as="span"
+                        display="inline-block"
+                        mt="1"
+                        fontSize="xs"
+                        fontWeight="700"
+                        color="accentContrast"
+                        bg="accent"
+                        borderRadius="full"
+                        px="2"
+                      >
+                        Completed
+                      </Text>
+                    ) : (
+                      <Text
+                        fontSize="xs"
+                        color="foregroundFaint"
+                        mt="1"
+                        fontVariantNumeric="tabular-nums"
+                      >
+                        {progress.percent}%
+                      </Text>
+                    )}
+                  </Box>
+                ) : (
+                  book.resumeIndex > 0 && (
+                    <Text fontSize="xs" color="foregroundFaint" mt="1">
+                      Resumed at chunk {book.resumeIndex + 1}
+                    </Text>
+                  )
+                )}
+              </Box>
+              <IconButton
+                aria-label={`Delete ${book.title}`}
+                variant="ghost"
+                size="sm"
+                borderRadius="full"
+                flexShrink={0}
+                onClick={() => handleDelete(book.bookId)}
+              >
+                <FiTrash2 />
+              </IconButton>
+            </HStack>
+          );
+        })}
       </VStack>
     </VStack>
   );

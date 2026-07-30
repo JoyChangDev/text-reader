@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { submitReport } from './pronunciationReports';
+import { listReports, submitReport } from './pronunciationReports';
 
 describe('pronunciationReports', () => {
   beforeEach(() => {
@@ -45,6 +45,33 @@ describe('pronunciationReports', () => {
       await expect(
         submitReport({ bookTitle: 'First Book', phrase: '你好', description: '' }),
       ).rejects.toThrow();
+    });
+  });
+
+  describe('listReports', () => {
+    test('GETs /api/pronunciation-reports and returns the reports', async () => {
+      const reports = [
+        {
+          bookTitle: 'First Book',
+          phrase: '你好',
+          description: null,
+          reportedAt: '2026-07-30T12:00:00.000Z',
+        },
+      ];
+      global.fetch.mockResolvedValue(new Response(JSON.stringify({ reports }), { status: 200 }));
+
+      const result = await listReports();
+
+      expect(result).toEqual(reports);
+      expect(global.fetch).toHaveBeenCalledWith('/api/pronunciation-reports');
+    });
+
+    test('throws when the response is not ok', async () => {
+      global.fetch.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'boom' }), { status: 502 }),
+      );
+
+      await expect(listReports()).rejects.toThrow();
     });
   });
 });

@@ -41,9 +41,14 @@ describe('libraryService', () => {
         { storageClient },
       );
 
-      expect(summary).toEqual({ bookId: 'book-1', title: 'First Book', resumeIndex: 0 });
+      expect(summary).toEqual({
+        bookId: 'book-1',
+        title: 'First Book',
+        resumeIndex: 0,
+        totalChunks: 2,
+      });
       expect(blobs.get('library/index')).toEqual([
-        { bookId: 'book-1', title: 'First Book', resumeIndex: 0 },
+        { bookId: 'book-1', title: 'First Book', resumeIndex: 0, totalChunks: 2 },
       ]);
       expect(blobs.get('library/book-1/chunks')).toEqual(['一。', '二。']);
     });
@@ -56,8 +61,8 @@ describe('libraryService', () => {
       );
 
       expect(blobs.get('library/index')).toEqual([
-        { bookId: 'book-1', title: 'First Book', resumeIndex: 0 },
-        { bookId: 'book-2', title: 'Second Book', resumeIndex: 0 },
+        { bookId: 'book-1', title: 'First Book', resumeIndex: 0, totalChunks: 1 },
+        { bookId: 'book-2', title: 'Second Book', resumeIndex: 0, totalChunks: 1 },
       ]);
     });
   });
@@ -77,6 +82,7 @@ describe('libraryService', () => {
         bookId: 'book-1',
         title: 'First Book',
         resumeIndex: 0,
+        totalChunks: 2,
         chunks: ['一。', '二。'],
       });
     });
@@ -110,7 +116,7 @@ describe('libraryService', () => {
       await updateResumeIndex('book-1', 5, { storageClient });
 
       expect(await listBooks({ storageClient })).toEqual([
-        { bookId: 'book-1', title: 'First Book', resumeIndex: 5 },
+        { bookId: 'book-1', title: 'First Book', resumeIndex: 5, totalChunks: 1 },
       ]);
     });
   });
@@ -143,7 +149,7 @@ describe('libraryService', () => {
       await deleteBook('book-1', { storageClient });
 
       expect(await listBooks({ storageClient })).toEqual([
-        { bookId: 'book-2', title: 'Second Book', resumeIndex: 0 },
+        { bookId: 'book-2', title: 'Second Book', resumeIndex: 0, totalChunks: 1 },
       ]);
     });
 

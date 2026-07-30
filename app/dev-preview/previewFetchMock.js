@@ -98,7 +98,7 @@ export function installPreviewFetchMock() {
     }
     if (url === '/api/library' && method === 'POST') {
       const { bookId, title, chunks } = JSON.parse(init.body);
-      const summary = { bookId, title, resumeIndex: 0 };
+      const summary = { bookId, title, resumeIndex: 0, totalChunks: chunks.length };
       library = [...library, { ...summary, chunks }];
       return jsonResponse(summary, 201);
     }

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { submitReport } from './pronunciationReportService';
+import { listReports, submitReport } from './pronunciationReportService';
 
 describe('pronunciationReportService', () => {
   let storageClient;
@@ -52,6 +52,24 @@ describe('pronunciationReportService', () => {
       );
 
       expect(report.description).toBeNull();
+    });
+  });
+
+  describe('listReports', () => {
+    test('returns an empty array when no reports exist yet', async () => {
+      expect(await listReports({ storageClient })).toEqual([]);
+    });
+
+    test('returns every stored report, newest first', async () => {
+      vi.setSystemTime(new Date('2026-07-30T09:00:00.000Z'));
+      await submitReport({ bookTitle: 'First Book', phrase: '一' }, { storageClient });
+      vi.setSystemTime(new Date('2026-07-30T12:00:00.000Z'));
+      await submitReport({ bookTitle: 'First Book', phrase: '二' }, { storageClient });
+      vi.useRealTimers();
+
+      const reports = await listReports({ storageClient });
+
+      expect(reports.map((report) => report.phrase)).toEqual(['二', '一']);
     });
   });
 });

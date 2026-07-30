@@ -58,6 +58,12 @@ const BOOK_SPECS = [
 export function createFixtureLibrary() {
   return BOOK_SPECS.map(({ bookId, title, sentenceCount, position }) => {
     const chunks = chunkText(buildText(sentenceCount));
-    return { bookId, title, resumeIndex: resumeIndexFor(position, chunks.length), chunks };
+    return {
+      bookId,
+      title,
+      resumeIndex: resumeIndexFor(position, chunks.length),
+      totalChunks: chunks.length,
+      chunks,
+    };
   });
 }

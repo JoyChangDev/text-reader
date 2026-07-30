@@ -1,5 +1,6 @@
 'use client';
-import { Box, VStack } from '@chakra-ui/react';
+import { Box, HStack, VStack } from '@chakra-ui/react';
+import NextLink from 'next/link';
 import { useCallback, useState } from 'react';
 
 import AudioPlayer from './_components/AudioPlayer';
@@ -57,7 +58,7 @@ export default function Home() {
           <BlobUsageIndicator />
         </VStack>
         <Box as="footer" flexShrink={0} w="full" borderTopWidth="1px" borderColor="hairline">
-          <Box maxW="640px" mx="auto" px={4} py={3}>
+          <HStack justify="space-between" maxW="640px" mx="auto" px={4} py={3}>
             <PlayerSettingsSheet
               voice={voice}
               onVoiceChange={handleVoiceChange}
@@ -65,7 +66,16 @@ export default function Home() {
               onSpeedChange={handleSpeedChange}
               disabled={false}
             />
-          </Box>
+            <Box
+              as={NextLink}
+              href="/pronunciation-reports"
+              fontSize="sm"
+              color="foregroundMuted"
+              _hover={{ color: 'foreground' }}
+            >
+              Pronunciation reports
+            </Box>
+          </HStack>
         </Box>
       </Box>
     );
