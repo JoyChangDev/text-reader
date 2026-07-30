@@ -41,16 +41,16 @@ describe('PlayerSettingsSheet', () => {
     renderSheet();
 
     expect(screen.getByRole('button', { name: /^settings$/i })).toBeInTheDocument();
-    expect(screen.queryByLabelText(/narration voice/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: /narration voice/i })).not.toBeInTheDocument();
   });
 
   test('opens to reveal the voice, speed, and appearance controls', () => {
     renderSheet();
     openSheet();
 
-    expect(screen.getByLabelText(/narration voice/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/playback speed/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/^theme$/i)).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: /narration voice/i })).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: /playback speed/i })).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: /^theme$/i })).toBeInTheDocument();
   });
 
   test('clicking the toggle again collapses it', () => {
@@ -59,7 +59,7 @@ describe('PlayerSettingsSheet', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^settings$/i }));
 
-    expect(screen.queryByLabelText(/narration voice/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: /narration voice/i })).not.toBeInTheDocument();
   });
 
   test('the close button collapses it', () => {
@@ -68,7 +68,7 @@ describe('PlayerSettingsSheet', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /close settings/i }));
 
-    expect(screen.queryByLabelText(/narration voice/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: /narration voice/i })).not.toBeInTheDocument();
   });
 
   test('offers the voice picker with the current value selected, and reports changes', () => {
@@ -76,15 +76,15 @@ describe('PlayerSettingsSheet', () => {
     renderSheet({ voice: 'zh-TW-YunJheNeural', onVoiceChange });
     openSheet();
 
-    const picker = screen.getByLabelText(/narration voice/i);
-    expect(picker).toHaveValue('zh-TW-YunJheNeural');
+    const group = screen.getByRole('radiogroup', { name: /narration voice/i });
+    expect(within(group).getByRole('radio', { name: 'Yun-Jhe' })).toBeChecked();
     expect(
-      within(picker)
-        .getAllByRole('option')
-        .map((option) => option.value),
+      within(group)
+        .getAllByRole('radio')
+        .map((radio) => radio.value),
     ).toEqual(['zh-TW-HsiaoChenNeural', 'zh-TW-YunJheNeural', 'zh-TW-HsiaoYuNeural']);
 
-    fireEvent.change(picker, { target: { value: 'zh-TW-HsiaoYuNeural' } });
+    fireEvent.click(within(group).getByRole('radio', { name: 'Hsiao-Yu' }));
 
     expect(onVoiceChange).toHaveBeenCalledTimes(1);
   });
@@ -94,10 +94,10 @@ describe('PlayerSettingsSheet', () => {
     renderSheet({ speed: 1.5, onSpeedChange });
     openSheet();
 
-    const picker = screen.getByLabelText(/playback speed/i);
-    expect(picker).toHaveValue('1.5');
+    const group = screen.getByRole('radiogroup', { name: /playback speed/i });
+    expect(within(group).getByRole('radio', { name: '1.5x' })).toBeChecked();
 
-    fireEvent.change(picker, { target: { value: '2' } });
+    fireEvent.click(within(group).getByRole('radio', { name: '2x' }));
 
     expect(onSpeedChange).toHaveBeenCalledTimes(1);
   });
@@ -106,8 +106,16 @@ describe('PlayerSettingsSheet', () => {
     renderSheet({ disabled: true });
     openSheet();
 
-    expect(screen.getByLabelText(/narration voice/i)).toBeDisabled();
-    expect(screen.getByLabelText(/playback speed/i)).toBeDisabled();
+    const voiceGroup = screen.getByRole('radiogroup', { name: /narration voice/i });
+    within(voiceGroup)
+      .getAllByRole('radio')
+      .forEach((radio) => expect(radio).toBeDisabled());
+
+    const speedGroup = screen.getByRole('radiogroup', { name: /playback speed/i });
+    within(speedGroup)
+      .getAllByRole('radio')
+      .forEach((radio) => expect(radio).toBeDisabled());
+
     expect(screen.getByRole('button', { name: /preview hsiao-chen/i })).toBeEnabled();
   });
 
@@ -131,6 +139,6 @@ describe('PlayerSettingsSheet', () => {
     renderSheet();
     openSheet();
 
-    expect(screen.getByLabelText(/^theme$/i)).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: /^theme$/i })).toBeInTheDocument();
   });
 });

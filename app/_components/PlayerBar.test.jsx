@@ -134,15 +134,15 @@ describe('PlayerBar', () => {
       renderBar({ voice: 'zh-TW-YunJheNeural', onVoiceChange });
       openSettings();
 
-      const picker = screen.getByLabelText(/narration voice/i);
-      expect(picker).toHaveValue('zh-TW-YunJheNeural');
+      const group = screen.getByRole('radiogroup', { name: /narration voice/i });
+      expect(within(group).getByRole('radio', { name: 'Yun-Jhe' })).toBeChecked();
       expect(
-        within(picker)
-          .getAllByRole('option')
-          .map((option) => option.value),
+        within(group)
+          .getAllByRole('radio')
+          .map((radio) => radio.value),
       ).toEqual(['zh-TW-HsiaoChenNeural', 'zh-TW-YunJheNeural', 'zh-TW-HsiaoYuNeural']);
 
-      fireEvent.change(picker, { target: { value: 'zh-TW-HsiaoYuNeural' } });
+      fireEvent.click(within(group).getByRole('radio', { name: 'Hsiao-Yu' }));
 
       expect(onVoiceChange).toHaveBeenCalledTimes(1);
     });
@@ -152,15 +152,10 @@ describe('PlayerBar', () => {
       renderBar({ speed: 1.5, onSpeedChange });
       openSettings();
 
-      const picker = screen.getByLabelText(/playback speed/i);
-      expect(picker).toHaveValue('1.5');
-      expect(
-        within(picker)
-          .getAllByRole('option')
-          .map((option) => option.value),
-      ).toEqual(['0.75', '1', '1.25', '1.5', '1.75', '2']);
+      const group = screen.getByRole('radiogroup', { name: /playback speed/i });
+      expect(within(group).getByRole('radio', { name: '1.5x' })).toBeChecked();
 
-      fireEvent.change(picker, { target: { value: '2' } });
+      fireEvent.click(within(group).getByRole('radio', { name: '2x' }));
 
       expect(onSpeedChange).toHaveBeenCalledTimes(1);
     });
@@ -169,16 +164,30 @@ describe('PlayerBar', () => {
       renderBar({ isPlaying: false });
       openSettings();
 
-      expect(screen.getByLabelText(/narration voice/i)).toBeEnabled();
-      expect(screen.getByLabelText(/playback speed/i)).toBeEnabled();
+      const voiceGroup = screen.getByRole('radiogroup', { name: /narration voice/i });
+      within(voiceGroup)
+        .getAllByRole('radio')
+        .forEach((radio) => expect(radio).toBeEnabled());
+
+      const speedGroup = screen.getByRole('radiogroup', { name: /playback speed/i });
+      within(speedGroup)
+        .getAllByRole('radio')
+        .forEach((radio) => expect(radio).toBeEnabled());
     });
 
     test('disables the voice and speed pickers while playing', () => {
       renderBar({ isPlaying: true });
       openSettings();
 
-      expect(screen.getByLabelText(/narration voice/i)).toBeDisabled();
-      expect(screen.getByLabelText(/playback speed/i)).toBeDisabled();
+      const voiceGroup = screen.getByRole('radiogroup', { name: /narration voice/i });
+      within(voiceGroup)
+        .getAllByRole('radio')
+        .forEach((radio) => expect(radio).toBeDisabled());
+
+      const speedGroup = screen.getByRole('radiogroup', { name: /playback speed/i });
+      within(speedGroup)
+        .getAllByRole('radio')
+        .forEach((radio) => expect(radio).toBeDisabled());
     });
 
     // Full preview behavior (toggling, switching voices, resetting on end) is covered by

@@ -19,13 +19,13 @@ describe('ThemeToggle', () => {
   test('defaults to the paper preset', () => {
     renderToggle();
 
-    expect(screen.getByLabelText(/theme/i)).toHaveValue('paper');
+    expect(screen.getByRole('radio', { name: 'Paper' })).toBeChecked();
   });
 
   test('offers exactly the three presets chakra.jsx defines conditions for', () => {
     renderToggle();
 
-    const options = screen.getAllByRole('option').map((option) => option.value);
+    const options = screen.getAllByRole('radio').map((option) => option.value);
     expect(options).toEqual(['paper', 'night', 'soft']);
   });
 
@@ -34,7 +34,7 @@ describe('ThemeToggle', () => {
     (value) => {
       renderToggle();
 
-      fireEvent.change(screen.getByLabelText(/theme/i), { target: { value } });
+      fireEvent.click(screen.getByRole('radio', { name: new RegExp(`^${value}$`, 'i') }));
 
       expect(document.documentElement.classList.contains(value)).toBe(true);
       ['paper', 'night', 'soft']
