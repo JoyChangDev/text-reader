@@ -31,6 +31,14 @@ function libraryPatchCalls() {
   );
 }
 
+// Shared by the background/foreground resync and background-flush describe blocks below
+// (see Phase 1.8 tickets 01 and 03) - both simulate an app switch by driving
+// document.visibilityState directly, since jsdom doesn't do this on its own.
+function setVisibilityState(state) {
+  Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
+  document.dispatchEvent(new Event('visibilitychange'));
+}
+
 // Voice and speed pickers live behind PlayerBar's Settings disclosure (see
 // PlayerSettingsSheet) - these tests exercise them through AudioPlayer end to end, so
 // they need opening first.
@@ -1110,14 +1118,6 @@ describe('AudioPlayer background/foreground resync', () => {
     vi.restoreAllMocks();
   });
 
-  // The reconciliation checkpoint only reacts to the `visible` transition (see Phase 1.8
-  // ticket 01) - going through `hidden` first mirrors an actual app switch, but is not
-  // itself required for these assertions to hold.
-  function setVisibilityState(state) {
-    Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
-    document.dispatchEvent(new Event('visibilitychange'));
-  }
-
   test('returning to the foreground with the active element actually paused corrects a stale Pause button back to Play', async () => {
     render(
       <ChakraProvider>
@@ -1239,6 +1239,139 @@ describe('AudioPlayer background/foreground resync', () => {
     // becomes active without a fresh src load, exactly as a live `ended` event would.
     await waitFor(() => expect(standbyEl).toHaveAttribute('data-active', 'true'));
     expect(standbyEl.src).toBe('https://blob.test/1');
+  });
+});
+
+describe('AudioPlayer background flush of resume-position persistence', () => {
+  const twoSentenceChunks = ['第一句。第二句。', '第三句。第四句。'];
+  const boundaries = [
+    { text: '第一句', offset: 0, duration: 10_000_000 },
+    { text: '第二句', offset: 10_000_000, duration: 10_000_000 },
+  ];
+
+  beforeEach(() => {
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.pause = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
+
+    mockAudioChunkFetch(({ body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      return new Response(JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries }), {
+        status: 200,
+      });
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('backgrounding immediately flushes a pending debounced write, without waiting for the 400ms debounce', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-flush-1" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /暫停/i });
+
+    const audioEl = screen.getByTestId('audio-element');
+    audioEl.currentTime = 1.5;
+    fireEvent.timeUpdate(audioEl);
+
+    // Asserted synchronously, right after dispatching and before the 400ms debounce
+    // would otherwise have any chance to fire - proving this went through the
+    // immediate flush path, not the debounce.
+    setVisibilityState('hidden');
+
+    expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
+      resumeIndex: 0,
+      resumeSentenceIndex: 1,
+    });
+  });
+
+  test('pagehide triggers the same immediate flush, as a fallback for a killed process that skips visibilitychange', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-flush-2" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /暫停/i });
+
+    const audioEl = screen.getByTestId('audio-element');
+    audioEl.currentTime = 1.5;
+    fireEvent.timeUpdate(audioEl);
+
+    fireEvent(window, new Event('pagehide'));
+
+    expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
+      resumeIndex: 0,
+      resumeSentenceIndex: 1,
+    });
+  });
+
+  test('does not fire a duplicate persistence call when the debounce timer already covered the same (chunk, sentence) pair', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-flush-3" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /暫停/i });
+
+    const audioEl = screen.getByTestId('audio-element');
+    audioEl.currentTime = 1.5;
+    fireEvent.timeUpdate(audioEl);
+
+    await waitFor(() =>
+      expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
+        resumeIndex: 0,
+        resumeSentenceIndex: 1,
+      }),
+    );
+    const patchCallCountAfterDebounce = libraryPatchCalls().length;
+
+    setVisibilityState('hidden');
+
+    expect(libraryPatchCalls()).toHaveLength(patchCallCountAfterDebounce);
+  });
+
+  test('ordinary foreground debounce/coalescing is unaffected - rapid successive advances still coalesce into one write', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-flush-4" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /暫停/i });
+
+    await waitFor(() =>
+      expect(libraryPatchCalls().map(([url]) => url)).toContain('/api/library/book-flush-4'),
+    );
+    const patchCallCountAfterMount = libraryPatchCalls().length;
+
+    const audioEl = screen.getByTestId('audio-element');
+    audioEl.currentTime = 1.5;
+    fireEvent.timeUpdate(audioEl);
+    audioEl.currentTime = 1.6;
+    fireEvent.timeUpdate(audioEl);
+
+    await waitFor(() =>
+      expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
+        resumeIndex: 0,
+        resumeSentenceIndex: 1,
+      }),
+    );
+    expect(libraryPatchCalls()).toHaveLength(patchCallCountAfterMount + 1);
   });
 });
 

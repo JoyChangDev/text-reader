@@ -370,9 +370,27 @@ export function useBookPlayer({
   // directly by the listener effect below) so that effect can attach its listeners once
   // on mount instead of re-subscribing on every state change this closure reads.
   const reconcileOnForegroundRef = useRef(null);
+  // The backgrounding-triggered counterpart to reconcileOnForegroundRef above: if the OS
+  // fully kills the tab's process while hidden (rather than just suspending it), any
+  // pending debounced write in the persistence effect below never gets to run. This
+  // flushes persistResumePosition immediately instead of waiting for it (see Phase 1.8
+  // ticket 03). Same ref-refreshed-every-commit trick, for the same reason - the listener
+  // effect below attaches its listeners once rather than re-subscribing on every state
+  // change this closure reads.
+  const flushOnHiddenRef = useRef(null);
   // Refs can't be written during render (only read) - this keeps the ref's closure
   // current after every commit instead, so the listener effect below still only has to
   // attach its listeners once.
+  useEffect(() => {
+    flushOnHiddenRef.current = () => {
+      clearTimeout(persistTimeoutRef.current);
+      const last = lastPersistedRef.current;
+      if (last && last.chunkIndex === currentIndex && last.sentenceIndex === activeSentenceIndex) {
+        return;
+      }
+      persistResumePosition(currentIndex, activeSentenceIndex);
+    };
+  });
   useEffect(() => {
     reconcileOnForegroundRef.current = () => {
       const audio = activeAudioRef.current;
@@ -406,17 +424,27 @@ export function useBookPlayer({
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         reconcileOnForegroundRef.current?.();
+      } else if (document.visibilityState === 'hidden') {
+        flushOnHiddenRef.current?.();
       }
     };
     const handleFocus = () => {
       reconcileOnForegroundRef.current?.();
     };
+    // A fallback for the case where a killed process doesn't get to fire
+    // visibilitychange first - the same flush, reusing the same ref (see Phase 1.8
+    // ticket 03).
+    const handlePageHide = () => {
+      flushOnHiddenRef.current?.();
+    };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleFocus);
+    window.addEventListener('pagehide', handlePageHide);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('pagehide', handlePageHide);
     };
   }, []);
 
