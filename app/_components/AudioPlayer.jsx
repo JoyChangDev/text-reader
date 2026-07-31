@@ -6,6 +6,7 @@ import { FiChevronLeft } from 'react-icons/fi';
 
 import { getListenerSettings, updateListenerSettings } from '@/app/_lib/listenerSettings';
 import { useBookPlayer } from '@/app/_lib/useBookPlayer';
+import { useMediaSession } from '@/app/_lib/useMediaSession';
 
 import PlayerBar from './PlayerBar';
 import TranscriptView from './TranscriptView';
@@ -39,6 +40,8 @@ export default function AudioPlayer({
     seekToSentence,
     retryChunk,
   } = useBookPlayer({ bookId, chunks, initialIndex, initialSentenceIndex, voice, speed });
+
+  useMediaSession({ title, isPlaying, play, pause });
 
   // TranscriptView owns the scroll container and active-sentence refs this all needs
   // (see TranscriptView's own doc comment) - it reports its own scroll percentage up

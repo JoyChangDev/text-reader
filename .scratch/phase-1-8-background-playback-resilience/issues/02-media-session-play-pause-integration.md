@@ -6,12 +6,12 @@
 
 **Status:** ready-for-agent
 
-- [ ] `navigator.mediaSession.setActionHandler('play', ...)` / `('pause', ...)` call through to the same `play`/`pause` functions the on-screen PlayerBar button uses, guarded by `'mediaSession' in navigator`.
-- [ ] Handlers are re-registered if the underlying `play`/`pause` identities change, and cleared (`setActionHandler(action, null)`) on unmount.
-- [ ] `navigator.mediaSession.metadata` is set to a `MediaMetadata` carrying the Book's `title` once available.
-- [ ] `navigator.mediaSession.playbackState` is set to `'playing'`/`'paused'` in sync with `isPlaying`.
-- [ ] No `previoustrack`/`nexttrack`/`seekto`/`setPositionState` handlers are registered.
-- [ ] A test (guarding `navigator.mediaSession` presence, mocking it if not present in the JSDOM test environment) asserts invoking the registered `play`/`pause` handlers has the same effect as clicking the existing PlayerBar buttons, and that handlers are cleared on unmount.
-- [ ] Environments without `navigator.mediaSession` (feature not supported) don't throw and the rest of playback is unaffected.
+- [x] `navigator.mediaSession.setActionHandler('play', ...)` / `('pause', ...)` call through to the same `play`/`pause` functions the on-screen PlayerBar button uses, guarded by `'mediaSession' in navigator`.
+- [x] Handlers are re-registered if the underlying `play`/`pause` identities change, and cleared (`setActionHandler(action, null)`) on unmount.
+- [x] `navigator.mediaSession.metadata` is set to a `MediaMetadata` carrying the Book's `title` once available.
+- [x] `navigator.mediaSession.playbackState` is set to `'playing'`/`'paused'` in sync with `isPlaying`.
+- [x] No `previoustrack`/`nexttrack`/`seekto`/`setPositionState` handlers are registered.
+- [x] A test (guarding `navigator.mediaSession` presence, mocking it if not present in the JSDOM test environment) asserts invoking the registered `play`/`pause` handlers has the same effect as clicking the existing PlayerBar buttons, and that handlers are cleared on unmount.
+- [x] Environments without `navigator.mediaSession` (feature not supported) don't throw and the rest of playback is unaffected.
 
 ## Comments

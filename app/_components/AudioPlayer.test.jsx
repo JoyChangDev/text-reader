@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { getListenerSettings } from '@/app/_lib/listenerSettings';
@@ -1239,5 +1239,157 @@ describe('AudioPlayer background/foreground resync', () => {
     // becomes active without a fresh src load, exactly as a live `ended` event would.
     await waitFor(() => expect(standbyEl).toHaveAttribute('data-active', 'true'));
     expect(standbyEl.src).toBe('https://blob.test/1');
+  });
+});
+
+describe('AudioPlayer MediaSession integration', () => {
+  const chunks = ['第一段。', '第二段。'];
+
+  beforeEach(() => {
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.pause = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
+
+    mockAudioChunkFetch(({ body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      return new Response(
+        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
+        { status: 200 },
+      );
+    });
+  });
+
+  afterEach(() => {
+    // Unmount before removing the mediaSession mock (rather than relying on the global
+    // afterEach's own cleanup(), which runs after this one) - the hook's own unmount
+    // cleanup calls navigator.mediaSession.setActionHandler and would otherwise throw
+    // against an already-deleted mock.
+    cleanup();
+    vi.restoreAllMocks();
+    delete navigator.mediaSession;
+    delete global.MediaMetadata;
+  });
+
+  // jsdom doesn't implement the MediaSession API - these two stand in for a browser
+  // that does, giving each handler its own spy so tests can tell 'play' apart from
+  // 'pause' registrations.
+  function mockMediaSession() {
+    navigator.mediaSession = {
+      setActionHandler: vi.fn(),
+      metadata: null,
+      playbackState: 'none',
+    };
+    global.MediaMetadata = vi.fn(function MediaMetadata(init) {
+      Object.assign(this, init);
+    });
+    return navigator.mediaSession;
+  }
+
+  function registeredHandler(mediaSession, action) {
+    const call = mediaSession.setActionHandler.mock.calls.find(([name]) => name === action);
+    return call?.[1];
+  }
+
+  test('registers play/pause action handlers wired to the same play/pause the PlayerBar button uses', async () => {
+    const mediaSession = mockMediaSession();
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-media-session-1" chunks={chunks} title="我的書" />
+      </ChakraProvider>,
+    );
+
+    await screen.findByRole('button', { name: /^播放$/i });
+
+    await waitFor(() => expect(registeredHandler(mediaSession, 'play')).toBeInstanceOf(Function));
+    expect(registeredHandler(mediaSession, 'pause')).toBeInstanceOf(Function);
+
+    registeredHandler(mediaSession, 'play')();
+    expect(await screen.findByRole('button', { name: /暫停/i })).toBeInTheDocument();
+    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalled();
+
+    registeredHandler(mediaSession, 'pause')();
+    expect(await screen.findByRole('button', { name: /^播放$/i })).toBeInTheDocument();
+    expect(window.HTMLMediaElement.prototype.pause).toHaveBeenCalled();
+  });
+
+  test('clears the action handlers, metadata, and playbackState on unmount', async () => {
+    const mediaSession = mockMediaSession();
+
+    const { unmount } = render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-media-session-2" chunks={chunks} title="我的書" />
+      </ChakraProvider>,
+    );
+
+    await screen.findByRole('button', { name: /^播放$/i });
+    await waitFor(() => expect(registeredHandler(mediaSession, 'play')).toBeInstanceOf(Function));
+    await waitFor(() => expect(mediaSession.metadata).not.toBeNull());
+
+    unmount();
+
+    const playCalls = mediaSession.setActionHandler.mock.calls.filter(([name]) => name === 'play');
+    const pauseCalls = mediaSession.setActionHandler.mock.calls.filter(
+      ([name]) => name === 'pause',
+    );
+    expect(playCalls.at(-1)[1]).toBeNull();
+    expect(pauseCalls.at(-1)[1]).toBeNull();
+    // A Listener navigating back to the Library shouldn't leave this Book's title (or a
+    // stale "playing") on the OS lock screen once nothing is actually playing.
+    expect(mediaSession.metadata).toBeNull();
+    expect(mediaSession.playbackState).toBe('none');
+  });
+
+  test("sets MediaMetadata to the Book's title", async () => {
+    mockMediaSession();
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-media-session-3" chunks={chunks} title="我的書" />
+      </ChakraProvider>,
+    );
+
+    await screen.findByRole('button', { name: /^播放$/i });
+
+    await waitFor(() => expect(navigator.mediaSession.metadata).not.toBeNull());
+    expect(navigator.mediaSession.metadata.title).toBe('我的書');
+  });
+
+  test('keeps playbackState in sync with play/pause', async () => {
+    mockMediaSession();
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-media-session-4" chunks={chunks} title="我的書" />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    expect(navigator.mediaSession.playbackState).toBe('paused');
+
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /暫停/i });
+    expect(navigator.mediaSession.playbackState).toBe('playing');
+
+    fireEvent.click(screen.getByRole('button', { name: /暫停/i }));
+    await screen.findByRole('button', { name: /^播放$/i });
+    expect(navigator.mediaSession.playbackState).toBe('paused');
+  });
+
+  test("doesn't throw and playback still works when the browser has no MediaSession support", async () => {
+    expect('mediaSession' in navigator).toBe(false);
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-media-session-5" chunks={chunks} title="我的書" />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+    expect(await screen.findByRole('button', { name: /暫停/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /暫停/i }));
+    expect(await screen.findByRole('button', { name: /^播放$/i })).toBeInTheDocument();
   });
 });
