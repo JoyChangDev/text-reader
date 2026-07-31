@@ -21,6 +21,18 @@ function loadAudioInto(audio, loadedIndexRef, index, url, speed) {
   loadedIndexRef.current = index;
 }
 
+// Which sentence span a given playback time falls in, or null if it's before the first
+// span's start (nothing to highlight yet). Shared by natural-playback timeupdate
+// tracking and the foreground-resync reconciliation below (see Phase 1.8 ticket 01) so
+// there's one place that maps currentTime to a Sentence index, not two.
+function findActiveSentenceIndex(spans, time) {
+  if (spans.length === 0) return null;
+  const index = spans.findIndex((span) => time >= span.startSeconds && time < span.endSeconds);
+  if (index !== -1) return index;
+  if (time >= spans.at(-1).endSeconds) return spans.length - 1;
+  return null;
+}
+
 // Drives progressive, sequential playback of a book's chunks: fetches a small
 // look-ahead window of upcoming chunks in the background (via /api/audio-chunks)
 // while the current one plays, and advances to the next chunk when the current
@@ -188,6 +200,20 @@ export function useBookPlayer({
     [activeAudioRef],
   );
 
+  // Only the active element is ever supposed to be audible - the standby element exists
+  // purely to preload the next chunk's bytes and never has .play() called on it. Called
+  // both as a backstop (the foreground-resync reconciliation below, in case something
+  // already went wrong while the tab was hidden) and right after every .play() call this
+  // hook makes (in case a stale .play() promise from before backgrounding resolves late),
+  // so overlapping audio from the ping-pong pair is a blanket invariant rather than a fix
+  // targeted at one specific race (see Phase 1.8 ticket 01).
+  const enforceSingleActiveAudio = useCallback(() => {
+    const standby = standbyAudioRef.current;
+    if (standby && !standby.paused) {
+      standby.pause();
+    }
+  }, [standbyAudioRef]);
+
   // Once the current chunk's audio is ready and playback is desired, load and play it
   // on the active element. A jump-to-sentence request targeting this chunk (see
   // seekToSentence) is applied here, once its audio has actually finished loading
@@ -209,8 +235,10 @@ export function useBookPlayer({
       }
 
       audio.play();
+      enforceSingleActiveAudio();
     } else if (audio.paused) {
       audio.play();
+      enforceSingleActiveAudio();
     }
   }, [
     isPlaying,
@@ -222,6 +250,7 @@ export function useBookPlayer({
     speed,
     activeAudioRef,
     activeLoadedIndexRef,
+    enforceSingleActiveAudio,
   ]);
 
   // Applied immediately to both elements, independent of the chunk-load effect above
@@ -326,18 +355,70 @@ export function useBookPlayer({
     if (!audio) return;
     setCurrentTimeSeconds(audio.currentTime);
 
-    if (currentSentenceSpans.length === 0) return;
-
-    const time = audio.currentTime;
-    const index = currentSentenceSpans.findIndex(
-      (span) => time >= span.startSeconds && time < span.endSeconds,
-    );
-    if (index !== -1) {
+    const index = findActiveSentenceIndex(currentSentenceSpans, audio.currentTime);
+    if (index !== null) {
       setActiveSentenceIndex(index);
-    } else if (time >= currentSentenceSpans.at(-1).endSeconds) {
-      setActiveSentenceIndex(currentSentenceSpans.length - 1);
     }
   }, [currentSentenceSpans, activeAudioRef]);
+
+  // A backgrounded tab can suspend/throttle timeupdate and ended events without telling
+  // the page in an orderly way, so React state (isPlaying, activeSentenceIndex,
+  // currentIndex) can silently drift from what the real <audio> element did. This is the
+  // single checkpoint that reconciles the two on return to foreground, treating the
+  // element as ground truth rather than trusting whatever state was left over from
+  // before backgrounding (see Phase 1.8 ticket 01). Stashed in a ref (rather than read
+  // directly by the listener effect below) so that effect can attach its listeners once
+  // on mount instead of re-subscribing on every state change this closure reads.
+  const reconcileOnForegroundRef = useRef(null);
+  // Refs can't be written during render (only read) - this keeps the ref's closure
+  // current after every commit instead, so the listener effect below still only has to
+  // attach its listeners once.
+  useEffect(() => {
+    reconcileOnForegroundRef.current = () => {
+      const audio = activeAudioRef.current;
+      if (!audio) return;
+
+      // The element finished a chunk while hidden and never got to (or never processed)
+      // its ended event - advance via the same path a live ended event already takes,
+      // rather than a second chunk-advance mechanism.
+      if (audio.ended && currentIndex + 1 < chunks.length) {
+        handleEnded();
+        enforceSingleActiveAudio();
+        return;
+      }
+
+      if (audio.paused && wantsToPlay) {
+        setWantsToPlay(false);
+      } else if (!audio.paused && !wantsToPlay) {
+        setWantsToPlay(true);
+      }
+
+      const index = findActiveSentenceIndex(currentSentenceSpans, audio.currentTime);
+      if (index !== null && index !== activeSentenceIndex) {
+        setActiveSentenceIndex(index);
+      }
+
+      enforceSingleActiveAudio();
+    };
+  });
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        reconcileOnForegroundRef.current?.();
+      }
+    };
+    const handleFocus = () => {
+      reconcileOnForegroundRef.current?.();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
 
   // Sets where the _next_ play will start, identified by a chunk and its index within
   // that chunk's derived sentence spans - the click target for both the current chunk's

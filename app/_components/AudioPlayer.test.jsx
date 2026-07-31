@@ -1075,3 +1075,169 @@ describe('AudioPlayer report mode wiring', () => {
     expect(screen.getByTestId('sentence-1-0')).toHaveAttribute('data-active', 'true');
   });
 });
+
+describe('AudioPlayer background/foreground resync', () => {
+  const twoSentenceChunks = ['第一句。第二句。', '第三句。第四句。'];
+  const boundariesByChunk = {
+    0: [
+      { text: '第一句', offset: 0, duration: 10_000_000 },
+      { text: '第二句', offset: 10_000_000, duration: 10_000_000 },
+    ],
+    1: [
+      { text: '第三句', offset: 0, duration: 10_000_000 },
+      { text: '第四句', offset: 10_000_000, duration: 10_000_000 },
+    ],
+  };
+
+  beforeEach(() => {
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.pause = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
+
+    mockAudioChunkFetch(({ body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      return new Response(
+        JSON.stringify({
+          url: `https://blob.test/${chunkIndex}`,
+          boundaries: boundariesByChunk[chunkIndex] ?? [],
+        }),
+        { status: 200 },
+      );
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // The reconciliation checkpoint only reacts to the `visible` transition (see Phase 1.8
+  // ticket 01) - going through `hidden` first mirrors an actual app switch, but is not
+  // itself required for these assertions to hold.
+  function setVisibilityState(state) {
+    Object.defineProperty(document, 'visibilityState', { value: state, configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }
+
+  test('returning to the foreground with the active element actually paused corrects a stale Pause button back to Play', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-resync-1" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /暫停/i });
+
+    // The mocked play() never actually flips .paused - standing in for the OS having
+    // suspended or killed playback while the tab was hidden.
+    setVisibilityState('hidden');
+    setVisibilityState('visible');
+
+    expect(await screen.findByRole('button', { name: /^播放$/i })).toBeInTheDocument();
+  });
+
+  test('returning to the foreground pauses a standby element that ended up playing, so the two never overlap', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-resync-2" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /暫停/i });
+
+    // Per-instance spies (rather than the shared prototype mock) so this proves the
+    // *standby* element specifically gets paused, not just that pause() fired on
+    // whichever element - a regression pausing the active element instead would leave
+    // the prototype-level assertion equally green.
+    const activeEl = screen.getByTestId('audio-element');
+    const standbyEl = screen.getByTestId('audio-element-standby');
+    const activePause = vi.fn();
+    const standbyPause = vi.fn();
+    activeEl.pause = activePause;
+    standbyEl.pause = standbyPause;
+    Object.defineProperty(standbyEl, 'paused', { value: false, configurable: true });
+
+    setVisibilityState('hidden');
+    setVisibilityState('visible');
+
+    expect(standbyPause).toHaveBeenCalledTimes(1);
+    expect(activePause).not.toHaveBeenCalled();
+  });
+
+  test('pressing play also pauses a standby element that was already (stray) playing, without needing a visibility change', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-resync-2b" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    // Stray playback on the standby element, present from before Play is ever pressed -
+    // the load-and-play effect's own audio.play() calls must enforce the invariant too,
+    // not only the visibilitychange reconciliation checkpoint.
+    const standbyEl = screen.getByTestId('audio-element-standby');
+    const standbyPause = vi.fn();
+    standbyEl.pause = standbyPause;
+    Object.defineProperty(standbyEl, 'paused', { value: false, configurable: true });
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /暫停/i });
+
+    expect(standbyPause).toHaveBeenCalled();
+  });
+
+  test('returning to the foreground recomputes the highlighted sentence from currentTime, without a further timeupdate event', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-resync-3" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /暫停/i });
+
+    // Simulates timeupdate having been throttled while hidden: the element's own
+    // currentTime moved on to the second Sentence, but the highlight never followed.
+    const audioEl = screen.getByTestId('audio-element');
+    audioEl.currentTime = 1.5;
+
+    setVisibilityState('hidden');
+    setVisibilityState('visible');
+
+    await waitFor(() =>
+      expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true'),
+    );
+  });
+
+  test('returning to the foreground advances to the next chunk if the active element ended while hidden', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-resync-4" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /暫停/i });
+
+    const standbyEl = screen.getByTestId('audio-element-standby');
+    await waitFor(() => expect(standbyEl.src).toBe('https://blob.test/1'));
+
+    // The active element reached the end while hidden, without its `ended` event ever
+    // being processed - standing in for a chunk boundary crossed entirely off-screen.
+    const audioEl = screen.getByTestId('audio-element');
+    Object.defineProperty(audioEl, 'ended', { value: true, configurable: true });
+
+    setVisibilityState('hidden');
+    setVisibilityState('visible');
+
+    // Chunk 1's audio (already preloaded into the standby element - see ticket 05)
+    // becomes active without a fresh src load, exactly as a live `ended` event would.
+    await waitFor(() => expect(standbyEl).toHaveAttribute('data-active', 'true'));
+    expect(standbyEl.src).toBe('https://blob.test/1');
+  });
+});
