@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { logDiagnosticEvent } from './backgroundDiagnostics';
 import { updateResumeIndex } from './bookLibrary';
 import { chunkFetchPlan } from './chunkFetchPlan';
 import { deriveSentenceSpans } from './sentenceSpans';
@@ -402,26 +403,47 @@ export function useBookPlayer({
       if (audio.ended && currentIndex + 1 < chunks.length) {
         handleEnded();
         enforceSingleActiveAudio();
+        // TEMPORARY (Phase 1.9 ticket 04 diagnostics) - see backgroundDiagnostics.js.
+        logDiagnosticEvent('reconcile', { chunkAdvanceTriggered: true });
         return;
       }
 
+      let isPlayingCorrectedTo = null;
       if (audio.paused && wantsToPlay) {
         setWantsToPlay(false);
+        isPlayingCorrectedTo = false;
       } else if (!audio.paused && !wantsToPlay) {
         setWantsToPlay(true);
+        isPlayingCorrectedTo = true;
       }
 
       const index = findActiveSentenceIndex(currentSentenceSpans, audio.currentTime);
+      let sentenceIndexCorrectedFrom = null;
+      let sentenceIndexCorrectedTo = null;
       if (index !== null && index !== activeSentenceIndex) {
         setActiveSentenceIndex(index);
+        sentenceIndexCorrectedFrom = activeSentenceIndex;
+        sentenceIndexCorrectedTo = index;
       }
 
       enforceSingleActiveAudio();
+
+      // TEMPORARY (Phase 1.9 ticket 04 diagnostics) - see backgroundDiagnostics.js.
+      logDiagnosticEvent('reconcile', {
+        chunkAdvanceTriggered: false,
+        isPlayingCorrectedTo,
+        sentenceIndexCorrectedFrom,
+        sentenceIndexCorrectedTo,
+        audioPaused: audio.paused,
+        audioCurrentTime: audio.currentTime,
+      });
     };
   });
 
   useEffect(() => {
     const handleVisibilityChange = () => {
+      // TEMPORARY (Phase 1.9 ticket 04 diagnostics) - see backgroundDiagnostics.js.
+      logDiagnosticEvent('visibilitychange', { visibilityState: document.visibilityState });
       if (document.visibilityState === 'visible') {
         reconcileOnForegroundRef.current?.();
       } else if (document.visibilityState === 'hidden') {
@@ -429,12 +451,14 @@ export function useBookPlayer({
       }
     };
     const handleFocus = () => {
+      logDiagnosticEvent('focus');
       reconcileOnForegroundRef.current?.();
     };
     // A fallback for the case where a killed process doesn't get to fire
     // visibilitychange first - the same flush, reusing the same ref (see Phase 1.8
     // ticket 03).
     const handlePageHide = () => {
+      logDiagnosticEvent('pagehide');
       flushOnHiddenRef.current?.();
     };
 

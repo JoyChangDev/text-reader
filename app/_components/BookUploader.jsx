@@ -1,6 +1,6 @@
 'use client';
 
-import { Button, Text, VisuallyHidden, VStack } from '@chakra-ui/react';
+import { Button, Spinner, Text, VisuallyHidden, VStack } from '@chakra-ui/react';
 import { useRef, useState } from 'react';
 import { FiUploadCloud } from 'react-icons/fi';
 
@@ -8,12 +8,17 @@ import { FiUploadCloud } from 'react-icons/fi';
 // via /api/chunks. Hands the resulting { bookId, chunks } up to the parent once ready.
 export default function BookUploader({ onReady }) {
   const [error, setError] = useState(null);
+  // Chunking (and, once onReady resolves, persisting + navigating to the reader route)
+  // has no other visual feedback otherwise, which can read as the app being frozen
+  // rather than working - see specs/phase-1-9-reader-route-restructure.md.
+  const [isProcessing, setIsProcessing] = useState(false);
   const inputRef = useRef(null);
 
   async function processFile(file) {
     if (!file) return;
 
     setError(null);
+    setIsProcessing(true);
 
     const text = await file.text();
 
@@ -29,9 +34,11 @@ export default function BookUploader({ onReady }) {
       }
 
       const { chunks } = await response.json();
-      onReady({ bookId: crypto.randomUUID(), chunks, title: file.name });
+      await onReady({ bookId: crypto.randomUUID(), chunks, title: file.name });
     } catch {
       setError('無法處理這個檔案，請再試一次。');
+    } finally {
+      setIsProcessing(false);
     }
   }
 
@@ -81,20 +88,27 @@ export default function BookUploader({ onReady }) {
           id="book-upload"
           type="file"
           accept=".txt"
+          disabled={isProcessing}
           onChange={handleFileChange}
         />
       </VisuallyHidden>
-      <Button
-        type="button"
-        size="sm"
-        borderRadius="full"
-        bg="accent"
-        color="accentContrast"
-        _hover={{ opacity: 0.9 }}
-        onClick={() => inputRef.current?.click()}
-      >
-        選擇檔案
-      </Button>
+      {isProcessing ? (
+        <Text display="flex" alignItems="center" gap={2} fontSize="sm" color="foregroundMuted">
+          <Spinner size="xs" /> 處理中…
+        </Text>
+      ) : (
+        <Button
+          type="button"
+          size="sm"
+          borderRadius="full"
+          bg="accent"
+          color="accentContrast"
+          _hover={{ opacity: 0.9 }}
+          onClick={() => inputRef.current?.click()}
+        >
+          選擇檔案
+        </Button>
+      )}
       {error && (
         <Text color="danger" role="alert">
           {error}

@@ -6,11 +6,11 @@
 
 **Status:** ready-for-agent
 
-- [ ] A capped `localStorage` ring buffer (e.g. last 50 entries) records, with timestamps: `visibilitychange` firing (+ `document.visibilityState`), `focus` firing, each reconciliation-checkpoint run and what it found/corrected (`isPlaying` mismatch corrected true/false, `activeSentenceIndex` correction from/to, whether a missed chunk-advance was triggered), and MediaSession registration outcome (`'mediaSession' in navigator`, whether handlers attached successfully).
-- [ ] A small collapsible panel renders in the reader UI, showing the current log contents in a readable format (most recent first).
-- [ ] On mount, the panel displays whatever was already logged before this mount adds anything new — i.e., surviving a full reload and still showing what happened just before it.
-- [ ] A "清除記錄" control clears the log.
-- [ ] The code is clearly marked as temporary (e.g. a `// TEMPORARY:` comment block or an isolated file) so it's easy to find and delete later.
-- [ ] Existing tests for `useBookPlayer`/`AudioPlayer` are unaffected by the panel's presence (it observes, doesn't change playback/reconciliation behavior).
+- [x] A capped `localStorage` ring buffer (e.g. last 50 entries) records, with timestamps: `visibilitychange` firing (+ `document.visibilityState`), `focus` firing, each reconciliation-checkpoint run and what it found/corrected (`isPlaying` mismatch corrected true/false, `activeSentenceIndex` correction from/to, whether a missed chunk-advance was triggered), and MediaSession registration outcome (`'mediaSession' in navigator`, whether handlers attached successfully).
+- [x] A small collapsible panel renders in the reader UI, showing the current log contents in a readable format (most recent first).
+- [x] On mount, the panel displays whatever was already logged before this mount adds anything new — i.e., surviving a full reload and still showing what happened just before it.
+- [x] A "清除記錄" control clears the log.
+- [x] The code is clearly marked as temporary (e.g. a `// TEMPORARY:` comment block or an isolated file) so it's easy to find and delete later.
+- [x] Existing tests for `useBookPlayer`/`AudioPlayer` are unaffected by the panel's presence (it observes, doesn't change playback/reconciliation behavior).
 
 ## Comments

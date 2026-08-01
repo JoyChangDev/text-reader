@@ -6,14 +6,14 @@
 
 **Status:** ready-for-agent
 
-- [ ] `app/book/[bookId]/page.jsx` exists as a Client Component route, renders `AudioPlayer` for the book matching the route's `bookId` param.
-- [ ] `app/page.jsx` no longer holds a `book` state variable or conditionally renders `AudioPlayer` — it only renders the library view (`BookUploader`, `BookLibrary`, `BlobUsageIndicator`, the settings/report-link footer).
-- [ ] `BookLibrary`'s `onSelect` navigates to `/book/[bookId]` (router navigation, not `setBook`).
-- [ ] `BookUploader`'s `onReady` handler (after its `addBook` call persists the new book server-side) navigates to `/book/[bookId]` for the newly created book.
-- [ ] `AudioPlayer`'s "返回書庫" button performs a real navigation to `/` (no more `onBackToLibrary` prop that just flips local state in the parent).
-- [ ] `/book/[bookId]` fetches the book via `getBook(bookId)`, passing the resolved `chunks`/`resumeIndex`/`resumeSentenceIndex`/`title` into `AudioPlayer` the same way `handleSelectBook` does today.
-- [ ] If `getBook(bookId)` resolves to `null` (deleted book / bad link), the route redirects to `/` instead of rendering a broken player.
-- [ ] Existing `AudioPlayer.test.jsx`/`useBookPlayer` tests pass with only the prop-plumbing changes needed for the route split — no behavioral regressions in playback, look-ahead fetch, ping-pong preload, or Sentence-click seeking.
-- [ ] Manually verified: selecting a book from the library, reading a bit, and pressing "返回書庫" round-trips correctly with real URL changes (browser back button works as expected).
+- [x] `app/book/[bookId]/page.jsx` exists as a Client Component route, renders `AudioPlayer` for the book matching the route's `bookId` param.
+- [x] `app/page.jsx` no longer holds a `book` state variable or conditionally renders `AudioPlayer` — it only renders the library view (`BookUploader`, `BookLibrary`, `BlobUsageIndicator`, the settings/report-link footer).
+- [x] `BookLibrary`'s `onSelect` navigates to `/book/[bookId]` (router navigation, not `setBook`).
+- [x] `BookUploader`'s `onReady` handler (after its `addBook` call persists the new book server-side) navigates to `/book/[bookId]` for the newly created book.
+- [x] `AudioPlayer`'s "返回書庫" button performs a real navigation to `/` (no more `onBackToLibrary` prop that just flips local state in the parent).
+- [x] `/book/[bookId]` fetches the book via `getBook(bookId)`, passing the resolved `chunks`/`resumeIndex`/`resumeSentenceIndex`/`title` into `AudioPlayer` the same way `handleSelectBook` does today.
+- [x] If `getBook(bookId)` resolves to `null` (deleted book / bad link), the route redirects to `/` instead of rendering a broken player.
+- [x] Existing `AudioPlayer.test.jsx`/`useBookPlayer` tests pass with only the prop-plumbing changes needed for the route split — no behavioral regressions in playback, look-ahead fetch, ping-pong preload, or Sentence-click seeking.
+- [ ] Manually verified: selecting a book from the library, reading a bit, and pressing "返回書庫" round-trips correctly with real URL changes (browser back button works as expected). _(Needs Joy to verify on-device; not checkable from here.)_
 
 ## Comments

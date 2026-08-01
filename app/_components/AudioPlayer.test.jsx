@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { getDiagnosticLog } from '@/app/_lib/backgroundDiagnostics';
 import { getListenerSettings } from '@/app/_lib/listenerSettings';
 
 import ChakraProvider from '../_providers/chakra';
@@ -1524,5 +1525,122 @@ describe('AudioPlayer MediaSession integration', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /暫停/i }));
     expect(await screen.findByRole('button', { name: /^播放$/i })).toBeInTheDocument();
+  });
+});
+
+// TEMPORARY (Phase 1.9 ticket 04 diagnostics) - see backgroundDiagnostics.js. Delete
+// alongside the logging call sites once ticket 04 ships.
+describe('AudioPlayer background diagnostics logging', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.pause = vi.fn();
+
+    mockAudioChunkFetch(({ body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      return new Response(
+        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
+        { status: 200 },
+      );
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('logs visibilitychange events with the resulting visibilityState', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-diagnostics-1" chunks={chunks} />
+      </ChakraProvider>,
+    );
+    await screen.findByRole('button', { name: /^播放$/i });
+
+    setVisibilityState('hidden');
+    setVisibilityState('visible');
+
+    const log = getDiagnosticLog();
+    expect(log.map((entry) => entry.type)).toEqual(
+      expect.arrayContaining(['visibilitychange', 'visibilitychange']),
+    );
+    const hiddenEntry = log.find(
+      (entry) => entry.type === 'visibilitychange' && entry.detail.visibilityState === 'hidden',
+    );
+    expect(hiddenEntry).toBeDefined();
+  });
+
+  test('logs a reconcile entry every time the foreground checkpoint runs', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-diagnostics-2" chunks={chunks} />
+      </ChakraProvider>,
+    );
+    await screen.findByRole('button', { name: /^播放$/i });
+
+    setVisibilityState('hidden');
+    setVisibilityState('visible');
+
+    const log = getDiagnosticLog();
+    expect(log.some((entry) => entry.type === 'reconcile')).toBe(true);
+  });
+
+  test('logs both the from and to Sentence index when reconciliation corrects the highlight', async () => {
+    const twoSentenceChunks = ['第一句。第二句。'];
+    mockAudioChunkFetch(({ body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      return new Response(
+        JSON.stringify({
+          url: `https://blob.test/${chunkIndex}`,
+          boundaries: [
+            { text: '第一句', offset: 0, duration: 10_000_000 },
+            { text: '第二句', offset: 10_000_000, duration: 10_000_000 },
+          ],
+        }),
+        { status: 200 },
+      );
+    });
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-diagnostics-2b" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /暫停/i });
+
+    // Simulates timeupdate having been throttled while hidden - the element's own
+    // currentTime moved on to the second Sentence, but the highlight never followed.
+    const audioEl = screen.getByTestId('audio-element');
+    audioEl.currentTime = 1.5;
+
+    setVisibilityState('hidden');
+    setVisibilityState('visible');
+
+    await waitFor(() =>
+      expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true'),
+    );
+
+    const log = getDiagnosticLog();
+    const correctionEntry = log.find(
+      (entry) => entry.type === 'reconcile' && entry.detail.sentenceIndexCorrectedTo === 1,
+    );
+    expect(correctionEntry).toBeDefined();
+    expect(correctionEntry.detail.sentenceIndexCorrectedFrom).toBe(0);
+  });
+
+  test('logs MediaSession registration outcome on mount', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-diagnostics-3" chunks={chunks} title="我的書" />
+      </ChakraProvider>,
+    );
+    await screen.findByRole('button', { name: /^播放$/i });
+
+    const log = getDiagnosticLog();
+    const registrationEntry = log.find((entry) => entry.type === 'mediaSessionRegistration');
+    expect(registrationEntry).toBeDefined();
+    expect(registrationEntry.detail.supported).toBe('mediaSession' in navigator);
   });
 });

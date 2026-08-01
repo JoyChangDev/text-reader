@@ -66,6 +66,37 @@ describe('BookUploader', () => {
     expect(onReady.mock.calls[0][0].chunks).toEqual(['第一段。', '第二段。']);
   });
 
+  test('shows a loading state while the file is being processed, then hands off to onReady', async () => {
+    let resolveChunking;
+    global.fetch = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveChunking = resolve;
+        }),
+    );
+    const onReady = vi.fn();
+
+    render(
+      <ChakraProvider>
+        <BookUploader onReady={onReady} />
+      </ChakraProvider>,
+    );
+
+    const file = makeTxtFile('第一段。');
+    const input = screen.getByLabelText(/上傳/);
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByText('處理中…')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '選擇檔案' })).not.toBeInTheDocument();
+    expect(input).toBeDisabled();
+
+    resolveChunking(new Response(JSON.stringify({ chunks: ['第一段。'] }), { status: 200 }));
+
+    await waitFor(() => expect(onReady).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText('處理中…')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '選擇檔案' })).toBeInTheDocument();
+  });
+
   test('shows an error message if chunking the uploaded file fails', async () => {
     global.fetch = vi.fn(
       async () => new Response(JSON.stringify({ error: 'nope' }), { status: 400 }),

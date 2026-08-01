@@ -2,6 +2,8 @@
 
 import { useEffect } from 'react';
 
+import { logDiagnosticEvent } from './backgroundDiagnostics';
+
 // Declares this page as playing legitimate media to the OS - the same mechanism that
 // surfaces a lock-screen/notification play-pause control, and a signal some mobile
 // browsers use when deciding whether to suspend a hidden tab's audio (see Phase 1.8
@@ -10,6 +12,10 @@ import { useEffect } from 'react';
 // API isn't supported.
 export function useMediaSession({ title, isPlaying, play, pause }) {
   useEffect(() => {
+    // TEMPORARY (Phase 1.9 ticket 04 diagnostics) - see backgroundDiagnostics.js.
+    logDiagnosticEvent('mediaSessionRegistration', {
+      supported: 'mediaSession' in navigator,
+    });
     if (!('mediaSession' in navigator)) return undefined;
 
     navigator.mediaSession.setActionHandler('play', play);

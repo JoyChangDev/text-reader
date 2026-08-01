@@ -1,18 +1,29 @@
 'use client';
 import { Box, HStack, VStack } from '@chakra-ui/react';
 import NextLink from 'next/link';
-import { useCallback, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useState } from 'react';
 
-import AudioPlayer from './_components/AudioPlayer';
 import BlobUsageIndicator from './_components/BlobUsageIndicator';
 import BookLibrary from './_components/BookLibrary';
 import BookUploader from './_components/BookUploader';
 import PlayerSettingsSheet from './_components/PlayerSettingsSheet';
-import { addBook, getBook } from './_lib/bookLibrary';
+import { addBook } from './_lib/bookLibrary';
+import { getLastOpenBook } from './_lib/lastOpenBook';
 import { getListenerSettings, updateListenerSettings } from './_lib/listenerSettings';
 
+// The library route: which book is open lives in the URL (see
+// app/book/[bookId]/page.jsx), not in state here - see
+// specs/phase-1-9-reader-route-restructure.md for why a killed/reloaded process needs
+// the URL, not in-memory state, to know what to show.
 export default function Home() {
-  const [book, setBook] = useState(null);
+  const router = useRouter();
+  // Read synchronously (not in an effect) so a Listener with a last-open book never
+  // sees the library flash before the redirect below fires. If the pointed-to book has
+  // since been deleted, app/book/[bookId]/page.jsx clears it and redirects back here,
+  // where this will then read null and fall through to the library normally - no need
+  // to duplicate that existence check here too.
+  const [lastOpenBookId] = useState(() => getLastOpenBook());
   // Same device-scoped voice/speed defaults AudioPlayer reads on mount (see
   // listenerSettings.js) - surfaced here too so the Listener can preview a voice and
   // set their preferred speed/theme before ever opening a book, not just mid-playback.
@@ -21,24 +32,24 @@ export default function Home() {
   const [voice, setVoice] = useState(() => getListenerSettings().voice);
   const [speed, setSpeed] = useState(() => getListenerSettings().speed);
 
-  const handleUploaded = useCallback(async ({ bookId, chunks, title }) => {
-    await addBook({ bookId, title, chunks });
-    setBook({ bookId, chunks, initialIndex: 0, initialSentenceIndex: 0, title });
-  }, []);
+  useEffect(() => {
+    if (lastOpenBookId) router.replace(`/book/${lastOpenBookId}`);
+  }, [lastOpenBookId, router]);
 
-  const handleSelectBook = useCallback(async (bookId) => {
-    const entry = await getBook(bookId);
-    if (!entry) return;
-    setBook({
-      bookId: entry.bookId,
-      chunks: entry.chunks,
-      initialIndex: entry.resumeIndex,
-      // Legacy entries saved before Sentence-level tracking existed have no
-      // resumeSentenceIndex - fall back to the start of the resumed Chunk (see ticket 05).
-      initialSentenceIndex: entry.resumeSentenceIndex ?? 0,
-      title: entry.title,
-    });
-  }, []);
+  const handleUploaded = useCallback(
+    async ({ bookId, chunks, title }) => {
+      await addBook({ bookId, title, chunks });
+      router.push(`/book/${bookId}`);
+    },
+    [router],
+  );
+
+  const handleSelectBook = useCallback(
+    (bookId) => {
+      router.push(`/book/${bookId}`);
+    },
+    [router],
+  );
 
   const handleVoiceChange = useCallback((event) => {
     const nextVoice = event.target.value;
@@ -52,47 +63,37 @@ export default function Home() {
     updateListenerSettings({ speed: nextSpeed });
   }, []);
 
-  if (!book) {
-    return (
-      <Box bg="background" color="foreground" display="flex" flexDirection="column" minH="100vh">
-        <VStack align="start" gap={6} flex="1" maxW="640px" mx="auto" w="full" px={4} py={8}>
-          <BookUploader onReady={handleUploaded} />
-          <BookLibrary onSelect={handleSelectBook} />
-          <BlobUsageIndicator />
-        </VStack>
-        <Box as="footer" flexShrink={0} w="full" borderTopWidth="1px" borderColor="hairline">
-          <HStack justify="space-between" maxW="640px" mx="auto" px={4} py={3}>
-            <PlayerSettingsSheet
-              voice={voice}
-              onVoiceChange={handleVoiceChange}
-              speed={speed}
-              onSpeedChange={handleSpeedChange}
-              disabled={false}
-            />
-            <Box
-              as={NextLink}
-              href="/pronunciation-reports"
-              fontSize="sm"
-              color="foregroundMuted"
-              _hover={{ color: 'foreground' }}
-            >
-              發音回報
-            </Box>
-          </HStack>
-        </Box>
-      </Box>
-    );
-  }
+  // Nothing to render while a redirect to the last-open book is in flight - avoids a
+  // flash of the library screen just before bouncing away from it.
+  if (lastOpenBookId) return null;
 
   return (
-    <AudioPlayer
-      key={book.bookId}
-      bookId={book.bookId}
-      chunks={book.chunks}
-      initialIndex={book.initialIndex}
-      initialSentenceIndex={book.initialSentenceIndex}
-      title={book.title}
-      onBackToLibrary={() => setBook(null)}
-    />
+    <Box bg="background" color="foreground" display="flex" flexDirection="column" minH="100vh">
+      <VStack align="start" gap={6} flex="1" maxW="640px" mx="auto" w="full" px={4} py={8}>
+        <BookUploader onReady={handleUploaded} />
+        <BookLibrary onSelect={handleSelectBook} />
+        <BlobUsageIndicator />
+      </VStack>
+      <Box as="footer" flexShrink={0} w="full" borderTopWidth="1px" borderColor="hairline">
+        <HStack justify="space-between" maxW="640px" mx="auto" px={4} py={3}>
+          <PlayerSettingsSheet
+            voice={voice}
+            onVoiceChange={handleVoiceChange}
+            speed={speed}
+            onSpeedChange={handleSpeedChange}
+            disabled={false}
+          />
+          <Box
+            as={NextLink}
+            href="/pronunciation-reports"
+            fontSize="sm"
+            color="foregroundMuted"
+            _hover={{ color: 'foreground' }}
+          >
+            發音回報
+          </Box>
+        </HStack>
+      </Box>
+    </Box>
   );
 }

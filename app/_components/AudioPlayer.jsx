@@ -8,6 +8,7 @@ import { getListenerSettings, updateListenerSettings } from '@/app/_lib/listener
 import { useBookPlayer } from '@/app/_lib/useBookPlayer';
 import { useMediaSession } from '@/app/_lib/useMediaSession';
 
+import BackgroundDiagnosticsPanel from './BackgroundDiagnosticsPanel';
 import PlayerBar from './PlayerBar';
 import TranscriptView from './TranscriptView';
 
@@ -137,6 +138,7 @@ export default function AudioPlayer({
         reportMode={reportMode}
         onToggleReportMode={handleToggleReportMode}
       />
+      <BackgroundDiagnosticsPanel />
       {/* A ping-pong pair, not one element per role: which one is "active" (playing) vs.
           "standby" (preloading the next chunk in the background) flips over time as
           chunks advance, rather than either element having a fixed role (see ticket 05). */}

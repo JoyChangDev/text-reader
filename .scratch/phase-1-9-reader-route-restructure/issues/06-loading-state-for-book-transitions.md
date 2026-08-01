@@ -6,9 +6,9 @@
 
 **Status:** ready-for-agent
 
-- [ ] `BookUploader` shows a loading indicator (and disables the file picker button) for the duration of the `/api/chunks` fetch in `processFile`, instead of leaving the dropzone static with no feedback.
-- [ ] `/book/[bookId]` shows a loading state while `getBook` is in flight, before `AudioPlayer` mounts — evaluate whether this Next.js version's `loading.tsx` file convention (see `node_modules/next/dist/docs/01-app/01-getting-started/04-linking-and-navigating.md`) is a better fit than local component state for a dynamic route, and use whichever fits this codebase's existing patterns better.
-- [ ] Both loading states are covered by tests asserting the indicator is present during the pending fetch and gone once content renders.
-- [ ] Manually verified: uploading a file and opening a book from the library both show clear loading feedback instead of an apparent freeze.
+- [x] `BookUploader` shows a loading indicator (and disables the file picker button) for the duration of the `/api/chunks` fetch in `processFile`, instead of leaving the dropzone static with no feedback.
+- [x] `/book/[bookId]` shows a loading state while `getBook` is in flight, before `AudioPlayer` mounts — evaluated `loading.tsx` and decided against it: that convention only covers the Suspense boundary around a server-rendered Page's initial render, but `BookPage` is a Client Component fetching in a `useEffect`, so `loading.tsx` would never actually cover this gap. Local component state (a `Spinner`, already added in ticket 01) is the only mechanism that can.
+- [x] Both loading states are covered by tests asserting the indicator is present during the pending fetch and gone once content renders.
+- [ ] Manually verified: uploading a file and opening a book from the library both show clear loading feedback instead of an apparent freeze. _(Needs Joy to verify on-device; not checkable from here.)_
 
 ## Comments
