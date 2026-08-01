@@ -1,3 +1,5 @@
+import './globals.css';
+
 import ChakraProvider from '@/providers/chakra';
 import { ColorModeProvider } from '@/providers/colorMode';
 

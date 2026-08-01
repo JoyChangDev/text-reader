@@ -1,0 +1,14 @@
+/* Locks the document itself out of scrolling, full stop - no individual component's
+   height/overflow math (however carefully done) can be trusted to never miscalculate by
+   a pixel, especially on iOS Safari's quirky viewport. Every route owns its own internal
+   scroll region instead (h="100dvh" + overflowY="auto" where it needs to scroll, plain
+   h="100dvh" where it doesn't) rather than relying on the document/body scrolling. See
+   .scratch/phase-1-9-reader-route-restructure/issues/03-background-reconciliation-diagnostic-panel.md
+   for the bug this fixes: the reader screen became whole-page-scrollable once the
+   diagnostic panel's content could grow past the viewport. */
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}

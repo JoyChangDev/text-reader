@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { clearDiagnosticLog, getDiagnosticLog, logDiagnosticEvent } from './backgroundDiagnostics';
+import {
+  clearDiagnosticLog,
+  formatDiagnosticLog,
+  getDiagnosticLog,
+  logDiagnosticEvent,
+} from './backgroundDiagnostics';
 
 describe('backgroundDiagnostics', () => {
   beforeEach(() => {
@@ -45,5 +50,21 @@ describe('backgroundDiagnostics', () => {
     clearDiagnosticLog();
 
     expect(getDiagnosticLog()).toEqual([]);
+  });
+
+  test('formats the log as one line per entry, in the order given, with an ISO timestamp', () => {
+    const entries = [
+      { type: 'visibilitychange', detail: { visibilityState: 'hidden' }, timestamp: 1000 },
+      { type: 'focus', detail: {}, timestamp: 2000 },
+    ];
+
+    expect(formatDiagnosticLog(entries)).toBe(
+      `${new Date(1000).toISOString()} visibilitychange {"visibilityState":"hidden"}\n` +
+        `${new Date(2000).toISOString()} focus {}`,
+    );
+  });
+
+  test('formats an empty log as an empty string', () => {
+    expect(formatDiagnosticLog([])).toBe('');
   });
 });

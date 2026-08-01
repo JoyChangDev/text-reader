@@ -68,7 +68,14 @@ export default function Home() {
   if (lastOpenBookId) return null;
 
   return (
-    <Box bg="background" color="foreground" display="flex" flexDirection="column" minH="100vh">
+    <Box
+      bg="background"
+      color="foreground"
+      display="flex"
+      flexDirection="column"
+      h="100dvh"
+      overflowY="auto"
+    >
       <VStack align="start" gap={6} flex="1" maxW="640px" mx="auto" w="full" px={4} py={8}>
         <BookUploader onReady={handleUploaded} />
         <BookLibrary onSelect={handleSelectBook} />

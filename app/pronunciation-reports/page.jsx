@@ -8,7 +8,7 @@ import PronunciationReportList from '../_components/PronunciationReportList';
 
 export default function PronunciationReportsPage() {
   return (
-    <Box bg="background" color="foreground" minH="100vh">
+    <Box bg="background" color="foreground" h="100dvh" overflowY="auto">
       <VStack align="start" gap={6} maxW="640px" mx="auto" w="full" px={4} py={8}>
         <Box
           as={NextLink}

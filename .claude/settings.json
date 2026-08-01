@@ -1,4 +1,14 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(npx vitest *)",
+      "Bash(npm run *)",
+      "Bash(npx prettier *)"
+    ]
+  },
+  "enabledPlugins": {
+    "ui-ux-pro-max@ui-ux-pro-max-skill": true
+  },
   "extraKnownMarketplaces": {
     "ui-ux-pro-max-skill": {
       "source": {
@@ -6,8 +16,5 @@
         "repo": "nextlevelbuilder/ui-ux-pro-max-skill"
       }
     }
-  },
-  "enabledPlugins": {
-    "ui-ux-pro-max@ui-ux-pro-max-skill": true
   }
 }

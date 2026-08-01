@@ -65,7 +65,7 @@ export default function BookPage() {
         display="flex"
         alignItems="center"
         justifyContent="center"
-        minH="100vh"
+        h="100dvh"
         bg="background"
         color="foreground"
       >

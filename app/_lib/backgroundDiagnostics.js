@@ -32,3 +32,16 @@ export function getDiagnosticLog() {
 export function clearDiagnosticLog() {
   safeRemoveItem(STORAGE_KEY);
 }
+
+// Plain-text, chronological (oldest first, unlike the on-screen list which shows
+// newest first) rendering of the log - meant to be copied off the phone's cramped
+// screen and pasted somewhere it can actually be read in full (see
+// BackgroundDiagnosticsPanel.jsx's copy button).
+export function formatDiagnosticLog(entries) {
+  return entries
+    .map(
+      (entry) =>
+        `${new Date(entry.timestamp).toISOString()} ${entry.type} ${JSON.stringify(entry.detail)}`,
+    )
+    .join('\n');
+}
