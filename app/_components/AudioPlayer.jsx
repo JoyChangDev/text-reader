@@ -95,7 +95,7 @@ export default function AudioPlayer({
       color="foreground"
       display="flex"
       flexDirection="column"
-      h="100vh"
+      h="100dvh"
       overflow="hidden"
     >
       <Button

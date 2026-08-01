@@ -14,3 +14,5 @@
 - [x] Existing tests for `useBookPlayer`/`AudioPlayer` are unaffected by the panel's presence (it observes, doesn't change playback/reconciliation behavior).
 
 ## Comments
+
+- 2026-08-01, post-deploy: Joy reported the panel's toggle button showed a correct count ("除錯記錄（34）") but expanding it showed no entries. Root cause: `AudioPlayer.jsx`'s root `Box` was the only screen in the app using a hard `h="100vh"` + `overflow="hidden"` (every other route uses `minH="100vh"`, which never clips). `100vh` doesn't reliably match the true visible viewport on iOS Safari (the dynamic toolbar changes the actual visible area); expanding the panel pushed its content past that true edge, where `overflow="hidden"` silently clipped it instead of scrolling to reveal it. Fixed by changing `h="100vh"` → `h="100dvh"` in `AudioPlayer.jsx`, plus `flexShrink={0}` on the panel's own root `Box` so it's never the flex child sacrificed under pressure (`TranscriptView` is the one designed to shrink, via its own `minH={0}`).

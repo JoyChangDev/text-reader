@@ -34,7 +34,13 @@ export default function BackgroundDiagnosticsPanel() {
   };
 
   return (
-    <Box borderTopWidth="1px" borderColor="hairline" fontSize="xs" color="foregroundMuted">
+    <Box
+      flexShrink={0}
+      borderTopWidth="1px"
+      borderColor="hairline"
+      fontSize="xs"
+      color="foregroundMuted"
+    >
       <Button
         size="xs"
         variant="ghost"
