@@ -1241,6 +1241,89 @@ describe('AudioPlayer background/foreground resync', () => {
     await waitFor(() => expect(standbyEl).toHaveAttribute('data-active', 'true'));
     expect(standbyEl.src).toBe('https://blob.test/1');
   });
+
+  test('retries a stalled .play() call whose currentTime never left 0 despite audio.paused reporting false', async () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-resync-5" chunks={chunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /暫停/i });
+    await waitFor(() => expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1));
+
+    // Standing in for .play() flipping `paused` to false right as the OS suspended the
+    // tab before any real audio started - currentTime never moves off 0 (see Phase 1.9
+    // ticket 04, diagnosed from a real diagnostic-log capture showing exactly this).
+    const audioEl = screen.getByTestId('audio-element');
+    Object.defineProperty(audioEl, 'paused', { value: false, configurable: true });
+
+    nowSpy.mockReturnValue(1_000 + 2_000 + 1);
+    setVisibilityState('hidden');
+    setVisibilityState('visible');
+
+    await waitFor(() => expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2));
+  });
+
+  test('does not retry a chunk that only just started, even if paused reports false with currentTime 0', async () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-resync-6" chunks={chunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /暫停/i });
+    await waitFor(() => expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1));
+
+    const audioEl = screen.getByTestId('audio-element');
+    Object.defineProperty(audioEl, 'paused', { value: false, configurable: true });
+
+    // Still well within the startup grace window - not enough time has passed to call
+    // this a stall yet.
+    nowSpy.mockReturnValue(1_000 + 500);
+    setVisibilityState('hidden');
+    setVisibilityState('visible');
+
+    // setVisibilityState dispatches synchronously, and the reconciliation checkpoint it
+    // triggers runs synchronously within that same dispatch - no further await needed.
+    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not treat genuine progress as a stall', async () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-resync-7" chunks={chunks} />
+      </ChakraProvider>,
+    );
+
+    const playButton = await screen.findByRole('button', { name: /^播放$/i });
+    fireEvent.click(playButton);
+    await screen.findByRole('button', { name: /暫停/i });
+    await waitFor(() => expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1));
+
+    const audioEl = screen.getByTestId('audio-element');
+    Object.defineProperty(audioEl, 'paused', { value: false, configurable: true });
+    // Genuinely progressed past 0 - not stalled, regardless of how long it's been.
+    Object.defineProperty(audioEl, 'currentTime', { value: 3.2, configurable: true });
+
+    nowSpy.mockReturnValue(1_000 + 10_000);
+    setVisibilityState('hidden');
+    setVisibilityState('visible');
+
+    // setVisibilityState dispatches synchronously, and the reconciliation checkpoint it
+    // triggers runs synchronously within that same dispatch - no further await needed.
+    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('AudioPlayer background flush of resume-position persistence', () => {

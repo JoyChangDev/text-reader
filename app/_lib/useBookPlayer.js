@@ -12,6 +12,12 @@ const LOOKAHEAD = 2;
 // coalesces those persistence writes into one trailing call instead of a network
 // request on every single sentence boundary (see ticket 05).
 const RESUME_PERSIST_DEBOUNCE_MS = 400;
+// How long a freshly-started chunk gets before its currentTime sitting at 0 counts as
+// stalled rather than normal startup latency (see the reconciliation checkpoint below,
+// Phase 1.9 ticket 04) - generous relative to how quickly playback normally begins
+// (the audio is typically already fetched by play time), so this only fires on a
+// genuine stall.
+const STALL_GRACE_MS = 2000;
 
 // Assigns a chunk's audio into a physical <audio> element and stamps which chunk index
 // it now holds - shared by the standby-preload effect and the active element's
@@ -88,6 +94,14 @@ export function useBookPlayer({
   // same flush the reset effect also reacts to `currentIndex` in - without this ref, the
   // reset effect would see pendingSeekRef already cleared and undo the seek it just missed.
   const seekAppliedIndexRef = useRef(null);
+  // When the active element's most recent .play() attempt was issued - reset on every
+  // fresh attempt (a new chunk's cold load, or resuming after an explicit pause), so the
+  // reconciliation checkpoint below can tell "just started, give it a moment" apart from
+  // "has had plenty of time and still hasn't moved" (see Phase 1.9 ticket 04: confirmed
+  // via the diagnostic log that .play() can flip audio.paused to false while backgrounding
+  // suspends the tab before any real audio ever starts, leaving currentTime stuck at 0
+  // indefinitely with nothing else able to tell that apart from genuine playback).
+  const activePlayAttemptAtRef = useRef(null);
 
   const activeAudioRef = activeIsPrimary ? primaryAudioRef : secondaryAudioRef;
   const standbyAudioRef = activeIsPrimary ? secondaryAudioRef : primaryAudioRef;
@@ -235,9 +249,11 @@ export function useBookPlayer({
         pendingSeekRef.current = null;
       }
 
+      activePlayAttemptAtRef.current = Date.now();
       audio.play();
       enforceSingleActiveAudio();
     } else if (audio.paused) {
+      activePlayAttemptAtRef.current = Date.now();
       audio.play();
       enforceSingleActiveAudio();
     }
@@ -426,6 +442,27 @@ export function useBookPlayer({
         sentenceIndexCorrectedTo = index;
       }
 
+      // `.paused` alone can't distinguish genuine playback from a .play() call that
+      // flipped it to false right as backgrounding suspended the tab before any audio
+      // ever actually started - confirmed via the diagnostic log, where audioCurrentTime
+      // sat at exactly 0 across multiple reconciliation checkpoints (see Phase 1.9
+      // ticket 04). A chunk that's had well past its normal startup latency and still
+      // hasn't moved off 0 despite wanting to play gets one retry here; the grace period
+      // avoids flagging a chunk that only just started.
+      const isStalled =
+        wantsToPlay &&
+        !audio.paused &&
+        audio.currentTime === 0 &&
+        activePlayAttemptAtRef.current !== null &&
+        Date.now() - activePlayAttemptAtRef.current > STALL_GRACE_MS;
+      if (isStalled) {
+        activePlayAttemptAtRef.current = Date.now();
+        audio.play().catch((error) => {
+          // TEMPORARY (Phase 1.9 ticket 04 diagnostics) - see backgroundDiagnostics.js.
+          logDiagnosticEvent('stallRetryFailed', { name: error?.name, message: error?.message });
+        });
+      }
+
       enforceSingleActiveAudio();
 
       // TEMPORARY (Phase 1.9 ticket 04 diagnostics) - see backgroundDiagnostics.js.
@@ -436,6 +473,7 @@ export function useBookPlayer({
         sentenceIndexCorrectedTo,
         audioPaused: audio.paused,
         audioCurrentTime: audio.currentTime,
+        stalled: isStalled,
       });
     };
   });
