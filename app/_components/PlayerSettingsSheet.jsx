@@ -1,6 +1,6 @@
 'use client';
 
-import { Box, HStack, IconButton, Text, VisuallyHidden, VStack } from '@chakra-ui/react';
+import { Box, HStack, IconButton, Portal, Text, VisuallyHidden, VStack } from '@chakra-ui/react';
 import { useState } from 'react';
 import { FiSettings, FiX } from 'react-icons/fi';
 
@@ -39,11 +39,14 @@ export default function PlayerSettingsSheet({
         <FiSettings />
       </IconButton>
       {open && (
-        <>
+        // Portalled to document.body so `position: fixed` below is always resolved
+        // against the viewport. Left in place, it would instead resolve against the
+        // nearest ancestor carrying a `transform` - and this sheet renders inside
+        // PlayerBar, deep in a route's tree, where a transform can appear on any
+        // ancestor during a route transition and silently reanchor the whole overlay.
+        <Portal>
           {/* Tapping outside the sheet dismisses it, same as the drag handle/close
-              button - a fixed overlay works here without a portal since none of this
-              tree applies a transform, which is the one thing that would otherwise
-              make `position: fixed` relative to something other than the viewport. */}
+              button. */}
           <Box
             data-testid="settings-sheet-backdrop"
             position="fixed"
@@ -69,10 +72,13 @@ export default function PlayerSettingsSheet({
             borderColor="hairlineStrong"
             borderTopRadius="2xl"
             boxShadow="dark-lg"
-            maxH="82vh"
+            maxH="82dvh"
             overflowY="auto"
             px={5}
-            pb={5}
+            // Keeps the sheet's last control clear of the home indicator on a Home
+            // Screen (standalone) launch - see app/layout.jsx. The token's own value is
+            // the fallback, so this still reads as "spacing 5, plus the inset".
+            pb="calc(var(--chakra-spacing-5, 1.25rem) + env(safe-area-inset-bottom))"
             css={{
               scrollbarWidth: 'none',
               '&::-webkit-scrollbar': { display: 'none' },
@@ -192,7 +198,7 @@ export default function PlayerSettingsSheet({
               <ThemeToggle />
             </VStack>
           </VStack>
-        </>
+        </Portal>
       )}
     </Box>
   );

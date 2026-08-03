@@ -41,6 +41,11 @@ export default function PlayerBar({
       bg="background"
       borderTopWidth="1px"
       borderColor="hairline"
+      // Keeps the transport controls clear of the home indicator on a Home Screen
+      // (standalone) launch - see app/layout.jsx for why the page runs edge to edge.
+      // The inset sits on this outer element so the inner one's `pb={3}` stays a plain
+      // spacing token rather than becoming a calc() of two unrelated things.
+      pb="env(safe-area-inset-bottom)"
     >
       <Box maxW="640px" mx="auto" px={4} pt={2} pb={3}>
         {currentChunkErrored && (

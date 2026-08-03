@@ -1,6 +1,6 @@
 'use client';
 
-import { Box, Button, Text, Textarea, VStack } from '@chakra-ui/react';
+import { Box, Button, Portal, Text, Textarea, VStack } from '@chakra-ui/react';
 import { useEffect, useState } from 'react';
 
 import { submitReport } from '@/app/_lib/pronunciationReports';
@@ -39,10 +39,12 @@ export default function PronunciationReportForm({ phrase, bookTitle, onDismiss }
   }, [status, onDismiss]);
 
   return (
-    <>
+    // Portalled for the same reason PlayerSettingsSheet is (see its own comment): this
+    // renders from deep inside TranscriptView, and `position: fixed` resolves against
+    // the nearest transformed ancestor rather than the viewport if there is one.
+    <Portal>
       {/* Same full-viewport dimming backdrop pattern PlayerSettingsSheet's overlay
-          already establishes - works here without a portal for the same reason (see
-          PlayerSettingsSheet's own doc comment). */}
+          already establishes. */}
       <Box
         data-testid="pronunciation-report-backdrop"
         position="fixed"
@@ -139,6 +141,6 @@ export default function PronunciationReportForm({ phrase, bookTitle, onDismiss }
           </Box>
         )}
       </VStack>
-    </>
+    </Portal>
   );
 }

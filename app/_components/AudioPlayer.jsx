@@ -97,6 +97,12 @@ export default function AudioPlayer({
       flexDirection="column"
       h="100dvh"
       overflow="hidden"
+      // A Home Screen (standalone) launch draws the page under the translucent status
+      // bar - see the `black-translucent` style and matching `viewport-fit=cover` in
+      // app/layout.jsx - so without this the "返回書庫" button below sits underneath the
+      // notch/status bar. Padding rather than a shorter height so the background still
+      // bleeds to the top edge, which is the point of the translucent style.
+      pt="env(safe-area-inset-top)"
     >
       <Button
         variant="plain"
