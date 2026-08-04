@@ -10,7 +10,8 @@ Per [ADR 0003](../../../docs/adr/0003-hls-continuous-playback.md), the failure c
 
 Highlighting will be temporarily degraded between this ticket and the next. That is accepted rather than worked around: keeping the span lookup alive across both would mean threading cumulative offsets through code ticket 05 deletes.
 
-- [ ] `useBookPlayer` exposes one `audioRef` instead of `primaryAudioRef`/`secondaryAudioRef`, and `AudioPlayer.jsx` renders one `<audio>` with `crossorigin="anonymous"`.
+- [ ] `useBookPlayer` exposes one `audioRef` instead of `primaryAudioRef`/`secondaryAudioRef`, and `AudioPlayer.jsx` renders one `<audio>` — **without** `crossorigin`, which would create a CORS requirement the design doesn't otherwise have (no `<track src>`, nothing reads the audio data).
+- [ ] Cross-origin segment fetching is confirmed here, since this is the first time real Vercel Blob URLs are played (folded in from ticket 01, which dropped its own A′ case). If segments fail to load, the fix is a CORS header on blob responses — the segment format itself is already settled.
 - [ ] `src` is the ticket 03 playlist URL for the current (Book, voice). It is set on mount and re-pointed only when `voice` changes — no other code path assigns `src`.
 - [ ] `play()` is called only from the Listener's gesture (the transport control, or a MediaSession `play` action). No effect, timer, or event handler calls it.
 - [ ] `speed` continues to drive `playbackRate` on the single element.

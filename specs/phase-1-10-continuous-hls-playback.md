@@ -29,25 +29,21 @@ A Book becomes one continuous audio source instead of a queue of files.
 
 ## Implementation Decisions
 
-### Segment format — the gating question
+### Segment format — resolved
 
-edge-tts emits MP3 (`edgeTtsClient.js`), and blob storage already holds one `<bookId>/<chunkIndex>/<voice>.mp3` per Chunk. HLS permits "packed audio" segments — a raw elementary stream rather than a container — and MP3 is one of the permitted forms, so those blobs can in principle serve as segments verbatim, with no transcoding anywhere in the pipeline.
+edge-tts emits MP3 (`edgeTtsClient.js`), and blob storage already holds one `<bookId>/<chunkIndex>/<voice>.mp3` per Chunk. HLS permits "packed audio" segments — a raw elementary stream rather than a container — and MP3 is one of the permitted forms.
 
-The catch is that the HLS specification requires each packed-audio segment to signal the timestamp of its first sample via an ID3 PRIV frame with owner identifier `com.apple.streaming.transportStreamTimestamp`. edge-tts output carries no such tag. Whether Safari tolerates its absence is unverified, and the spike does not answer it: the spike used ffmpeg-produced fMP4.
+The open question was that the HLS specification requires each packed-audio segment to signal its first sample's timestamp via an ID3 PRIV frame with owner identifier `com.apple.streaming.transportStreamTimestamp`, and edge-tts output carries no such tag.
 
-The first ticket therefore verifies this narrowly, before anything else is built, using the same harness the spike used. Three outcomes, in order of preference:
+**Ticket 01 settled it: raw edge-tts MP3s play as HLS segments as-is, untagged.** Six real Chunks played continuously on a physical iPhone, 72.5s of 72.5s, across every segment boundary. A tagged variant played equally well, so the tag is harmless — but it is not needed, and is therefore not built. `edgeTtsClient.js`, `audioGenerationService.js`, and `blobStorageClient.js` need no change at all to produce segments; the fMP4 fallback that would have put ffmpeg in the generation path is not reached.
 
-1. Raw edge-tts MP3s play as segments as-is — blob storage and `audioGenerationService` are untouched.
-2. They play once an ID3 PRIV timestamp is prepended. This is byte manipulation, not transcoding: an ID3v2 tag at the head of an MP3 is skipped by decoders, so the tag is built as a pure function and prepended when the Chunk is stored.
-3. Neither works, and segments must be transcoded to fMP4. This is the expensive branch — it puts ffmpeg in the generation path, which Vercel functions do not provide — and if reached, the phase stops for a re-plan rather than absorbing that cost silently.
-
-Option 2 is the expected outcome and the rest of these decisions assume it; option 1 differs from it only by skipping the tagging step.
+Ticket 01 also established that Safari derives the timeline from the decoded audio rather than by accumulating `#EXTINF`: a playlist declaring 73.0s for 72.5s of audio still ended at 72.5s, with no stutter at the skewed segment. Duration error therefore does not accumulate into cue drift, but the measurement below must agree with what the decoder counts.
 
 ### Measuring Chunk duration
 
 `#EXTINF` values and cue times must agree with the audio to within a fraction of a second across an entire Book, so an approximation is not usable. The last word boundary's `offset + duration` is not the file's duration (it excludes trailing silence), and edge-tts is not guaranteed to emit constant bitrate, so size ÷ bitrate is not reliable either.
 
-A new pure module (e.g. `mp3Frames.js`) walks the MP3's frame headers and sums each frame's duration from its sampling rate and samples-per-frame. It has no dependencies, takes bytes and returns seconds, and is unit-tested against fixture bytes. The same walk yields the sample count that the ID3 timestamp above needs, so both live in one module rather than two parsers of the same bytes.
+A new pure module (e.g. `mp3Frames.js`) walks the MP3's frame headers and sums each frame's duration from its sampling rate and samples-per-frame. It has no dependencies, takes bytes and returns seconds, and is unit-tested against fixture bytes. Counting frames is also what the decoder does, which is what makes it agree with the timeline Safari actually builds — the reason a size-and-bitrate estimate is not an acceptable substitute even though ticket 01 showed half a second of error is survivable.
 
 Duration is measured once, when a Chunk is generated, and stored alongside `boundaries` in the existing `<key>.json` metadata blob. `blobStorageClient.put` already persists an arbitrary object there; this adds a field rather than a blob.
 
