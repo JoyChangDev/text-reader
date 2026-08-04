@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# regenerable probe output - see scripts/packed-audio-probe/README.md
+/public/hls-packed-audio/

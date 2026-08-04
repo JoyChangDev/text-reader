@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Ticket 01 — MP3 packed audio 探測</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fff;
+        --fg: #16181d;
+        --muted: #6b7280;
+        --line: #e3e5ea;
+        --sunken: #f4f5f7;
+        --bad: #b42318;
+        --good: #15803d;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #101215;
+          --fg: #e8eaed;
+          --muted: #9aa0a8;
+          --line: #2a2e35;
+          --sunken: #191c21;
+          --bad: #f87171;
+          --good: #4ade80;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: max(16px, env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          15px/1.5 -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+      }
+      h1 {
+        font-size: 17px;
+        margin: 0 0 4px;
+      }
+      p.sub {
+        margin: 0 0 14px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .cases {
+        display: grid;
+        gap: 8px;
+        margin-bottom: 14px;
+      }
+      .case {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: var(--sunken);
+      }
+      .case.active {
+        border-color: currentColor;
+      }
+      .case b {
+        display: block;
+        font-size: 14px;
+      }
+      .case span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      audio {
+        width: 100%;
+        margin-bottom: 14px;
+      }
+      .readout {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1px;
+        background: var(--line);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+        margin-bottom: 12px;
+      }
+      .cell {
+        background: var(--bg);
+        padding: 10px;
+      }
+      .cell .k {
+        font-size: 10px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .cell .v {
+        font:
+          600 19px/1.2 ui-monospace,
+          Menlo,
+          monospace;
+        margin-top: 2px;
+      }
+      #result {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px;
+        margin-bottom: 12px;
+        font-size: 14px;
+        background: var(--sunken);
+      }
+      #result.good {
+        color: var(--good);
+      }
+      #result.bad {
+        color: var(--bad);
+      }
+      button {
+        padding: 10px;
+        font-size: 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--sunken);
+        color: var(--fg);
+        width: 100%;
+        margin-bottom: 12px;
+      }
+      #log {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--sunken);
+        padding: 10px;
+        height: 34vh;
+        overflow: auto;
+        -webkit-overflow-scrolling: touch;
+        font:
+          12px/1.45 ui-monospace,
+          Menlo,
+          monospace;
+        white-space: pre;
+      }
+      #log .err {
+        color: var(--bad);
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Ticket 01 — MP3 packed audio 探測</h1>
+    <p class="sub">
+      選一個案例，按播放，聽它能不能一路播到底。每段錄音都會報自己的編號，所以中斷在哪一段用聽的就知道。
+    </p>
+
+    <div class="cases" id="cases"></div>
+
+    <audio id="audio" controls preload="metadata" crossorigin="anonymous"></audio>
+
+    <div class="readout">
+      <div class="cell">
+        <div class="k">currentTime</div>
+        <div class="v" id="t">–</div>
+      </div>
+      <div class="cell">
+        <div class="k">segment</div>
+        <div class="v" id="seg">–</div>
+      </div>
+      <div class="cell">
+        <div class="k">目標</div>
+        <div class="v" id="target">–</div>
+      </div>
+    </div>
+
+    <div id="result">尚未播放。</div>
+    <button id="copy">複製 log</button>
+    <div id="log"></div>
+
+    <script>
+      // Ticket 01 asks one question - are raw edge-tts MP3s usable as HLS packed-audio
+      // segments - and one follow-up, whether the ID3 PRIV timestamp the spec requires is
+      // what makes the difference. Backgrounding is NOT in question here (ADR 0003 already
+      // settled that for fMP4), so this page has none of the spike's freeze instrumentation:
+      // it just needs to show how far playback got and where it stopped.
+      //
+      // a-local and b-local differ only by the tag, and both are same-origin, so a
+      // difference between them isolates the tag. a-blob is the same raw MP3s served from
+      // Vercel Blob, so a difference between a-local and a-blob isolates CORS instead of
+      // confusing it with the format question.
+      const DURATIONS = [14.208, 12.264, 11.952, 10.824, 11.616, 11.64];
+      const TOTAL = DURATIONS.reduce((sum, d) => sum + d, 0);
+
+      const CASES = [
+        {
+          id: 'a-local',
+          title: 'A — 原始 MP3（同源）',
+          note: '沒有 ID3 標頭。這個能播，就完全不用改生成流程。',
+          src: 'a-local.m3u8',
+        },
+        {
+          id: 'b-local',
+          title: 'B — 加了 ID3 時間戳（同源）',
+          note: '規格要求的 PRIV 標頭。A 不行、B 行 → ticket 02 要做標頭。',
+          src: 'b-local.m3u8',
+        },
+        {
+          id: 'c-skew',
+          title: 'C — 第 2 段 EXTINF 故意多 0.5 秒',
+          note: '量 ticket 02 的時長測量要多精確。能順播 → 有餘裕。',
+          src: 'c-skew.m3u8',
+        },
+      ];
+
+      const audio = document.getElementById('audio');
+      const logEl = document.getElementById('log');
+      const resultEl = document.getElementById('result');
+      let entries = [];
+      let current = null;
+
+      document.getElementById('target').textContent = `${TOTAL.toFixed(1)}s`;
+
+      function log(message) {
+        const t = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+        entries.push(
+          `${new Date().toTimeString().slice(0, 8)}  t=${t.toFixed(1).padStart(6)}s  ${message}`,
+        );
+        logEl.innerHTML = entries
+          .map((line) => (line.includes('ERROR') ? `<span class="err">${line}</span>` : line))
+          .join('\n');
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      function segmentOf(time) {
+        let start = 0;
+        for (let i = 0; i < DURATIONS.length; i += 1) {
+          start += DURATIONS[i];
+          if (time < start) return i;
+        }
+        return DURATIONS.length - 1;
+      }
+
+      function select(entry) {
+        current = entry;
+        for (const node of document.querySelectorAll('.case')) {
+          node.classList.toggle('active', node.dataset.id === entry.id);
+        }
+        entries = [];
+        resultEl.className = '';
+        resultEl.textContent = `已載入 ${entry.title}。按播放。`;
+        audio.src = entry.src;
+        log(`--- case ${entry.id} (${entry.src}) ---`);
+      }
+
+      const casesEl = document.getElementById('cases');
+      for (const entry of CASES) {
+        const node = document.createElement('div');
+        node.className = 'case';
+        node.dataset.id = entry.id;
+        node.innerHTML = `<b></b><span></span>`;
+        node.querySelector('b').textContent = entry.title;
+        node.querySelector('span').textContent = entry.note;
+        node.addEventListener('click', () => select(entry));
+        casesEl.appendChild(node);
+      }
+
+      for (const type of ['play', 'playing', 'pause', 'waiting', 'stalled', 'seeking']) {
+        audio.addEventListener(type, () => log(type));
+      }
+
+      audio.addEventListener('error', () => {
+        log(`ERROR code=${audio.error?.code}`);
+        resultEl.className = 'bad';
+        resultEl.textContent =
+          `${current?.title ?? ''} 載入或解碼失敗。` +
+          '先確認 .m3u8 的 Content-Type 與（A′ 的情況）CORS，再判定格式不支援。';
+      });
+
+      audio.addEventListener('ended', () => {
+        log('ended');
+        const reached = audio.currentTime;
+        const complete = reached > TOTAL - 1.5;
+        resultEl.className = complete ? 'good' : 'bad';
+        resultEl.textContent = complete
+          ? `${current?.title ?? ''} 播完全部 ${DURATIONS.length} 段（${reached.toFixed(1)}s / ${TOTAL.toFixed(1)}s）。`
+          : `${current?.title ?? ''} 提早結束於 ${reached.toFixed(1)}s，第 ${segmentOf(reached)} 段。`;
+      });
+
+      setInterval(() => {
+        const t = audio.currentTime;
+        document.getElementById('t').textContent = Number.isFinite(t) ? `${t.toFixed(1)}s` : '–';
+        document.getElementById('seg').textContent = Number.isFinite(t)
+          ? `${segmentOf(t)} / ${DURATIONS.length - 1}`
+          : '–';
+      }, 500);
+
+      document.getElementById('copy').addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(entries.join('\n'));
+          document.getElementById('copy').textContent = '已複製';
+        } catch {
+          document.getElementById('copy').textContent = '複製失敗，請長按選取';
+        }
+      });
+
+      select(CASES[0]);
+    </script>
+  </body>
+</html>
