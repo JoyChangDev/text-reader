@@ -12,7 +12,11 @@ vi.mock('./edgeTtsClient', () => ({
   createEdgeTtsClient: () => fakeTtsClient,
 }));
 
-import { generateAudioForChunk, getOrGenerateAudio } from './audioGenerationService';
+import {
+  generateAudioForChunk,
+  getOrGenerateAudio,
+  readCachedChunks,
+} from './audioGenerationService';
 // Real frames, so the duration these paths measure is non-zero the way production's is;
 // mp3Frames.test.js covers the parsing itself.
 import { buildMp3Frames, MP3_FRAME_DURATION_SECONDS } from './mp3Frames.fixture';
@@ -157,6 +161,57 @@ describe('getOrGenerateAudio', () => {
         { bookId: 'book-1', chunkIndex: 0, voice: 'zh-TW-default', text: '你好。' },
       ),
     ).rejects.toThrow('blob upload failed');
+  });
+});
+
+describe('readCachedChunks', () => {
+  test('returns one entry per Chunk index, undefined where the Chunk is not cached', async () => {
+    const cached = { url: 'https://blob.example/0.mp3', boundaries: [], durationSeconds: 5 };
+    const storageClient = {
+      get: vi.fn(async (key) => (key === 'book-1/0/zh-TW-default' ? cached : undefined)),
+    };
+
+    const chunks = await readCachedChunks(
+      { storageClient },
+      { bookId: 'book-1', voice: 'zh-TW-default', chunkCount: 3 },
+    );
+
+    expect(chunks).toEqual([cached, undefined, undefined]);
+    expect(storageClient.get.mock.calls.map(([key]) => key)).toEqual([
+      'book-1/0/zh-TW-default',
+      'book-1/1/zh-TW-default',
+      'book-1/2/zh-TW-default',
+    ]);
+  });
+
+  // The playlist and manifest routes read; only /api/audio-chunks generates. A missing or
+  // unmeasurable Chunk is reported as missing rather than repaired in place here.
+  test('writes nothing back for a Chunk it finds missing', async () => {
+    const storageClient = {
+      get: vi.fn().mockResolvedValue(undefined),
+      put: vi.fn(),
+      putJson: vi.fn(),
+    };
+
+    await readCachedChunks(
+      { storageClient },
+      { bookId: 'book-1', voice: 'zh-TW-default', chunkCount: 2 },
+    );
+
+    expect(storageClient.put).not.toHaveBeenCalled();
+    expect(storageClient.putJson).not.toHaveBeenCalled();
+  });
+
+  test('reads nothing for a Book with no Chunks', async () => {
+    const storageClient = { get: vi.fn() };
+
+    const chunks = await readCachedChunks(
+      { storageClient },
+      { bookId: 'book-1', voice: 'zh-TW-default', chunkCount: 0 },
+    );
+
+    expect(chunks).toEqual([]);
+    expect(storageClient.get).not.toHaveBeenCalled();
   });
 });
 

@@ -1,4 +1,5 @@
 import { createBlobStorageClient } from './blobStorageClient';
+import { isPlayableChunk } from './chunkAudio';
 import { createEdgeTtsClient } from './edgeTtsClient';
 import { measureMp3Duration } from './mp3Frames';
 
@@ -34,10 +35,10 @@ export async function getOrGenerateAudio(
   const key = cacheKey({ bookId, chunkIndex, voice });
 
   const cached = await storageClient.get(key);
-  // > 0 rather than !== undefined, so a Chunk cached before durationSeconds existed and one
-  // whose stored duration is unusable take the same repair path instead of the second kind
-  // reaching playlist generation.
-  if (cached?.durationSeconds > 0) {
+  // Playable rather than merely present, so a Chunk cached before durationSeconds existed
+  // and one whose stored duration is unusable take the same repair path instead of the
+  // second kind reaching playlist generation.
+  if (isPlayableChunk(cached)) {
     return cached;
   }
 
@@ -55,6 +56,18 @@ export async function getOrGenerateAudio(
   return storageClient.put(key, { ...generated, durationSeconds });
 }
 
+// The read-only bulk counterpart to getOrGenerateAudio, for the playlist and manifest
+// routes: what a (Book, voice) already has, one entry per Chunk index and undefined where
+// that Chunk isn't cached. It never synthesizes and never repairs — /api/audio-chunks
+// stays the only thing that calls edge-tts (see ticket 03).
+export async function readCachedChunks({ storageClient }, { bookId, voice, chunkCount }) {
+  return Promise.all(
+    Array.from({ length: chunkCount }, (_, chunkIndex) =>
+      storageClient.get(cacheKey({ bookId, chunkIndex, voice })),
+    ),
+  );
+}
+
 const defaultClients = {
   storageClient: createBlobStorageClient(),
   ttsClient: createEdgeTtsClient(),
@@ -66,4 +79,8 @@ const defaultClients = {
 // the caller (the Listener's selection - see ticket 02) rather than hardcoded here.
 export function generateAudioForChunk({ bookId, chunkIndex, text, voice }) {
   return getOrGenerateAudio(defaultClients, { bookId, chunkIndex, voice, text });
+}
+
+export function getCachedChunks({ bookId, voice, chunkCount }) {
+  return readCachedChunks(defaultClients, { bookId, voice, chunkCount });
 }

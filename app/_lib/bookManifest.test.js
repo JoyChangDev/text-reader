@@ -1,0 +1,161 @@
+import { describe, expect, test } from 'vitest';
+
+import { buildBookManifest } from './bookManifest';
+
+const SECOND = 10_000_000;
+
+// Two sentences of one word each, so the derived spans are exactly the boundaries below.
+const TWO_SENTENCE_TEXT = '你好。世界。';
+const twoSentenceBoundaries = [
+  { text: '你好', offset: 0, duration: SECOND },
+  { text: '世界', offset: 2 * SECOND, duration: SECOND },
+];
+
+function generated(durationSeconds, { index = 0 } = {}) {
+  return {
+    url: `https://blob.example/book-1/${index}/voice.mp3`,
+    boundaries: twoSentenceBoundaries,
+    durationSeconds,
+  };
+}
+
+describe('buildBookManifest', () => {
+  // The whole point of the manifest: cue times live on one continuous Book timeline,
+  // so each Chunk starts where the sum of every prior Chunk's audio ends.
+  test('accumulates startSeconds over Chunks of deliberately unequal durations', () => {
+    const chunks = [TWO_SENTENCE_TEXT, TWO_SENTENCE_TEXT, TWO_SENTENCE_TEXT];
+    const chunkAudio = [generated(7.5), generated(3.25, { index: 1 }), generated(11, { index: 2 })];
+
+    const manifest = buildBookManifest({ chunks, chunkAudio });
+
+    expect(manifest.chunks.map((chunk) => chunk.startSeconds)).toEqual([0, 7.5, 10.75]);
+  });
+
+  test('reports each Chunk index and whether it is generated', () => {
+    const manifest = buildBookManifest({
+      chunks: [TWO_SENTENCE_TEXT, TWO_SENTENCE_TEXT],
+      chunkAudio: [generated(5), undefined],
+    });
+
+    expect(manifest.chunks.map(({ index, isGenerated }) => ({ index, isGenerated }))).toEqual([
+      { index: 0, isGenerated: true },
+      { index: 1, isGenerated: false },
+    ]);
+  });
+
+  // deriveSentenceSpans is called with the Chunk's stored boundaries and returns
+  // Chunk-relative times; the manifest is what shifts them onto the Book timeline.
+  test("offsets each Chunk's derived Sentence spans by its startSeconds", () => {
+    const manifest = buildBookManifest({
+      chunks: [TWO_SENTENCE_TEXT, TWO_SENTENCE_TEXT],
+      chunkAudio: [generated(7.5), generated(4, { index: 1 })],
+    });
+
+    expect(manifest.chunks[0].sentences).toEqual([
+      { id: 0, startSeconds: 0, endSeconds: 1 },
+      { id: 1, startSeconds: 2, endSeconds: 3 },
+    ]);
+    expect(manifest.chunks[1].sentences).toEqual([
+      { id: 2, startSeconds: 7.5, endSeconds: 8.5 },
+      { id: 3, startSeconds: 9.5, endSeconds: 10.5 },
+    ]);
+  });
+
+  // A cue identifies a Sentence without reference to any Chunk, so ids are Book-global
+  // ordinals: every Sentence in every prior Chunk, plus the index within this one.
+  test('numbers Sentences with Book-global ordinals that ignore Chunk boundaries', () => {
+    const manifest = buildBookManifest({
+      chunks: ['一。二。三。', '四。', '五。六。'],
+      chunkAudio: [
+        { url: 'a', durationSeconds: 3, boundaries: [] },
+        { url: 'b', durationSeconds: 1, boundaries: [] },
+        { url: 'c', durationSeconds: 2, boundaries: [] },
+      ],
+    });
+
+    expect(manifest.chunks.map((chunk) => chunk.sentences.map((sentence) => sentence.id))).toEqual([
+      [0, 1, 2],
+      [3],
+      [4, 5],
+    ]);
+  });
+
+  // Ordinals are counted from the Chunk text, not from what happens to be generated, so
+  // a Sentence keeps the same id however much of the Book around it is narrated yet.
+  test('keeps ordinals stable as the Chunks around a Sentence generate', () => {
+    const chunks = ['一。二。', '三。四。', '五。六。'];
+    const audio = (index) => ({ url: `${index}`, durationSeconds: 2, boundaries: [] });
+
+    const complete = buildBookManifest({ chunks, chunkAudio: [audio(0), audio(1), audio(2)] });
+    const partial = buildBookManifest({ chunks, chunkAudio: [audio(0), audio(1), undefined] });
+
+    expect(complete.chunks[1].sentences.map((sentence) => sentence.id)).toEqual([2, 3]);
+    expect(partial.chunks[1].sentences).toEqual(complete.chunks[1].sentences);
+  });
+
+  test('gives an ungenerated Chunk no place on the timeline and no Sentence spans', () => {
+    const manifest = buildBookManifest({
+      chunks: [TWO_SENTENCE_TEXT, TWO_SENTENCE_TEXT],
+      chunkAudio: [generated(5), undefined],
+    });
+
+    expect(manifest.chunks[1]).toEqual({
+      index: 1,
+      isGenerated: false,
+      startSeconds: null,
+      sentences: [],
+    });
+  });
+
+  // The playlist truncates at the first gap, so a Chunk past it isn't on the timeline
+  // yet however complete its own audio is - its startSeconds isn't knowable.
+  test('leaves a generated Chunk past a gap off the timeline', () => {
+    const manifest = buildBookManifest({
+      chunks: [TWO_SENTENCE_TEXT, TWO_SENTENCE_TEXT, TWO_SENTENCE_TEXT],
+      chunkAudio: [generated(5), undefined, generated(4, { index: 2 })],
+    });
+
+    expect(manifest.chunks[2]).toMatchObject({
+      index: 2,
+      isGenerated: true,
+      startSeconds: null,
+      sentences: [],
+    });
+  });
+
+  // Same rule the playlist applies: a Chunk cached before durationSeconds existed can't be
+  // placed, and nothing after it can be either. It is reported ungenerated so the client
+  // requests it again, which is what repairs the stored metadata (see ticket 02).
+  test('reports a Chunk with no usable duration as not generated', () => {
+    const manifest = buildBookManifest({
+      chunks: [TWO_SENTENCE_TEXT, TWO_SENTENCE_TEXT],
+      chunkAudio: [{ url: 'a', boundaries: twoSentenceBoundaries }, generated(4, { index: 1 })],
+    });
+
+    expect(manifest.chunks[0]).toEqual({
+      index: 0,
+      isGenerated: false,
+      startSeconds: null,
+      sentences: [],
+    });
+    expect(manifest.chunks[1].startSeconds).toBeNull();
+  });
+
+  // A Book is opened before any of it has been narrated; that's an empty manifest,
+  // not an error.
+  test('returns an entry per Chunk, with no Sentence spans, for a Book with nothing generated', () => {
+    const manifest = buildBookManifest({
+      chunks: [TWO_SENTENCE_TEXT, TWO_SENTENCE_TEXT],
+      chunkAudio: [undefined, undefined],
+    });
+
+    expect(manifest.chunks).toEqual([
+      { index: 0, isGenerated: false, startSeconds: null, sentences: [] },
+      { index: 1, isGenerated: false, startSeconds: null, sentences: [] },
+    ]);
+  });
+
+  test('returns no Chunks for a Book with no text', () => {
+    expect(buildBookManifest({ chunks: [], chunkAudio: [] })).toEqual({ chunks: [] });
+  });
+});
