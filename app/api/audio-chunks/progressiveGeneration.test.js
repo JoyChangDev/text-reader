@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { buildMp3Frames, MP3_FRAME_DURATION_SECONDS } from '@/app/_lib/mp3Frames.fixture';
+
 // Fake the two external dependencies (object storage, edge-tts) at the lowest level so
 // this test exercises the real chunking + Audio Generation Service + both API routes
 // end-to-end, without a real network call or real Vercel Blob storage.
@@ -14,15 +16,26 @@ vi.mock('@vercel/blob', () => ({
       return null;
     }
     // blobStorageClient.js wraps this in `new Response(result.stream)`, which accepts a
-    // plain string body just as well as a real stream.
+    // plain string or byte body just as well as a real stream.
     return { stream: blobStore.get(pathname) };
   },
   async put(pathname, data) {
-    const content = typeof data === 'string' ? data : await data.text();
+    // Audio is kept as bytes rather than text: the duration measurement reads it back, and
+    // decoding MP3 frames as UTF-8 would not round-trip.
+    const content = typeof data === 'string' ? data : new Uint8Array(await data.arrayBuffer());
     blobStore.set(pathname, content);
     return { url: `https://blob.test/${pathname}` };
   },
 }));
+
+// The fake's audio has to be real MP3 frames, because the generation path now measures its
+// duration and an unmeasurable Chunk is treated as uncacheable. See app/_lib/mp3Frames.js.
+const FRAME_COUNT = 20;
+const MP3_DURATION_SECONDS = FRAME_COUNT * MP3_FRAME_DURATION_SECONDS;
+
+function fakeMp3Bytes() {
+  return buildMp3Frames(FRAME_COUNT);
+}
 
 vi.mock('edge-tts-universal', () => ({
   EdgeTTS: class {
@@ -33,7 +46,7 @@ vi.mock('edge-tts-universal', () => ({
     async synthesize() {
       synthesizeCalls.push({ text: this.text, voice: this.voice });
       return {
-        audio: new Blob([`audio-for:${this.text}`]),
+        audio: new Blob([fakeMp3Bytes()]),
         subtitle: [{ text: this.text, offset: 0, duration: 1000 }],
       };
     }
@@ -128,6 +141,37 @@ describe('progressive generation orchestration', () => {
 
     expect(secondResult).toEqual(firstResult);
     expect(synthesizeCalls).toHaveLength(1);
+  });
+
+  test('a chunk cached before durationSeconds existed is repaired from its stored audio', async () => {
+    const bookId = 'book-legacy';
+    const text = '這是唯一的一句話。';
+    const { chunks } = await (await postChunks(jsonRequest({ text }))).json();
+    // Seed the store the way a pre-ticket-02 run left it: audio plus metadata with no
+    // durationSeconds.
+    const key = `${bookId}/0/zh-TW-HsiaoChenNeural`;
+    blobStore.set(`${key}.mp3`, fakeMp3Bytes());
+    blobStore.set(
+      `${key}.json`,
+      JSON.stringify({
+        url: `https://blob.test/${key}.mp3`,
+        boundaries: [{ text: chunks[0], offset: 0, duration: 1000 }],
+      }),
+    );
+
+    const response = await postAudioChunk(
+      jsonRequest({ bookId, chunkIndex: 0, text: chunks[0], voice: 'zh-TW-HsiaoChenNeural' }),
+    );
+    const result = await response.json();
+
+    // Measured from the audio already in storage, not resynthesized, and written back so the
+    // next read is a plain cache hit.
+    expect(synthesizeCalls).toHaveLength(0);
+    expect(result.durationSeconds).toBeCloseTo(MP3_DURATION_SECONDS, 10);
+    expect(JSON.parse(blobStore.get(`${key}.json`)).durationSeconds).toBeCloseTo(
+      MP3_DURATION_SECONDS,
+      10,
+    );
   });
 
   test('two different books do not share a cached chunk at the same index', async () => {

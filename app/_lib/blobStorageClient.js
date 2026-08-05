@@ -24,13 +24,25 @@ export function createBlobStorageClient({ token } = {}) {
       return JSON.parse(metadataText);
     },
 
-    async put(key, { audio, boundaries }) {
+    async put(key, { audio, boundaries, durationSeconds }) {
       const audioBlob = await put(audioPathname(key), audio, putOptions('audio/mpeg'));
-      const persisted = { url: audioBlob.url, boundaries };
+      const persisted = { url: audioBlob.url, boundaries, durationSeconds };
 
       await put(metadataPathname(key), JSON.stringify(persisted), putOptions('application/json'));
 
       return persisted;
+    },
+
+    // Reads back the raw MP3 bytes already stored under key, for the lazy-remeasurement
+    // path in audioGenerationService.js — a cache hit predating durationSeconds needs
+    // the original audio to measure without resynthesizing it.
+    async getAudioBytes(key) {
+      const result = await get(audioPathname(key), { access: 'public', token });
+      if (!result) {
+        return undefined;
+      }
+
+      return new Response(result.stream).arrayBuffer();
     },
 
     // A generic counterpart to get() for callers that only need to persist plain JSON

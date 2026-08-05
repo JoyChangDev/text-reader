@@ -1,8 +1,26 @@
 import { createBlobStorageClient } from './blobStorageClient';
 import { createEdgeTtsClient } from './edgeTtsClient';
+import { measureMp3Duration } from './mp3Frames';
 
 function cacheKey({ bookId, chunkIndex, voice }) {
   return `${bookId}/${chunkIndex}/${voice}`;
+}
+
+// Chunks cached before ticket 02 added durationSeconds are repaired in place by re-measuring
+// the stored MP3: cheaper and more faithful than resynthesizing (edge-tts isn't guaranteed to
+// reproduce identical bytes), and it leaves the cached audio untouched. A missing or
+// unmeasurable blob returns undefined rather than persisting a zero — a stored zero would be
+// permanent and would silently become #EXTINF:0 — and the caller regenerates the Chunk instead.
+async function repairCachedDuration(storageClient, key, cached) {
+  const audioBytes = await storageClient.getAudioBytes(key);
+  const durationSeconds = audioBytes ? measureMp3Duration(audioBytes) : 0;
+  if (durationSeconds <= 0) {
+    return undefined;
+  }
+
+  const repaired = { ...cached, durationSeconds };
+  await storageClient.putJson(key, repaired);
+  return repaired;
 }
 
 // The one seam between the app and its two external dependencies (edge-tts, object
@@ -16,12 +34,25 @@ export async function getOrGenerateAudio(
   const key = cacheKey({ bookId, chunkIndex, voice });
 
   const cached = await storageClient.get(key);
-  if (cached) {
+  // > 0 rather than !== undefined, so a Chunk cached before durationSeconds existed and one
+  // whose stored duration is unusable take the same repair path instead of the second kind
+  // reaching playlist generation.
+  if (cached?.durationSeconds > 0) {
     return cached;
   }
 
+  if (cached) {
+    const repaired = await repairCachedDuration(storageClient, key, cached);
+    if (repaired) {
+      return repaired;
+    }
+    // Falls through: the cached audio is missing or unmeasurable, so the entry can't back a
+    // playlist entry and regenerating overwrites both blobs.
+  }
+
   const generated = await ttsClient.synthesize(text, voice);
-  return storageClient.put(key, generated);
+  const durationSeconds = measureMp3Duration(await generated.audio.arrayBuffer());
+  return storageClient.put(key, { ...generated, durationSeconds });
 }
 
 const defaultClients = {
