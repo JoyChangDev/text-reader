@@ -66,18 +66,29 @@ describe('AudioPlayer', () => {
     vi.restoreAllMocks();
   });
 
-  test('fetches a look-ahead buffer, plays chunks in order, and supports play/pause', async () => {
+  test('plays the Book from one element pointed at its playlist, and supports play/pause', async () => {
     render(
       <ChakraProvider>
         <AudioPlayer bookId="book-1" chunks={chunks} />
       </ChakraProvider>,
     );
 
-    // Look-ahead window (current + 2) is requested up front, not the whole book.
-    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
+    // Generation still runs Chunk by Chunk through /api/audio-chunks - that is what makes
+    // the playlist grow - and this Book is shorter than the look-ahead window.
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(4));
     expect(audioChunkFetchCalls().map(([, init]) => JSON.parse(init.body).chunkIndex)).toEqual([
-      0, 1, 2,
+      0, 1, 2, 3,
     ]);
+
+    // One source for the whole Book, not one file per Chunk: the element is pointed at
+    // the (Book, voice) playlist and the media stack moves between segments itself.
+    const audioEl = screen.getByTestId('audio-element');
+    expect(audioEl.src).toContain('/api/books/book-1/playlist.m3u8');
+    expect(audioEl.src).toContain('voice=zh-TW-HsiaoChenNeural');
+    expect(screen.queryByTestId('audio-element-standby')).not.toBeInTheDocument();
+    // `crossorigin` would impose a CORS requirement on segment responses that nothing
+    // here needs - no <track src>, nothing reading the audio data (see ticket 04).
+    expect(audioEl).not.toHaveAttribute('crossorigin');
 
     const playButton = await screen.findByRole('button', { name: /^播放$/i });
     expect(playButton).toBeEnabled();
@@ -86,24 +97,6 @@ describe('AudioPlayer', () => {
     await waitFor(() => expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole('button', { name: /暫停/i })).toBeInTheDocument();
 
-    const audioEl = screen.getByTestId('audio-element');
-    expect(audioEl.src).toBe('https://blob.test/0');
-
-    // Chunk 1's audio was already buffered into the standby element ahead of time
-    // (see ticket 05) - finishing chunk 0 swaps to it directly instead of assigning a
-    // fresh, cold src.
-    const standbyEl = screen.getByTestId('audio-element-standby');
-    await waitFor(() => expect(standbyEl.src).toBe('https://blob.test/1'));
-
-    // Finishing chunk 0 advances to chunk 1 and tops up the look-ahead buffer (chunk 3).
-    fireEvent.ended(audioEl);
-
-    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(4));
-    expect(JSON.parse(audioChunkFetchCalls()[3][1].body).chunkIndex).toBe(3);
-    // Still the same src it was preloaded with - no fresh load happened at swap time.
-    expect(standbyEl.src).toBe('https://blob.test/1');
-    expect(standbyEl).toHaveAttribute('data-active', 'true');
-
     const pauseButton = screen.getByRole('button', { name: /暫停/i });
     fireEvent.click(pauseButton);
 
@@ -111,39 +104,30 @@ describe('AudioPlayer', () => {
     expect(await screen.findByRole('button', { name: /^播放$/i })).toBeInTheDocument();
   });
 
-  test('stops signalling as playing if the chunk lined up next already failed to generate', async () => {
-    const twoChunks = ['第一段。', '第二段。'];
-    mockAudioChunkFetch(({ body }) => {
-      const { chunkIndex } = JSON.parse(body);
-      if (chunkIndex === 1) {
-        return new Response(JSON.stringify({ error: 'boom' }), { status: 502 });
-      }
-      return new Response(
-        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
-        { status: 200 },
-      );
-    });
-
+  // The whole point of the phase: a second .play() on a freshly-loaded element is what
+  // fails in the background (ADR 0003), so no boundary may ever need one. Playback here
+  // runs the length of several Chunks without the Listener touching anything.
+  test('calls play() exactly once across a Book that crosses several Chunk boundaries', async () => {
     render(
       <ChakraProvider>
-        <AudioPlayer bookId="book-err" chunks={twoChunks} />
+        <AudioPlayer bookId="book-continuous" chunks={chunks} />
       </ChakraProvider>,
     );
 
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(4));
+    fireEvent.click(await screen.findByRole('button', { name: /^播放$/i }));
     await screen.findByRole('button', { name: /暫停/i });
 
     const audioEl = screen.getByTestId('audio-element');
-    fireEvent.ended(audioEl);
+    // ~12s per Chunk, so this walks the continuous timeline across four of them. Nothing
+    // in the app reacts to a Chunk ending, because nothing is told about one.
+    for (let seconds = 1; seconds <= 48; seconds += 1) {
+      audioEl.currentTime = seconds;
+      fireEvent.timeUpdate(audioEl);
+    }
 
-    // Chunk 1 (fetched ahead of time) came back as an error, not ready - rather
-    // than silently stalling with Pause still showing, playback stops signalling
-    // as active and a visible error + retry control take over (ticket 08).
-    expect(await screen.findByRole('alert')).toHaveTextContent(/語音產生失敗/i);
-    expect(screen.getByRole('button', { name: /重試/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^播放$/i })).not.toBeInTheDocument();
     expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: /暫停/i })).toBeInTheDocument();
   });
 
   test('resumes at a given initialIndex without requesting earlier chunks', async () => {
@@ -153,8 +137,8 @@ describe('AudioPlayer', () => {
       </ChakraProvider>,
     );
 
-    // Look-ahead from index 2 (current + 2) covers chunks 2 and 3 only - chunks
-    // 0 and 1 were already heard in an earlier session and are never requested.
+    // Look-ahead runs forward from index 2 - chunks 0 and 1 were already heard in an
+    // earlier session and are never requested.
     await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(2));
     expect(audioChunkFetchCalls().map(([, init]) => JSON.parse(init.body).chunkIndex)).toEqual([
       2, 3,
@@ -195,7 +179,7 @@ describe('AudioPlayer', () => {
     expect(await screen.findByRole('button', { name: /^播放$/i })).toBeEnabled();
   });
 
-  test('a failed look-ahead chunk does not block unrelated cached chunks, and retrying it resumes playback without losing position', async () => {
+  test('a failed chunk does not block unrelated cached chunks, and moving onto it regenerates it without a second play()', async () => {
     const threeChunks = ['第一段。', '第二段。', '第三段。'];
     let chunk1Attempts = 0;
     mockAudioChunkFetch(({ body }) => {
@@ -227,20 +211,18 @@ describe('AudioPlayer', () => {
     const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /暫停/i });
+    fireEvent.click(screen.getByRole('button', { name: /暫停/i }));
+    await screen.findByRole('button', { name: /^播放$/i });
 
-    const audioEl = screen.getByTestId('audio-element');
-    fireEvent.ended(audioEl);
-
-    // Advanced to the errored chunk 1 - position moves forward, error surfaces.
-    const retryButton = await screen.findByRole('button', { name: /重試/i });
-
-    fireEvent.click(retryButton);
+    // Moving the reading position onto the failed chunk regenerates it (Sentence clicks
+    // are ignored while playing - see the playback lock).
+    fireEvent.click(screen.getByTestId('sentence-1-0'));
 
     await waitFor(() => expect(chunk1Attempts).toBe(2));
-    // Retry succeeded and playback resumed on its own - the reader was already
-    // mid-playback, so a successful retry shouldn't require a second Play click.
-    await waitFor(() => expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2));
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    // Regenerating doesn't restart the element: the source is the Book's playlist, which
+    // the media stack re-fetches on its own once the Chunk lands in it.
+    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
   });
 
   test('calls onBackToLibrary when the reader asks to switch books', async () => {
@@ -293,18 +275,20 @@ describe('AudioPlayer voice selection', () => {
         .getAllByRole('radio')
         .map((radio) => radio.value),
     ).toEqual(['zh-TW-HsiaoChenNeural', 'zh-TW-YunJheNeural', 'zh-TW-HsiaoYuNeural']);
-    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(4));
     expect(JSON.parse(audioChunkFetchCalls()[0][1].body).voice).toBe('zh-TW-HsiaoChenNeural');
   });
 
-  test('changing the voice persists it and applies to subsequently fetched chunks only', async () => {
+  test('changing the voice re-points the playlist and applies to subsequently fetched chunks only', async () => {
+    // Longer than the look-ahead window, so chunks are left for the new voice to fetch.
+    const longBook = Array.from({ length: 15 }, (unused, index) => `第${index}段。`);
     render(
       <ChakraProvider>
-        <AudioPlayer bookId="book-1" chunks={chunks} />
+        <AudioPlayer bookId="book-1" chunks={longBook} />
       </ChakraProvider>,
     );
 
-    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(11));
     openSettings();
 
     fireEvent.click(
@@ -315,17 +299,23 @@ describe('AudioPlayer voice selection', () => {
 
     expect(getListenerSettings().voice).toBe('zh-TW-YunJheNeural');
 
-    // Chunk 3 finishes playing chunk 0 and is topped up next - it's the first
-    // request made after the voice change, so it's the first to use it.
+    // A voice change is the one thing that legitimately re-points the element's source,
+    // since the playlist is per (Book, voice) - see ticket 04.
     const audioEl = screen.getByTestId('audio-element');
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-    fireEvent.ended(audioEl);
+    await waitFor(() => expect(audioEl.src).toContain('voice=zh-TW-YunJheNeural'));
 
-    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(4));
-    const lastCallBody = JSON.parse(audioChunkFetchCalls()[3][1].body);
-    expect(lastCallBody).toMatchObject({ chunkIndex: 3, voice: 'zh-TW-YunJheNeural' });
+    // Chunks 13 and 14 were outside the look-ahead window at mount, so they are the
+    // first requests made after the voice change - and the first to use it. Chunks
+    // already generated under the old voice are left exactly as they are.
+    const callsBeforeChange = audioChunkFetchCalls().length;
+    fireEvent.click(screen.getByTestId('sentence-13-0'));
+
+    await waitFor(() => expect(audioChunkFetchCalls().length).toBeGreaterThan(callsBeforeChange));
+    const bodiesAfterChange = audioChunkFetchCalls()
+      .slice(callsBeforeChange)
+      .map(([, init]) => JSON.parse(init.body));
+    expect(bodiesAfterChange.map(({ chunkIndex }) => chunkIndex)).toContain(13);
+    bodiesAfterChange.forEach((body) => expect(body.voice).toBe('zh-TW-YunJheNeural'));
   });
 });
 
@@ -373,7 +363,7 @@ describe('AudioPlayer playback speed', () => {
       </ChakraProvider>,
     );
 
-    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(4));
     const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /暫停/i });
@@ -390,17 +380,16 @@ describe('AudioPlayer playback speed', () => {
     expect(getListenerSettings().speed).toBe(1.5);
   });
 
-  test('a selected speed carries over to the next chunk loaded within the same session', async () => {
+  // Loading a source resets playbackRate to its default, and a voice change is the one
+  // thing that loads a new one - so the selected speed has to be re-applied with it.
+  test('a selected speed survives the voice change that re-points the playlist', async () => {
     render(
       <ChakraProvider>
         <AudioPlayer bookId="book-speed-3" chunks={chunks} />
       </ChakraProvider>,
     );
 
-    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(4));
     openSettings();
 
     fireEvent.click(
@@ -408,15 +397,15 @@ describe('AudioPlayer playback speed', () => {
         name: '2x',
       }),
     );
+    fireEvent.click(
+      within(screen.getByRole('radiogroup', { name: /朗讀聲音/i })).getByRole('radio', {
+        name: 'Yun-Jhe',
+      }),
+    );
 
     const audioEl = screen.getByTestId('audio-element');
-    fireEvent.ended(audioEl);
-
-    // Chunk 1 swapped onto the standby element (see ticket 05) - it's the one actually
-    // playing now, so it's the one that must carry the selected speed.
-    const activeEl = screen.getByTestId('audio-element-standby');
-    await waitFor(() => expect(activeEl).toHaveAttribute('data-active', 'true'));
-    await waitFor(() => expect(activeEl.playbackRate).toBe(2));
+    await waitFor(() => expect(audioEl.src).toContain('voice=zh-TW-YunJheNeural'));
+    expect(audioEl.playbackRate).toBe(2);
   });
 });
 
@@ -454,7 +443,11 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     vi.restoreAllMocks();
   });
 
-  test('highlights the sentence containing the current playback time and auto-scrolls to it', async () => {
+  // Highlighting the Sentence that is actually playing needs absolute cue times, which
+  // ticket 05 brings in - the previous timeupdate-driven lookup is gone rather than left
+  // reading a Chunk-relative offset off a Book-wide clock. What survives here is the
+  // Listener-driven half: the selected Sentence is highlighted and scrolled to.
+  test('highlights and auto-scrolls to the selected sentence', async () => {
     render(
       <ChakraProvider>
         <AudioPlayer bookId="book-hl" chunks={twoSentenceChunks} />
@@ -462,13 +455,9 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     );
 
     await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(2));
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
+    await waitFor(() => expect(screen.getByRole('button', { name: /^播放$/i })).toBeEnabled());
 
-    const audioEl = screen.getByTestId('audio-element');
-    audioEl.currentTime = 1.5;
-    fireEvent.timeUpdate(audioEl);
+    fireEvent.click(screen.getByTestId('sentence-0-1'));
 
     await waitFor(() =>
       expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true'),
@@ -477,10 +466,37 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     expect(window.Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
+  // A Book-wide clock says nothing about which Sentence is playing until ticket 05's
+  // cues arrive - so it must not move the highlight, and above all must not overwrite
+  // the Listener's saved place with a Sentence it guessed.
+  test('does not move the highlight or the saved position as the clock advances', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-hl-2" chunks={twoSentenceChunks} initialSentenceIndex={1} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(2));
+    fireEvent.click(await screen.findByRole('button', { name: /^播放$/i }));
+    await screen.findByRole('button', { name: /暫停/i });
+    await waitFor(() =>
+      expect(libraryPatchCalls().map(([url]) => url)).toContain('/api/library/book-hl-2'),
+    );
+    const patchCallsBefore = libraryPatchCalls().length;
+
+    const audioEl = screen.getByTestId('audio-element');
+    audioEl.currentTime = 30;
+    fireEvent.timeUpdate(audioEl);
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true');
+    expect(libraryPatchCalls()).toHaveLength(patchCallsBefore);
+  });
+
   // Auto-scroll suspension on manual scroll is TranscriptView's own behavior,
   // unit-tested in isolation there (see ticket 07) - not re-asserted here.
 
-  test('clicking a sentence while paused highlights it and queues it without starting playback; pressing play then seeks and plays from there', async () => {
+  test('clicking a sentence while paused highlights it without starting playback; pressing play then starts', async () => {
     render(
       <ChakraProvider>
         <AudioPlayer bookId="book-seek" chunks={twoSentenceChunks} />
@@ -490,40 +506,34 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(2));
     await waitFor(() => expect(screen.getByRole('button', { name: /^播放$/i })).toBeEnabled());
 
-    const audioEl = screen.getByTestId('audio-element');
     fireEvent.click(screen.getByTestId('sentence-0-1'));
 
-    // Selecting a sentence while paused only queues it (see ticket 02) - the highlight
-    // updates immediately, but nothing plays until Play is pressed.
+    // Selecting a sentence while paused only marks the reading position (see phase 1.5
+    // ticket 02) - nothing plays until Play is pressed. Moving audio.currentTime to that
+    // Sentence is ticket 05's job: a Sentence's offset is relative to its own Chunk, and
+    // this element's timeline runs across the whole Book.
     expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true');
-    expect(audioEl.currentTime).toBe(0);
     expect(screen.getByRole('button', { name: /^播放$/i })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /^播放$/i }));
 
-    await waitFor(() => expect(audioEl.currentTime).toBe(1));
     expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true');
     expect(await screen.findByRole('button', { name: /暫停/i })).toBeInTheDocument();
+    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
   });
 
-  test('clicking a sentence in a not-yet-generated chunk generates only that chunk - not the ones skipped over - then seeks there once play is pressed', async () => {
-    const eightChunks = [
-      '第一段。',
-      '第二段。',
-      '第三段。',
-      '第四段。',
-      '第五段。',
-      '第六段。',
-      '第七段之一。第七段之二。',
-      '第八段。',
-    ];
+  test('clicking a sentence in a not-yet-generated chunk generates only that chunk, not the ones skipped over', async () => {
+    // Longer than the look-ahead window, so chunk 15 is genuinely outside it.
+    const longBook = Array.from({ length: 20 }, (unused, index) =>
+      index === 15 ? '第十六段之一。第十六段之二。' : `第${index}段。`,
+    );
     mockAudioChunkFetch(({ body }) => {
       const { chunkIndex } = JSON.parse(body);
       const boundaries =
-        chunkIndex === 6
+        chunkIndex === 15
           ? [
-              { text: '第七段之一', offset: 0, duration: 10_000_000 },
-              { text: '第七段之二', offset: 10_000_000, duration: 10_000_000 },
+              { text: '第十六段之一', offset: 0, duration: 10_000_000 },
+              { text: '第十六段之二', offset: 10_000_000, duration: 10_000_000 },
             ]
           : [];
       return new Response(JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries }), {
@@ -533,39 +543,26 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
 
     render(
       <ChakraProvider>
-        <AudioPlayer bookId="book-jump" chunks={eightChunks} />
+        <AudioPlayer bookId="book-jump" chunks={longBook} />
       </ChakraProvider>,
     );
 
-    // Initial look-ahead from chunk 0 covers chunks 0-2 only.
-    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
+    // Initial look-ahead from chunk 0 covers chunks 0-10 only.
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(11));
 
-    fireEvent.click(screen.getByTestId('sentence-6-1'));
+    fireEvent.click(screen.getByTestId('sentence-15-1'));
 
     await waitFor(() =>
-      expect(screen.getByTestId('sentence-6-1')).toHaveAttribute('data-active', 'true'),
+      expect(screen.getByTestId('sentence-15-1')).toHaveAttribute('data-active', 'true'),
     );
 
     const requestedChunkIndexes = () =>
       audioChunkFetchCalls().map(([, init]) => JSON.parse(init.body).chunkIndex);
-    await waitFor(() => expect(requestedChunkIndexes()).toContain(6));
-    expect(requestedChunkIndexes().filter((index) => index === 6)).toHaveLength(1);
-    // Chunks 3, 4, and 5 sat between the initial look-ahead and the jump target - jumping
-    // ahead must not force generating any of them.
-    expect(requestedChunkIndexes()).not.toEqual(expect.arrayContaining([3, 4, 5]));
-
-    // The highlight is already queued on the selected sentence, but nothing has played
-    // yet - clicking a sentence only sets up where the next play will start (ticket 02).
-    expect(screen.getByTestId('sentence-6-1')).toHaveAttribute('data-active', 'true');
-    const audioEl = screen.getByTestId('audio-element');
-    expect(audioEl.currentTime).toBe(0);
-
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    await waitFor(() => expect(playButton).toBeEnabled());
-    fireEvent.click(playButton);
-
-    await waitFor(() => expect(audioEl.currentTime).toBe(1));
-    expect(await screen.findByTestId('sentence-6-1')).toHaveAttribute('data-active', 'true');
+    await waitFor(() => expect(requestedChunkIndexes()).toContain(15));
+    expect(requestedChunkIndexes().filter((index) => index === 15)).toHaveLength(1);
+    // Chunks 11-14 sat between the initial look-ahead and the jump target - jumping
+    // ahead must not force generating any of them first.
+    expect(requestedChunkIndexes().filter((index) => index >= 11 && index <= 14)).toEqual([]);
   });
 });
 
@@ -665,7 +662,7 @@ describe('AudioPlayer playback lock', () => {
     expect(audioEl.currentTime).toBe(0);
   });
 
-  test('clicking a different sentence in the already-loaded chunk while paused seeks immediately, without resuming playback', async () => {
+  test('clicking a different sentence while paused moves the highlight without resuming playback', async () => {
     render(
       <ChakraProvider>
         <AudioPlayer bookId="book-lock-3" chunks={twoSentenceChunks} />
@@ -679,148 +676,17 @@ describe('AudioPlayer playback lock', () => {
     fireEvent.click(screen.getByRole('button', { name: /暫停/i }));
     await screen.findByRole('button', { name: /^播放$/i });
 
-    const audioEl = screen.getByTestId('audio-element');
     fireEvent.click(screen.getByTestId('sentence-0-1'));
 
-    // The chunk was already loaded (it had started playing before the pause), so the
-    // seek applies to audio.currentTime immediately - but it still doesn't resume
-    // playback on its own (see ticket 02, the alreadyLoaded branch of seekToSentence).
-    expect(audioEl.currentTime).toBe(1);
+    // Selecting a Sentence never resumes playback on its own (see phase 1.5 ticket 02).
     expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true');
     expect(screen.getByRole('button', { name: /^播放$/i })).toBeInTheDocument();
+    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole('button', { name: /^播放$/i }));
 
     expect(await screen.findByRole('button', { name: /暫停/i })).toBeInTheDocument();
-    expect(audioEl.currentTime).toBe(1);
-  });
-});
-
-describe('AudioPlayer chunk-to-chunk audio preloading', () => {
-  beforeEach(() => {
-    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
-    window.HTMLMediaElement.prototype.pause = vi.fn();
-    window.Element.prototype.scrollIntoView = vi.fn();
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  test("buffers the next chunk's actual audio into the standby element as soon as it's ready, ahead of the current chunk ending", async () => {
-    mockAudioChunkFetch(({ body }) => {
-      const { chunkIndex } = JSON.parse(body);
-      return new Response(
-        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
-        { status: 200 },
-      );
-    });
-
-    render(
-      <ChakraProvider>
-        <AudioPlayer bookId="book-preload-1" chunks={chunks} />
-      </ChakraProvider>,
-    );
-
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-
-    // Buffered into the standby element while chunk 0 is still playing - not yet the
-    // active one.
-    const standbyEl = screen.getByTestId('audio-element-standby');
-    await waitFor(() => expect(standbyEl.src).toBe('https://blob.test/1'));
-    expect(standbyEl).not.toHaveAttribute('data-active');
-  });
-
-  test('advances to an already-buffered standby element without a fresh src assignment, then starts preloading the chunk after that', async () => {
-    mockAudioChunkFetch(({ body }) => {
-      const { chunkIndex } = JSON.parse(body);
-      return new Response(
-        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
-        { status: 200 },
-      );
-    });
-
-    render(
-      <ChakraProvider>
-        <AudioPlayer bookId="book-preload-2" chunks={chunks} />
-      </ChakraProvider>,
-    );
-
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-
-    const primaryEl = screen.getByTestId('audio-element');
-    const standbyEl = screen.getByTestId('audio-element-standby');
-    await waitFor(() => expect(standbyEl.src).toBe('https://blob.test/1'));
-    const preloadedSrc = standbyEl.src;
-
-    fireEvent.ended(primaryEl);
-
-    await waitFor(() => expect(standbyEl).toHaveAttribute('data-active', 'true'));
-    // Still exactly the src it was preloaded with - proves no fresh load happened at
-    // the moment of the swap.
-    expect(standbyEl.src).toBe(preloadedSrc);
-    expect(primaryEl).not.toHaveAttribute('data-active');
-    // The now-standby element (previously active) starts buffering chunk 2 in turn.
-    await waitFor(() => expect(primaryEl.src).toBe('https://blob.test/2'));
-  });
-
-  test("falls back to a cold load on the newly-current chunk when its audio wasn't buffered in time, preserving existing chunk-advancement behavior", async () => {
-    const resolvers = {};
-    mockAudioChunkFetch(
-      ({ body }) =>
-        new Promise((resolve) => {
-          const { chunkIndex } = JSON.parse(body);
-          resolvers[chunkIndex] = resolve;
-        }),
-    );
-
-    render(
-      <ChakraProvider>
-        <AudioPlayer bookId="book-preload-3" chunks={chunks} />
-      </ChakraProvider>,
-    );
-
-    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(3));
-    resolvers[0](
-      new Response(JSON.stringify({ url: 'https://blob.test/0', boundaries: [] }), {
-        status: 200,
-      }),
-    );
-
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-
-    const primaryEl = screen.getByTestId('audio-element');
-    const standbyEl = screen.getByTestId('audio-element-standby');
-    // Chunk 1's request is still in flight - nothing buffered into standby yet.
-    expect(standbyEl).not.toHaveAttribute('src');
-
-    fireEvent.ended(primaryEl);
-
-    // No swap happened (nothing was buffered) - the primary element stays "active".
-    expect(primaryEl).toHaveAttribute('data-active', 'true');
-    // Advancing to chunk 1 tops up the look-ahead buffer with chunk 3, proving the
-    // position moved forward even without a standby swap.
-    await waitFor(() =>
-      expect(audioChunkFetchCalls().map(([, init]) => JSON.parse(init.body).chunkIndex)).toContain(
-        3,
-      ),
-    );
-
-    resolvers[1](
-      new Response(JSON.stringify({ url: 'https://blob.test/1', boundaries: [] }), {
-        status: 200,
-      }),
-    );
-
-    // Falls back to the normal cold-load path, unchanged from before this ticket, once
-    // chunk 1's audio finally becomes ready.
-    await waitFor(() => expect(primaryEl.src).toBe('https://blob.test/1'));
+    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -843,7 +709,7 @@ describe('AudioPlayer resume-index persistence', () => {
     vi.restoreAllMocks();
   });
 
-  test('persists the current chunk and sentence index together to the library as the book advances', async () => {
+  test('persists the current chunk and sentence index together to the library as the reading position moves', async () => {
     render(
       <ChakraProvider>
         <AudioPlayer bookId="book-persist" chunks={chunks} />
@@ -858,10 +724,7 @@ describe('AudioPlayer resume-index persistence', () => {
       resumeSentenceIndex: 0,
     });
 
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-    fireEvent.ended(screen.getByTestId('audio-element'));
+    fireEvent.click(screen.getByTestId('sentence-1-0'));
 
     await waitFor(() =>
       expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
@@ -890,38 +753,25 @@ describe('AudioPlayer resume-index persistence', () => {
     );
   });
 
-  test('natural playback advancing the active Sentence persists the new Sentence position', async () => {
-    const boundaries = [
-      { text: '第一句', offset: 0, duration: 10_000_000 },
-      { text: '第二句', offset: 10_000_000, duration: 10_000_000 },
-    ];
-    mockAudioChunkFetch(({ body }) => {
-      const { chunkIndex } = JSON.parse(body);
-      return new Response(JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries }), {
-        status: 200,
-      });
-    });
-
+  // Until ticket 05's cues advance the Sentence on their own, the debounced path is
+  // exercised by the write every Book makes when it opens.
+  test('debounces the position write a Book makes when it opens', async () => {
     render(
       <ChakraProvider>
-        <AudioPlayer bookId="book-persist-tick" chunks={['第一句。第二句。']} />
+        <AudioPlayer bookId="book-persist-debounce" chunks={chunks} initialIndex={1} />
       </ChakraProvider>,
     );
 
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-
-    const audioEl = screen.getByTestId('audio-element');
-    audioEl.currentTime = 1.5;
-    fireEvent.timeUpdate(audioEl);
+    // Nothing goes out synchronously with the mount - the write is scheduled, not sent.
+    expect(libraryPatchCalls()).toHaveLength(0);
 
     await waitFor(() =>
       expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
-        resumeIndex: 0,
-        resumeSentenceIndex: 1,
+        resumeIndex: 1,
+        resumeSentenceIndex: 0,
       }),
     );
+    expect(libraryPatchCalls()).toHaveLength(1);
   });
 
   test('scrolling the transcript and dragging the position slider never persist a reading position', async () => {
@@ -1003,7 +853,11 @@ describe('AudioPlayer resume-to-saved-sentence without autoplay', () => {
     expect(screen.getByRole('button', { name: /^播放$/i })).toBeInTheDocument();
   });
 
-  test('pressing play right after opening resumes exactly at the saved Sentence, not the start of its Chunk', async () => {
+  // Where the saved Sentence sits on the Book's continuous timeline is a cue time, which
+  // ticket 05 brings in - until then pressing play starts the playlist and keeps the
+  // saved Sentence highlighted, rather than seeking to a Chunk-relative offset that would
+  // land somewhere else entirely.
+  test('pressing play right after opening starts playback with the saved Sentence still selected', async () => {
     render(
       <ChakraProvider>
         <AudioPlayer
@@ -1018,8 +872,8 @@ describe('AudioPlayer resume-to-saved-sentence without autoplay', () => {
     const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
 
-    const audioEl = screen.getByTestId('audio-element');
-    await waitFor(() => expect(audioEl.currentTime).toBe(1));
+    expect(await screen.findByRole('button', { name: /暫停/i })).toBeInTheDocument();
+    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId('sentence-1-1')).toHaveAttribute('data-active', 'true');
   });
 });
@@ -1138,7 +992,10 @@ describe('AudioPlayer background/foreground resync', () => {
     expect(await screen.findByRole('button', { name: /^播放$/i })).toBeInTheDocument();
   });
 
-  test('returning to the foreground pauses a standby element that ended up playing, so the two never overlap', async () => {
+  // Nothing may call play() on the way back to the foreground: a background play() on a
+  // freshly-loaded element is the failure ADR 0003 identified, and with one continuous
+  // source there is nothing left that would need one.
+  test('never calls play() when returning to the foreground', async () => {
     render(
       <ChakraProvider>
         <AudioPlayer bookId="book-resync-2" chunks={twoSentenceChunks} />
@@ -1148,181 +1005,36 @@ describe('AudioPlayer background/foreground resync', () => {
     const playButton = await screen.findByRole('button', { name: /^播放$/i });
     fireEvent.click(playButton);
     await screen.findByRole('button', { name: /暫停/i });
+    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
 
-    // Per-instance spies (rather than the shared prototype mock) so this proves the
-    // *standby* element specifically gets paused, not just that pause() fired on
-    // whichever element - a regression pausing the active element instead would leave
-    // the prototype-level assertion equally green.
-    const activeEl = screen.getByTestId('audio-element');
-    const standbyEl = screen.getByTestId('audio-element-standby');
-    const activePause = vi.fn();
-    const standbyPause = vi.fn();
-    activeEl.pause = activePause;
-    standbyEl.pause = standbyPause;
-    Object.defineProperty(standbyEl, 'paused', { value: false, configurable: true });
+    const audioEl = screen.getByTestId('audio-element');
+    // Playing normally, just with its events throttled while hidden.
+    Object.defineProperty(audioEl, 'paused', { value: false, configurable: true });
+    Object.defineProperty(audioEl, 'ended', { value: false, configurable: true });
 
     setVisibilityState('hidden');
     setVisibilityState('visible');
+    fireEvent(window, new Event('focus'));
 
-    expect(standbyPause).toHaveBeenCalledTimes(1);
-    expect(activePause).not.toHaveBeenCalled();
+    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
   });
 
-  test('pressing play also pauses a standby element that was already (stray) playing, without needing a visibility change', async () => {
-    render(
-      <ChakraProvider>
-        <AudioPlayer bookId="book-resync-2b" chunks={twoSentenceChunks} />
-      </ChakraProvider>,
-    );
-
-    // Stray playback on the standby element, present from before Play is ever pressed -
-    // the load-and-play effect's own audio.play() calls must enforce the invariant too,
-    // not only the visibilitychange reconciliation checkpoint.
-    const standbyEl = screen.getByTestId('audio-element-standby');
-    const standbyPause = vi.fn();
-    standbyEl.pause = standbyPause;
-    Object.defineProperty(standbyEl, 'paused', { value: false, configurable: true });
-
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-
-    expect(standbyPause).toHaveBeenCalled();
-  });
-
-  test('returning to the foreground recomputes the highlighted sentence from currentTime, without a further timeupdate event', async () => {
+  test('returning to the foreground with the element genuinely playing corrects a stale Play button back to Pause', async () => {
     render(
       <ChakraProvider>
         <AudioPlayer bookId="book-resync-3" chunks={twoSentenceChunks} />
       </ChakraProvider>,
     );
 
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-
-    // Simulates timeupdate having been throttled while hidden: the element's own
-    // currentTime moved on to the second Sentence, but the highlight never followed.
-    const audioEl = screen.getByTestId('audio-element');
-    audioEl.currentTime = 1.5;
-
-    setVisibilityState('hidden');
-    setVisibilityState('visible');
-
-    await waitFor(() =>
-      expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true'),
-    );
-  });
-
-  test('returning to the foreground advances to the next chunk if the active element ended while hidden', async () => {
-    render(
-      <ChakraProvider>
-        <AudioPlayer bookId="book-resync-4" chunks={twoSentenceChunks} />
-      </ChakraProvider>,
-    );
-
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-
-    const standbyEl = screen.getByTestId('audio-element-standby');
-    await waitFor(() => expect(standbyEl.src).toBe('https://blob.test/1'));
-
-    // The active element reached the end while hidden, without its `ended` event ever
-    // being processed - standing in for a chunk boundary crossed entirely off-screen.
-    const audioEl = screen.getByTestId('audio-element');
-    Object.defineProperty(audioEl, 'ended', { value: true, configurable: true });
-
-    setVisibilityState('hidden');
-    setVisibilityState('visible');
-
-    // Chunk 1's audio (already preloaded into the standby element - see ticket 05)
-    // becomes active without a fresh src load, exactly as a live `ended` event would.
-    await waitFor(() => expect(standbyEl).toHaveAttribute('data-active', 'true'));
-    expect(standbyEl.src).toBe('https://blob.test/1');
-  });
-
-  test('retries a stalled .play() call whose currentTime never left 0 despite audio.paused reporting false', async () => {
-    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000);
-
-    render(
-      <ChakraProvider>
-        <AudioPlayer bookId="book-resync-5" chunks={chunks} />
-      </ChakraProvider>,
-    );
-
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-    await waitFor(() => expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1));
-
-    // Standing in for .play() flipping `paused` to false right as the OS suspended the
-    // tab before any real audio started - currentTime never moves off 0 (see Phase 1.9
-    // ticket 04, diagnosed from a real diagnostic-log capture showing exactly this).
-    const audioEl = screen.getByTestId('audio-element');
-    Object.defineProperty(audioEl, 'paused', { value: false, configurable: true });
-
-    nowSpy.mockReturnValue(1_000 + 2_000 + 1);
-    setVisibilityState('hidden');
-    setVisibilityState('visible');
-
-    await waitFor(() => expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(2));
-  });
-
-  test('does not retry a chunk that only just started, even if paused reports false with currentTime 0', async () => {
-    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000);
-
-    render(
-      <ChakraProvider>
-        <AudioPlayer bookId="book-resync-6" chunks={chunks} />
-      </ChakraProvider>,
-    );
-
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-    await waitFor(() => expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1));
+    await screen.findByRole('button', { name: /^播放$/i });
 
     const audioEl = screen.getByTestId('audio-element');
     Object.defineProperty(audioEl, 'paused', { value: false, configurable: true });
 
-    // Still well within the startup grace window - not enough time has passed to call
-    // this a stall yet.
-    nowSpy.mockReturnValue(1_000 + 500);
     setVisibilityState('hidden');
     setVisibilityState('visible');
 
-    // setVisibilityState dispatches synchronously, and the reconciliation checkpoint it
-    // triggers runs synchronously within that same dispatch - no further await needed.
-    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
-  });
-
-  test('does not treat genuine progress as a stall', async () => {
-    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000);
-
-    render(
-      <ChakraProvider>
-        <AudioPlayer bookId="book-resync-7" chunks={chunks} />
-      </ChakraProvider>,
-    );
-
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-    await waitFor(() => expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1));
-
-    const audioEl = screen.getByTestId('audio-element');
-    Object.defineProperty(audioEl, 'paused', { value: false, configurable: true });
-    // Genuinely progressed past 0 - not stalled, regardless of how long it's been.
-    Object.defineProperty(audioEl, 'currentTime', { value: 3.2, configurable: true });
-
-    nowSpy.mockReturnValue(1_000 + 10_000);
-    setVisibilityState('hidden');
-    setVisibilityState('visible');
-
-    // setVisibilityState dispatches synchronously, and the reconciliation checkpoint it
-    // triggers runs synchronously within that same dispatch - no further await needed.
-    expect(window.HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole('button', { name: /暫停/i })).toBeInTheDocument();
   });
 });
 
@@ -1353,49 +1065,34 @@ describe('AudioPlayer background flush of resume-position persistence', () => {
   test('backgrounding immediately flushes a pending debounced write, without waiting for the 400ms debounce', async () => {
     render(
       <ChakraProvider>
-        <AudioPlayer bookId="book-flush-1" chunks={twoSentenceChunks} />
+        <AudioPlayer bookId="book-flush-1" chunks={twoSentenceChunks} initialIndex={1} />
       </ChakraProvider>,
     );
 
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-
-    const audioEl = screen.getByTestId('audio-element');
-    audioEl.currentTime = 1.5;
-    fireEvent.timeUpdate(audioEl);
-
-    // Asserted synchronously, right after dispatching and before the 400ms debounce
-    // would otherwise have any chance to fire - proving this went through the
-    // immediate flush path, not the debounce.
+    // Asserted synchronously, before the 400ms debounce has any chance to fire - proving
+    // this went through the immediate flush path, not the debounce.
+    expect(libraryPatchCalls()).toHaveLength(0);
     setVisibilityState('hidden');
 
     expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
-      resumeIndex: 0,
-      resumeSentenceIndex: 1,
+      resumeIndex: 1,
+      resumeSentenceIndex: 0,
     });
   });
 
   test('pagehide triggers the same immediate flush, as a fallback for a killed process that skips visibilitychange', async () => {
     render(
       <ChakraProvider>
-        <AudioPlayer bookId="book-flush-2" chunks={twoSentenceChunks} />
+        <AudioPlayer bookId="book-flush-2" chunks={twoSentenceChunks} initialIndex={1} />
       </ChakraProvider>,
     );
 
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-
-    const audioEl = screen.getByTestId('audio-element');
-    audioEl.currentTime = 1.5;
-    fireEvent.timeUpdate(audioEl);
-
+    expect(libraryPatchCalls()).toHaveLength(0);
     fireEvent(window, new Event('pagehide'));
 
     expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
-      resumeIndex: 0,
-      resumeSentenceIndex: 1,
+      resumeIndex: 1,
+      resumeSentenceIndex: 0,
     });
   });
 
@@ -1406,18 +1103,10 @@ describe('AudioPlayer background flush of resume-position persistence', () => {
       </ChakraProvider>,
     );
 
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-
-    const audioEl = screen.getByTestId('audio-element');
-    audioEl.currentTime = 1.5;
-    fireEvent.timeUpdate(audioEl);
-
     await waitFor(() =>
       expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
         resumeIndex: 0,
-        resumeSentenceIndex: 1,
+        resumeSentenceIndex: 0,
       }),
     );
     const patchCallCountAfterDebounce = libraryPatchCalls().length;
@@ -1427,35 +1116,30 @@ describe('AudioPlayer background flush of resume-position persistence', () => {
     expect(libraryPatchCalls()).toHaveLength(patchCallCountAfterDebounce);
   });
 
-  test('ordinary foreground debounce/coalescing is unaffected - rapid successive advances still coalesce into one write', async () => {
+  // Coalescing rapid *automatic* Sentence advances is the debounce's real job, and
+  // nothing advances the Sentence on its own until ticket 05's cues do. What is testable
+  // here is the other half of the same contract: an explicit Sentence click bypasses the
+  // debounce entirely and persists at once.
+  test('an explicit Sentence click bypasses the debounce instead of coalescing into it', async () => {
     render(
       <ChakraProvider>
         <AudioPlayer bookId="book-flush-4" chunks={twoSentenceChunks} />
       </ChakraProvider>,
     );
 
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-
     await waitFor(() =>
       expect(libraryPatchCalls().map(([url]) => url)).toContain('/api/library/book-flush-4'),
     );
     const patchCallCountAfterMount = libraryPatchCalls().length;
 
-    const audioEl = screen.getByTestId('audio-element');
-    audioEl.currentTime = 1.5;
-    fireEvent.timeUpdate(audioEl);
-    audioEl.currentTime = 1.6;
-    fireEvent.timeUpdate(audioEl);
+    fireEvent.click(screen.getByTestId('sentence-0-1'));
 
-    await waitFor(() =>
-      expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
-        resumeIndex: 0,
-        resumeSentenceIndex: 1,
-      }),
-    );
+    // Synchronous, not after the 400ms debounce.
     expect(libraryPatchCalls()).toHaveLength(patchCallCountAfterMount + 1);
+    expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
+      resumeIndex: 0,
+      resumeSentenceIndex: 1,
+    });
   });
 });
 
@@ -1666,51 +1350,6 @@ describe('AudioPlayer background diagnostics logging', () => {
 
     const log = getDiagnosticLog();
     expect(log.some((entry) => entry.type === 'reconcile')).toBe(true);
-  });
-
-  test('logs both the from and to Sentence index when reconciliation corrects the highlight', async () => {
-    const twoSentenceChunks = ['第一句。第二句。'];
-    mockAudioChunkFetch(({ body }) => {
-      const { chunkIndex } = JSON.parse(body);
-      return new Response(
-        JSON.stringify({
-          url: `https://blob.test/${chunkIndex}`,
-          boundaries: [
-            { text: '第一句', offset: 0, duration: 10_000_000 },
-            { text: '第二句', offset: 10_000_000, duration: 10_000_000 },
-          ],
-        }),
-        { status: 200 },
-      );
-    });
-
-    render(
-      <ChakraProvider>
-        <AudioPlayer bookId="book-diagnostics-2b" chunks={twoSentenceChunks} />
-      </ChakraProvider>,
-    );
-    const playButton = await screen.findByRole('button', { name: /^播放$/i });
-    fireEvent.click(playButton);
-    await screen.findByRole('button', { name: /暫停/i });
-
-    // Simulates timeupdate having been throttled while hidden - the element's own
-    // currentTime moved on to the second Sentence, but the highlight never followed.
-    const audioEl = screen.getByTestId('audio-element');
-    audioEl.currentTime = 1.5;
-
-    setVisibilityState('hidden');
-    setVisibilityState('visible');
-
-    await waitFor(() =>
-      expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true'),
-    );
-
-    const log = getDiagnosticLog();
-    const correctionEntry = log.find(
-      (entry) => entry.type === 'reconcile' && entry.detail.sentenceIndexCorrectedTo === 1,
-    );
-    expect(correctionEntry).toBeDefined();
-    expect(correctionEntry.detail.sentenceIndexCorrectedFrom).toBe(0);
   });
 
   test('logs MediaSession registration outcome on mount', async () => {

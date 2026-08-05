@@ -12,10 +12,11 @@ import BackgroundDiagnosticsPanel from './BackgroundDiagnosticsPanel';
 import PlayerBar from './PlayerBar';
 import TranscriptView from './TranscriptView';
 
-// Sequential chunk player: plays one chunk at a time while a small look-ahead
-// buffer of upcoming chunks generates in the background (see useBookPlayer). Renders
-// the whole book's text via TranscriptView (scrollable, sentence highlighting/seeking)
-// with a persistent PlayerBar fixed at the bottom of the viewport (see ticket 07).
+// Continuous player: one <audio> element playing the Book's whole EVENT playlist, while
+// a look-ahead buffer of upcoming Chunks generates in the background and grows it (see
+// useBookPlayer). Renders the whole book's text via TranscriptView (scrollable, sentence
+// highlighting/seeking) with a persistent PlayerBar fixed at the bottom of the viewport
+// (see phase 1.5 ticket 07).
 export default function AudioPlayer({
   bookId,
   chunks,
@@ -27,9 +28,7 @@ export default function AudioPlayer({
   const [voice, setVoice] = useState(() => getListenerSettings().voice);
   const [speed, setSpeed] = useState(() => getListenerSettings().speed);
   const {
-    primaryAudioRef,
-    secondaryAudioRef,
-    activeIsPrimary,
+    audioRef,
     currentIndex,
     isPlaying,
     chunkAudio,
@@ -37,7 +36,6 @@ export default function AudioPlayer({
     play,
     pause,
     handleEnded,
-    handleTimeUpdate,
     seekToSentence,
     retryChunk,
   } = useBookPlayer({ bookId, chunks, initialIndex, initialSentenceIndex, voice, speed });
@@ -67,8 +65,10 @@ export default function AudioPlayer({
     transcriptRef.current?.seekToScrollPercent(percent);
   }, []);
 
-  // Prospective only: this only affects chunks fetched from here on - chunks already
-  // cached/generated under the previous voice keep playing as-is (see ticket 02).
+  // The playlist is per (Book, voice), so this re-points the element at a different one
+  // and restarts the Book - the reason the picker is locked while playing. Chunks already
+  // generated under the previous voice are left alone rather than regenerated: they are
+  // simply not in the new voice's playlist (see phase 1.5 ticket 02).
   const handleVoiceChange = useCallback((event) => {
     const nextVoice = event.target.value;
     setVoice(nextVoice);
@@ -145,25 +145,11 @@ export default function AudioPlayer({
         onToggleReportMode={handleToggleReportMode}
       />
       <BackgroundDiagnosticsPanel />
-      {/* A ping-pong pair, not one element per role: which one is "active" (playing) vs.
-          "standby" (preloading the next chunk in the background) flips over time as
-          chunks advance, rather than either element having a fixed role (see ticket 05). */}
-      <audio
-        ref={primaryAudioRef}
-        preload="auto"
-        onEnded={handleEnded}
-        onTimeUpdate={handleTimeUpdate}
-        data-testid="audio-element"
-        data-active={activeIsPrimary ? 'true' : undefined}
-      />
-      <audio
-        ref={secondaryAudioRef}
-        preload="auto"
-        onEnded={handleEnded}
-        onTimeUpdate={handleTimeUpdate}
-        data-testid="audio-element-standby"
-        data-active={activeIsPrimary ? undefined : 'true'}
-      />
+      {/* One element for the whole Book, pointed at its EVENT playlist by useBookPlayer.
+          Deliberately without `crossorigin`: nothing here reads the audio data or loads a
+          <track src>, so requiring CORS on segment responses would be a constraint the
+          design doesn't otherwise have (see ticket 04). */}
+      <audio ref={audioRef} preload="auto" onEnded={handleEnded} data-testid="audio-element" />
     </Box>
   );
 }
