@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { logDiagnosticEvent } from './backgroundDiagnostics';
 import { updateResumeIndex } from './bookLibrary';
 import { chunkFetchPlan } from './chunkFetchPlan';
+import { sentenceOrdinals } from './sentenceOrdinals';
 
 // Roughly two minutes of audio ahead of the anchor, at the ~12s Chunks ticket 01
 // measured on real edge-tts output. Raised from 2 because the media stack has to
@@ -14,12 +15,11 @@ import { chunkFetchPlan } from './chunkFetchPlan';
 // because the whole plan is requested in parallel, so the window is also the size of the
 // TTS burst a Book fires on open.
 //
-// The anchor is currentIndex, which nothing advances during playback until ticket 05's
-// cues do - segment advancement left the app, so nothing tells it a Chunk ended. Until
-// then this window is not a margin ahead of playback but the whole of what a listening
-// session generates, and a Book longer than it stops at the end of the generated region.
-// That is the one thing this ticket cannot deliver on its own; ticket 06 must re-check
-// the value once the anchor moves again.
+// The anchor is currentIndex, which ticket 05 made a function of the reading position -
+// so a cuechange moving into a later Chunk widens the generated region ahead of it, and
+// a Book longer than this window keeps generating instead of stopping at the end of the
+// opening burst. Ticket 06 is where this value gets checked against playback actually
+// catching up to a growing playlist.
 const LOOKAHEAD = 10;
 // Natural playback can advance the active sentence roughly every few seconds - this
 // coalesces those persistence writes into one trailing call instead of a network
@@ -32,6 +32,13 @@ const RESUME_PERSIST_DEBOUNCE_MS = 400;
 // own; nothing in this hook runs at a Chunk boundary.
 function playlistUrl(bookId, voice) {
   return `/api/books/${encodeURIComponent(bookId)}/playlist.m3u8?voice=${encodeURIComponent(voice)}`;
+}
+
+// The absolute Sentence times for the same (Book, voice), which become this element's
+// metadata cues (see ticket 03). It grows alongside the playlist, so it is re-read every
+// time a Chunk finishes generating.
+function manifestUrl(bookId, voice) {
+  return `/api/books/${encodeURIComponent(bookId)}/manifest?voice=${encodeURIComponent(voice)}`;
 }
 
 // Plays a Book as one continuous HLS source: the caller attaches `audioRef` to a single
@@ -52,21 +59,29 @@ export function useBookPlayer({
   speed = 1,
 }) {
   const [chunkAudio, setChunkAudio] = useState({});
-  const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [wantsToPlay, setWantsToPlay] = useState(false);
-  const [activeSentenceIndex, setActiveSentenceIndex] = useState(initialSentenceIndex);
   const audioRef = useRef(null);
   const pendingFetchesRef = useRef(new Set());
 
+  const ordinals = useMemo(() => sentenceOrdinals(chunks), [chunks]);
+
+  // The reading position, held as one Book-global Sentence ordinal because that is what
+  // a cue carries and what the Book-wide timeline is indexed by. The (Chunk, Sentence)
+  // pair everything outside this hook speaks in - TranscriptView's props, the library's
+  // stored resume position - is derived from it below, so neither of those had to change.
+  const [activeOrdinal, setActiveOrdinal] = useState(() =>
+    ordinals.toOrdinal(initialIndex, initialSentenceIndex),
+  );
+
+  // Deriving currentIndex here, rather than tracking it separately, is what restores an
+  // advancing look-ahead anchor: a cuechange moves the ordinal into a later Chunk and the
+  // look-ahead effect below follows it there. Nothing else tells this hook that playback
+  // moved on - segment advancement left the app in ticket 04 (see ADR 0003).
+  const { chunkIndex: currentIndex, sentenceIndex: activeSentenceIndex } =
+    ordinals.toChunkPosition(activeOrdinal);
+
   const currentStatus = chunkAudio[currentIndex]?.status;
 
-  // Nothing derives the playing Sentence from the clock any more. A Sentence's stored
-  // offsets are relative to its own Chunk, and this element's timeline now runs across
-  // the whole Book, so mapping one onto the other would not merely lag - it would name
-  // the wrong Sentence and then persist it as the Listener's saved place. Between this
-  // ticket and ticket 05, which brings absolute cue times, the highlight and the saved
-  // position move only when the Listener moves them.
-  //
   // A chunk that failed to generate should not keep showing Pause with nothing
   // happening (a visible error/retry surfaces instead - see AudioPlayer/PlayerBar).
   const isPlaying = wantsToPlay && currentStatus !== 'error';
@@ -121,6 +136,113 @@ export function useBookPlayer({
     plan.forEach((index) => fetchChunk(index));
   }, [chunks, currentIndex, chunkAudio, fetchChunk]);
 
+  // The metadata TextTrack every highlight comes from, built once per mount. Created
+  // programmatically rather than declared as a <track src>, because a <track>'s source is
+  // fetched once and this Book's cue set grows as Chunks generate - and because a
+  // cross-origin <track> would impose a CORS requirement the design otherwise avoids.
+  // Adding cues is plain JS, which ADR 0003 established stays reliable in the background;
+  // only .play() does not.
+  const trackRef = useRef(null);
+  // Which Chunks already have cues. The manifest always describes the whole Book so far,
+  // so every read but the first re-describes Chunks that are already on the track.
+  const cuedChunksRef = useRef(new Set());
+  // A Sentence the Listener has chosen that has no cue yet, so no time to seek to. Held
+  // until its Chunk reaches the timeline (see applySeek). A saved resume position starts
+  // life as one of these - opening a Book part-way through is the same problem, and until
+  // its cue arrives there is nothing to position the audio by. Ordinal 0 needs no seek:
+  // the element already starts there.
+  const pendingSeekRef = useRef(activeOrdinal || null);
+
+  // Moves the playhead to a Sentence, using its cue's start as the time - the one write
+  // to `audio.currentTime` in the codebase. Without a cue the Sentence isn't on the
+  // timeline yet, so the seek is parked rather than dropped, and retried each time cues
+  // arrive.
+  const applySeek = useCallback((ordinal) => {
+    const audio = audioRef.current;
+    const cue = trackRef.current?.cues?.getCueById(String(ordinal));
+    if (!audio || !cue) {
+      pendingSeekRef.current = ordinal;
+      return;
+    }
+
+    pendingSeekRef.current = null;
+    audio.currentTime = cue.startTime;
+  }, []);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return undefined;
+
+    // A TextTrack can be added to an element but never removed, so this reuses the one
+    // already there rather than stacking up empties - React mounts effects twice under
+    // the StrictMode that Next runs in development.
+    const track =
+      Array.from(audio.textTracks).find(({ kind }) => kind === 'metadata') ??
+      audio.addTextTrack('metadata');
+    // Load-bearing, not cosmetic: cues in a `disabled` track (the default) never become
+    // active, so `cuechange` would never fire and nothing would ever be highlighted. A
+    // metadata track renders nothing either way, so `hidden` costs nothing.
+    track.mode = 'hidden';
+    trackRef.current = track;
+
+    const handleCueChange = () => {
+      // A parked seek means the Listener has already chosen a Sentence the playhead
+      // hasn't reached yet. The cues it crosses on the way there are not where reading
+      // is, and following them would drag the highlight backwards and persist a place
+      // the Listener has already left.
+      if (pendingSeekRef.current !== null) return;
+
+      const cue = track.activeCues?.[0];
+      if (!cue) return;
+      setActiveOrdinal(Number(cue.id));
+    };
+    track.addEventListener('cuechange', handleCueChange);
+    return () => track.removeEventListener('cuechange', handleCueChange);
+  }, []);
+
+  // Re-read whenever another Chunk finishes generating, which is when the Book gains
+  // Sentences that can be placed on the timeline.
+  const readyChunkCount = Object.values(chunkAudio).filter(
+    (entry) => entry.status === 'ready',
+  ).length;
+  const manifestSrc = manifestUrl(bookId, voice);
+
+  useEffect(() => {
+    const track = trackRef.current;
+    if (!track || readyChunkCount === 0) return undefined;
+
+    let cancelled = false;
+    fetch(manifestSrc)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((manifest) => {
+        if (cancelled || !Array.isArray(manifest?.chunks)) return;
+
+        for (const chunk of manifest.chunks) {
+          if (chunk.sentences.length === 0 || cuedChunksRef.current.has(chunk.index)) continue;
+          cuedChunksRef.current.add(chunk.index);
+
+          for (const sentence of chunk.sentences) {
+            const cue = new VTTCue(sentence.startSeconds, sentence.endSeconds, '');
+            // The Book-global Sentence ordinal, which is the whole payload - the cue's
+            // text is empty because the transcript already has the words.
+            cue.id = String(sentence.id);
+            track.addCue(cue);
+          }
+        }
+
+        // Cues arriving is exactly the signal a parked seek was waiting for: a Sentence
+        // has a cue only once the playlist covers its Chunk.
+        if (pendingSeekRef.current !== null) applySeek(pendingSeekRef.current);
+      })
+      .catch((error) => {
+        console.error('Failed to read the Book manifest', error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applySeek, manifestSrc, readyChunkCount]);
+
   const src = playlistUrl(bookId, voice);
   // The only assignment to `src` in the codebase: once on mount, and again only when the
   // Book or voice changes. Re-pointing it reloads the element, which is why nothing else
@@ -129,13 +251,34 @@ export function useBookPlayer({
   // playbackRate, so the current speed has to be re-applied with each load; the guard
   // means a speed change on its own returns before touching anything.
   const loadedSrcRef = useRef(null);
+  // Read by the reload path below, which must not re-run whenever the position moves.
+  // Refreshed after every commit rather than during render, which refs don't allow.
+  const activeOrdinalRef = useRef(activeOrdinal);
+  useEffect(() => {
+    activeOrdinalRef.current = activeOrdinal;
+  });
+
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || loadedSrcRef.current === src) return;
 
+    const isReload = loadedSrcRef.current !== null;
     loadedSrcRef.current = src;
     audio.src = src;
     audio.playbackRate = speed;
+
+    // A voice change is a different timeline, so every cue on the old one is now wrong.
+    // Drop them and re-park the reading position, which the new voice's manifest will
+    // resolve to a new time.
+    if (isReload) {
+      const track = trackRef.current;
+      // Backwards, since each removal shifts everything after it down one.
+      for (let index = (track?.cues.length ?? 0) - 1; index >= 0; index -= 1) {
+        track.removeCue(track.cues[index]);
+      }
+      cuedChunksRef.current = new Set();
+      pendingSeekRef.current = activeOrdinalRef.current;
+    }
   }, [src, speed]);
 
   // Applied immediately, independent of the load above - a pure client-side effect, no
@@ -295,11 +438,12 @@ export function useBookPlayer({
   // Sentences - the click target for both the current Chunk's text and any other's,
   // generated or not (see phase 1.5 ticket 01). A Chunk that isn't ready yet is fetched
   // directly here, bypassing chunkFetchPlan's sequential look-ahead ordering, so seeking
-  // ahead doesn't force generating every Chunk in between. Moving `audio.currentTime` to
-  // the selected Sentence is deliberately not part of this: a Sentence's stored offset is
-  // relative to its own Chunk, and writing that onto the Book-wide timeline would seek to
-  // the wrong place. Ticket 05 restores the audio half from cue times, on the same
-  // timeline the element actually plays.
+  // ahead doesn't force generating every Chunk in between.
+  //
+  // Seeking backwards needs nothing special: every earlier segment is still in the same
+  // playlist, so it is a move along the timeline the element is already playing, never a
+  // reload. Seeking forwards past the generated region is the one case the playhead can't
+  // follow immediately - applySeek parks it until that Chunk has cues.
   const seekToSentence = useCallback(
     (chunkIndex, sentenceIndex) => {
       // An explicit click always persists this reading position right away, bypassing
@@ -307,15 +451,17 @@ export function useBookPlayer({
       clearTimeout(persistTimeoutRef.current);
       persistResumePosition(chunkIndex, sentenceIndex);
 
-      setActiveSentenceIndex(sentenceIndex);
+      const ordinal = ordinals.toOrdinal(chunkIndex, sentenceIndex);
+      // The highlight moves whether or not the audio can, so the Listener always sees
+      // what they queued.
+      setActiveOrdinal(ordinal);
+      applySeek(ordinal);
+
       if (chunkAudio[chunkIndex]?.status !== 'ready') {
         fetchChunk(chunkIndex);
       }
-      if (chunkIndex !== currentIndex) {
-        setCurrentIndex(chunkIndex);
-      }
     },
-    [chunkAudio, currentIndex, fetchChunk, persistResumePosition],
+    [applySeek, chunkAudio, fetchChunk, ordinals, persistResumePosition],
   );
 
   return {

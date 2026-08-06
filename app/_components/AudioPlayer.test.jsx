@@ -13,8 +13,13 @@ const chunks = ['第一段。', '第二段。', '第三段。', '第四段。'];
 // chunk change (see ticket 07) - these helpers isolate the /api/audio-chunks traffic
 // these tests actually care about from that unrelated background traffic, which would
 // otherwise throw off call counts/indices below.
-function mockAudioChunkFetch(handleAudioChunk) {
+// `buildManifest` is read fresh on every request so a test can grow the Book's cue set
+// between requests, the way the real route does as Chunks generate (see ticket 05).
+function mockAudioChunkFetch(handleAudioChunk, buildManifest = () => ({ chunks: [] })) {
   global.fetch = vi.fn(async (url, init) => {
+    if (typeof url === 'string' && url.includes('/manifest')) {
+      return new Response(JSON.stringify(buildManifest(url)), { status: 200 });
+    }
     if (url !== '/api/audio-chunks') {
       return new Response('{}', { status: 200 });
     }
@@ -24,6 +29,42 @@ function mockAudioChunkFetch(handleAudioChunk) {
 
 function audioChunkFetchCalls() {
   return global.fetch.mock.calls.filter(([url]) => url === '/api/audio-chunks');
+}
+
+// The metadata track the player builds its highlighting on - see vitest.setup.js for the
+// jsdom stand-ins that make `addTextTrack`/`VTTCue` exist at all.
+function metadataTrack() {
+  return screen.getByTestId('audio-element').textTracks[0];
+}
+
+// Stands in for the media stack noticing the playhead entered a cue. Only the id matters
+// to the player: it is the Book-global Sentence ordinal.
+function fireCueChange(ordinal) {
+  const track = metadataTrack();
+  track.activeCues = [track.cues.getCueById(String(ordinal)) ?? { id: String(ordinal) }];
+  track.dispatchEvent(new Event('cuechange'));
+}
+
+// Records every write to the element's `src`, so a test can assert a seek moved the
+// playhead without reloading the element - a reload mid-Book is the interruption this
+// whole phase exists to remove (see ADR 0003).
+function recordSrcAssignments(audioElement) {
+  const assignments = [];
+  const inherited = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(audioElement), 'src') ?? {
+    get: () => '',
+    set: () => {},
+  };
+
+  Object.defineProperty(audioElement, 'src', {
+    configurable: true,
+    get: () => inherited.get.call(audioElement),
+    set: (value) => {
+      assignments.push(value);
+      inherited.set.call(audioElement, value);
+    },
+  });
+
+  return assignments;
 }
 
 function libraryPatchCalls() {
@@ -422,31 +463,180 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     ],
   };
 
+  // What /api/books/[bookId]/manifest returns for the Book above once both Chunks have
+  // generated: Sentence ids run straight through the Chunk boundary, and Chunk 1's times
+  // are offset by Chunk 0's duration - one Book-wide timeline (see ticket 03).
+  const twoChunkManifest = {
+    chunks: [
+      {
+        index: 0,
+        isGenerated: true,
+        startSeconds: 0,
+        sentences: [
+          { id: 0, startSeconds: 0, endSeconds: 1 },
+          { id: 1, startSeconds: 1, endSeconds: 2 },
+        ],
+      },
+      {
+        index: 1,
+        isGenerated: true,
+        startSeconds: 2,
+        sentences: [
+          { id: 2, startSeconds: 2, endSeconds: 3 },
+          { id: 3, startSeconds: 3, endSeconds: 4 },
+        ],
+      },
+    ],
+  };
+
+  function chunkAudioResponse(chunkIndex) {
+    return new Response(
+      JSON.stringify({
+        url: `https://blob.test/${chunkIndex}`,
+        boundaries: boundariesByChunk[chunkIndex] ?? [],
+      }),
+      { status: 200 },
+    );
+  }
+
   beforeEach(() => {
     window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
     window.HTMLMediaElement.prototype.pause = vi.fn();
     window.Element.prototype.scrollIntoView = vi.fn();
 
-    mockAudioChunkFetch(({ body }) => {
-      const { chunkIndex } = JSON.parse(body);
-      return new Response(
-        JSON.stringify({
-          url: `https://blob.test/${chunkIndex}`,
-          boundaries: boundariesByChunk[chunkIndex] ?? [],
-        }),
-        { status: 200 },
-      );
-    });
+    mockAudioChunkFetch(
+      ({ body }) => chunkAudioResponse(JSON.parse(body).chunkIndex),
+      () => twoChunkManifest,
+    );
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  // Highlighting the Sentence that is actually playing needs absolute cue times, which
-  // ticket 05 brings in - the previous timeupdate-driven lookup is gone rather than left
-  // reading a Chunk-relative offset off a Book-wide clock. What survives here is the
-  // Listener-driven half: the selected Sentence is highlighted and scrolled to.
+  test('builds one hidden metadata track for the Book', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-track" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(2));
+
+    expect(screen.getByTestId('audio-element').textTracks).toHaveLength(1);
+    expect(metadataTrack().kind).toBe('metadata');
+    // Load-bearing: cues in a `disabled` track never become active, so `cuechange` would
+    // never fire and nothing would ever be highlighted.
+    expect(metadataTrack().mode).toBe('hidden');
+  });
+
+  test("adds a Chunk's Sentences as cues at their absolute times when the manifest arrives", async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-cues" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(metadataTrack().cues).toHaveLength(4));
+
+    expect(
+      [...metadataTrack().cues].map(({ id, startTime, endTime }) => [id, startTime, endTime]),
+    ).toEqual([
+      ['0', 0, 1],
+      ['1', 1, 2],
+      // Chunk 1's Sentences carry Book-global ids and Book-wide times, not Chunk-relative ones.
+      ['2', 2, 3],
+      ['3', 3, 4],
+    ]);
+  });
+
+  // The manifest is re-read every time a Chunk finishes generating, and it always
+  // describes the whole Book so far - so every read but the first re-describes Chunks
+  // that already have cues.
+  test('re-reading a Chunk in a later manifest does not duplicate its cues', async () => {
+    const releaseChunk = {};
+    mockAudioChunkFetch(
+      ({ body }) => {
+        const { chunkIndex } = JSON.parse(body);
+        return new Promise((resolve) => {
+          releaseChunk[chunkIndex] = () => resolve(chunkAudioResponse(chunkIndex));
+        });
+      },
+      () => twoChunkManifest,
+    );
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-dedupe" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(Object.keys(releaseChunk)).toHaveLength(2));
+
+    releaseChunk[0]();
+    await waitFor(() => expect(metadataTrack().cues).toHaveLength(4));
+
+    // A second Chunk becoming ready re-reads the same manifest, listing Chunk 0 again.
+    releaseChunk[1]();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(metadataTrack().cues).toHaveLength(4);
+  });
+
+  test('a cuechange names the playing Sentence', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-cuechange" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(metadataTrack().cues).toHaveLength(4));
+    fireEvent.click(await screen.findByRole('button', { name: /^播放$/i }));
+
+    // Cue 2 is the Book's third Sentence - the first of Chunk 1.
+    fireCueChange(2);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('sentence-1-0')).toHaveAttribute('data-active', 'true'),
+    );
+    expect(screen.getByTestId('sentence-0-0')).not.toHaveAttribute('data-active');
+  });
+
+  // The look-ahead anchor moves with the cues, which is what keeps a Book longer than the
+  // window generating ahead of playback instead of stopping at the end of the first burst
+  // (see ticket 04's note, and ticket 06).
+  test('a cuechange advances look-ahead generation to the Chunk now playing', async () => {
+    const longBook = Array.from({ length: 20 }, (unused, index) => `第${index}段。`);
+    const manifest = {
+      chunks: longBook.map((unused, index) => ({
+        index,
+        isGenerated: index <= 10,
+        startSeconds: index <= 10 ? index : null,
+        sentences: index <= 10 ? [{ id: index, startSeconds: index, endSeconds: index + 1 }] : [],
+      })),
+    };
+    mockAudioChunkFetch(
+      ({ body }) => chunkAudioResponse(JSON.parse(body).chunkIndex),
+      () => manifest,
+    );
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-anchor" chunks={longBook} />
+      </ChakraProvider>,
+    );
+
+    // The opening burst covers Chunks 0-10 and then stops, because nothing has moved yet.
+    await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(11));
+
+    fireCueChange(8);
+
+    const requestedChunkIndexes = () =>
+      audioChunkFetchCalls().map(([, init]) => JSON.parse(init.body).chunkIndex);
+    await waitFor(() => expect(requestedChunkIndexes()).toContain(18));
+  });
+
+  // Highlighting the Sentence that is actually playing is cue-driven; what this covers is
+  // the Listener-driven half - the selected Sentence is highlighted and scrolled to.
   test('highlights and auto-scrolls to the selected sentence', async () => {
     render(
       <ChakraProvider>
@@ -466,9 +656,10 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     expect(window.Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
-  // A Book-wide clock says nothing about which Sentence is playing until ticket 05's
-  // cues arrive - so it must not move the highlight, and above all must not overwrite
-  // the Listener's saved place with a Sentence it guessed.
+  // Cues are the only thing that names a Sentence. The clock on its own says nothing -
+  // there is no timeupdate handler left to consult, and there must not be one: mapping a
+  // Book-wide clock against Chunk-relative spans is what used to overwrite the Listener's
+  // saved place with a guess.
   test('does not move the highlight or the saved position as the clock advances', async () => {
     render(
       <ChakraProvider>
@@ -506,13 +697,13 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     await waitFor(() => expect(audioChunkFetchCalls()).toHaveLength(2));
     await waitFor(() => expect(screen.getByRole('button', { name: /^播放$/i })).toBeEnabled());
 
+    await waitFor(() => expect(metadataTrack().cues).toHaveLength(4));
     fireEvent.click(screen.getByTestId('sentence-0-1'));
 
-    // Selecting a sentence while paused only marks the reading position (see phase 1.5
-    // ticket 02) - nothing plays until Play is pressed. Moving audio.currentTime to that
-    // Sentence is ticket 05's job: a Sentence's offset is relative to its own Chunk, and
-    // this element's timeline runs across the whole Book.
+    // Selecting a sentence while paused moves the playhead and marks the reading position
+    // (see phase 1.5 ticket 02) - nothing plays until Play is pressed.
     expect(screen.getByTestId('sentence-0-1')).toHaveAttribute('data-active', 'true');
+    expect(screen.getByTestId('audio-element').currentTime).toBe(1);
     expect(screen.getByRole('button', { name: /^播放$/i })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /^播放$/i }));
@@ -563,6 +754,194 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
     // Chunks 11-14 sat between the initial look-ahead and the jump target - jumping
     // ahead must not force generating any of them first.
     expect(requestedChunkIndexes().filter((index) => index >= 11 && index <= 14)).toEqual([]);
+  });
+
+  // Every earlier segment is still in the playlist, so going back is a move along the
+  // existing timeline - the element must not be reloaded to do it.
+  test('seeking backwards applies immediately, without reloading the element', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-back" chunks={twoSentenceChunks} initialIndex={1} />
+      </ChakraProvider>,
+    );
+
+    // Opened at Chunk 1, so the playhead starts partway in - a move back to 0 is a real
+    // move, not the value it would already have held.
+    const audioEl = screen.getByTestId('audio-element');
+    await waitFor(() => expect(audioEl.currentTime).toBe(2));
+    const srcAssignments = recordSrcAssignments(audioEl);
+
+    fireEvent.click(screen.getByTestId('sentence-0-0'));
+
+    expect(audioEl.currentTime).toBe(0);
+    expect(screen.getByTestId('sentence-0-0')).toHaveAttribute('data-active', 'true');
+    expect(srcAssignments).toEqual([]);
+  });
+
+  // The one case where the playhead cannot move at once: the target Sentence has no cue,
+  // because its Chunk isn't on the timeline yet. The Listener still sees where they
+  // queued, and the write happens when the Chunk arrives.
+  test('seeking past the generated region defers the playhead until that Chunk has cues', async () => {
+    const longBook = Array.from({ length: 20 }, (unused, index) => `第${index}段。`);
+    // Modelled on the real routes rather than scripted: a Chunk reaches the timeline only
+    // once it and every Chunk before it has generated, because the playlist truncates at
+    // the first gap (see hlsPlaylist.js) and the manifest follows it.
+    const generated = new Set();
+    const manifest = () => {
+      let onTimeline = true;
+      return {
+        chunks: longBook.map((unused, index) => {
+          const placeable = onTimeline && generated.has(index);
+          if (!placeable) onTimeline = false;
+          return {
+            index,
+            isGenerated: generated.has(index),
+            startSeconds: placeable ? index : null,
+            sentences: placeable ? [{ id: index, startSeconds: index, endSeconds: index + 1 }] : [],
+          };
+        }),
+      };
+    };
+
+    mockAudioChunkFetch(({ body }) => {
+      const { chunkIndex } = JSON.parse(body);
+      generated.add(chunkIndex);
+      return chunkAudioResponse(chunkIndex);
+    }, manifest);
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-defer" chunks={longBook} />
+      </ChakraProvider>,
+    );
+
+    // The opening look-ahead burst reaches Chunk 10, so Chunk 11 is the first Sentence
+    // past the end of the timeline.
+    await waitFor(() => expect(metadataTrack().cues).toHaveLength(11));
+    const audioEl = screen.getByTestId('audio-element');
+
+    fireEvent.click(screen.getByTestId('sentence-11-0'));
+
+    // The highlight moves at once and generation is requested, but there is no time on
+    // the Book's timeline to write yet.
+    expect(screen.getByTestId('sentence-11-0')).toHaveAttribute('data-active', 'true');
+    expect(audioEl.currentTime).toBe(0);
+    await waitFor(() =>
+      expect(audioChunkFetchCalls().map(([, init]) => JSON.parse(init.body).chunkIndex)).toContain(
+        11,
+      ),
+    );
+
+    // Chunk 11 lands on the timeline, its cue appears, and the parked seek is applied.
+    await waitFor(() => expect(audioEl.currentTime).toBe(11));
+  });
+
+  // A different voice is a different timeline - the same Sentence sits at a different
+  // second. Cues from the old one aren't stale, they're wrong.
+  test('changing the voice replaces the old timeline’s cues rather than adding to them', async () => {
+    window.localStorage.clear();
+    // The same four Sentences, at a slower voice's times.
+    const slowerManifest = {
+      chunks: twoChunkManifest.chunks.map((chunk) => ({
+        ...chunk,
+        startSeconds: chunk.startSeconds * 2,
+        sentences: chunk.sentences.map((sentence) => ({
+          ...sentence,
+          startSeconds: sentence.startSeconds * 2,
+          endSeconds: sentence.endSeconds * 2,
+        })),
+      })),
+    };
+
+    mockAudioChunkFetch(
+      ({ body }) => chunkAudioResponse(JSON.parse(body).chunkIndex),
+      (url) => (url.includes('YunJhe') ? slowerManifest : twoChunkManifest),
+    );
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-voice-cues" chunks={twoSentenceChunks} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(metadataTrack().cues).toHaveLength(4));
+    expect(metadataTrack().cues.getCueById('2').startTime).toBe(2);
+
+    openSettings();
+    fireEvent.click(
+      within(screen.getByRole('radiogroup', { name: /朗讀聲音/i })).getByRole('radio', {
+        name: 'Yun-Jhe',
+      }),
+    );
+
+    await waitFor(() => expect(metadataTrack().cues.getCueById('2')?.startTime).toBe(4));
+    // Replaced, not appended to.
+    expect(metadataTrack().cues).toHaveLength(4);
+  });
+
+  // While a seek is parked the playhead is still somewhere else, so it keeps crossing
+  // cues that have nothing to do with where the Listener asked to be. Those must not drag
+  // the highlight backwards - and above all must not overwrite the saved position with a
+  // Sentence the Listener already moved away from.
+  test('cues crossed while a seek is parked do not move the highlight off the queued Sentence', async () => {
+    const longBook = Array.from({ length: 20 }, (unused, index) => `第${index}段。`);
+    const generated = new Set();
+    mockAudioChunkFetch(
+      ({ body }) => {
+        const { chunkIndex } = JSON.parse(body);
+        generated.add(chunkIndex);
+        return chunkAudioResponse(chunkIndex);
+      },
+      () => ({
+        chunks: longBook.map((unused, index) => ({
+          index,
+          isGenerated: generated.has(index),
+          // Frozen at the opening burst: Chunk 11 never reaches the timeline in this test,
+          // so the seek below stays parked for its duration.
+          startSeconds: index <= 10 ? index : null,
+          sentences: index <= 10 ? [{ id: index, startSeconds: index, endSeconds: index + 1 }] : [],
+        })),
+      }),
+    );
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-parked" chunks={longBook} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(metadataTrack().cues).toHaveLength(11));
+    fireEvent.click(screen.getByTestId('sentence-11-0'));
+    expect(screen.getByTestId('sentence-11-0')).toHaveAttribute('data-active', 'true');
+
+    const patchCallsBefore = libraryPatchCalls().length;
+    // The playhead is still back at the start of the Book, crossing Chunk 0's cue.
+    fireCueChange(0);
+
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(screen.getByTestId('sentence-11-0')).toHaveAttribute('data-active', 'true');
+    expect(screen.getByTestId('sentence-0-0')).not.toHaveAttribute('data-active');
+    expect(libraryPatchCalls()).toHaveLength(patchCallsBefore);
+  });
+
+  // Ticket 04 left resume unable to position the audio: the saved (Chunk, Sentence) had
+  // no absolute time. A cue is that time.
+  test('opening a Book part-way through positions the audio at the saved Sentence', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer
+          bookId="book-resume-time"
+          chunks={twoSentenceChunks}
+          initialIndex={1}
+          initialSentenceIndex={1}
+        />
+      </ChakraProvider>,
+    );
+
+    // The saved position is Chunk 1's second Sentence - Book-global Sentence 3, cued at 3s.
+    await waitFor(() => expect(screen.getByTestId('audio-element').currentTime).toBe(3));
+    expect(screen.getByTestId('sentence-1-1')).toHaveAttribute('data-active', 'true');
+    expect(window.HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
   });
 });
 
