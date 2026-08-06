@@ -20,10 +20,17 @@ export function toPlaylistSegments(chunkAudio) {
 // generated Chunk, null for one that isn't generated yet. Playback truncates at the
 // first gap rather than skipping it — a playlist listing Chunk N followed by Chunk N+2
 // would narrate the Book out of order — and #EXT-X-ENDLIST is withheld until every
-// Chunk is present, which is what makes the media stack re-fetch as the Book grows.
-export function buildEventPlaylist(segments) {
-  const gapIndex = segments.findIndex((segment) => !segment);
-  const played = gapIndex === -1 ? segments : segments.slice(0, gapIndex);
+// Chunk from here on is present, which is what makes the media stack re-fetch as the
+// Book grows.
+//
+// `from` is the Chunk this playlist starts at, which the Listener sets by seeking past a
+// stretch that was never narrated (see ticket 07). Everything before it is dropped
+// outright — including any gap, which is the point: the Chunks they skipped stay
+// ungenerated and must not truncate the stream they are now listening to.
+export function buildEventPlaylist(segments, { from = 0 } = {}) {
+  const reachable = segments.slice(from);
+  const gapIndex = reachable.findIndex((segment) => !segment);
+  const played = gapIndex === -1 ? reachable : reachable.slice(0, gapIndex);
   // RFC 8216 derives a client's playlist reload interval from the target duration, so an
   // empty playlist floors at one second rather than declaring 0 and inviting a tight
   // re-fetch loop on exactly the path a Book takes before its first Chunk exists.

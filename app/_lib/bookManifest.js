@@ -18,11 +18,18 @@ function toSentenceCues({ text, boundaries }, { startSeconds, firstSentenceId })
 }
 
 // One entry per Chunk of the Book, in order. A Chunk is on the timeline only while every
-// Chunk before it is too: the playlist truncates at the first gap, so a Chunk past that
-// gap has no knowable startSeconds however complete its own audio is. Sentence ordinals,
-// by contrast, are counted from the Chunk text rather than from what happens to be
-// generated, so a Sentence keeps the same id as the Book fills in around it.
-export function buildBookManifest({ chunks, chunkAudio }) {
+// Chunk between the start and it is too: the playlist truncates at its first gap, so a
+// Chunk past that gap has no knowable startSeconds however complete its own audio is.
+// Sentence ordinals, by contrast, are counted from the Chunk text rather than from what
+// happens to be generated, so a Sentence keeps the same id as the Book fills in around it.
+//
+// `from` is the Chunk the playlist being described starts at, which the Listener sets by
+// seeking past a stretch the playlist can't reach (see ticket 07). It moves where the
+// timeline's zero is and nothing else: Chunks before it are still reported, so the client
+// can see what is generated across the whole Book, but they are off this timeline and
+// contribute no time to it. Sentence ids are deliberately untouched by it - a Sentence's
+// identity can't depend on where the Book happens to be played from.
+export function buildBookManifest({ chunks, chunkAudio }, { from = 0 } = {}) {
   let startSeconds = 0;
   let firstSentenceId = 0;
   let onTimeline = true;
@@ -33,7 +40,7 @@ export function buildBookManifest({ chunks, chunkAudio }) {
     // playlist can't place is one the client should still request, which is what repairs
     // a Chunk cached before durationSeconds existed (see ticket 02).
     const isGenerated = isPlayableChunk(metadata);
-    const placeable = onTimeline && isGenerated;
+    const placeable = index >= from && onTimeline && isGenerated;
 
     const entry = {
       index,
@@ -47,10 +54,15 @@ export function buildBookManifest({ chunks, chunkAudio }) {
         : [],
     };
 
+    // Counted over every Chunk, including the ones before the start: an ordinal is a
+    // position in the Book, not in the stretch being played.
     firstSentenceId += splitIntoSentences(text).length;
+
     if (placeable) {
       startSeconds += metadata.durationSeconds;
-    } else {
+    } else if (index >= from) {
+      // Only a gap the playlist actually reaches ends the timeline. One the Listener
+      // jumped over is behind the start and says nothing about what follows it.
       onTimeline = false;
     }
 

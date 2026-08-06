@@ -945,6 +945,196 @@ describe('AudioPlayer sentence highlighting, auto-scroll, and jump-to-sentence s
   });
 });
 
+// A playlist truncates at its first gap, so a Sentence past a stretch that was never
+// narrated can never be reached by the playlist growing. The Book is served from that
+// Chunk instead - see ticket 07.
+describe('AudioPlayer seeking past the generated region', () => {
+  // One Sentence per Chunk, one second of audio each, so Book-global Sentence ordinal N
+  // is Chunk N and sits at second N of a playlist that starts at Chunk 0.
+  const longBook = Array.from({ length: 20 }, (unused, index) => `第${index}段。`);
+
+  // Models the two real routes closely enough to test the client against them: the
+  // timeline starts at `from`, truncates at the first gap at or after it, and ignores any
+  // gap before it. Sentence ids stay Book-global whatever `from` is.
+  function fakeRoutes() {
+    // Keyed by voice, like the real cache (getCachedChunks takes bookId *and* voice), so
+    // switching voice genuinely starts from nothing narrated.
+    const generatedByVoice = new Map();
+    const generatedFor = (voice) => {
+      if (!generatedByVoice.has(voice)) generatedByVoice.set(voice, new Set());
+      return generatedByVoice.get(voice);
+    };
+
+    const manifestFor = (url) => {
+      const query = new URL(url, 'https://test.example').searchParams;
+      const from = Number(query.get('from') ?? 0);
+      const generated = generatedFor(query.get('voice'));
+      let startSeconds = 0;
+      let onTimeline = true;
+
+      return {
+        chunks: longBook.map((unused, index) => {
+          const placeable = index >= from && onTimeline && generated.has(index);
+          const entry = {
+            index,
+            isGenerated: generated.has(index),
+            startSeconds: placeable ? startSeconds : null,
+            sentences: placeable ? [{ id: index, startSeconds, endSeconds: startSeconds + 1 }] : [],
+          };
+          if (placeable) startSeconds += 1;
+          else if (index >= from) onTimeline = false;
+          return entry;
+        }),
+      };
+    };
+
+    return { generatedFor, manifestFor };
+  }
+
+  function requestedChunkIndexes() {
+    return audioChunkFetchCalls().map(([, init]) => JSON.parse(init.body).chunkIndex);
+  }
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    window.HTMLMediaElement.prototype.pause = vi.fn();
+    window.Element.prototype.scrollIntoView = vi.fn();
+
+    const { generatedFor, manifestFor } = fakeRoutes();
+    mockAudioChunkFetch(({ body }) => {
+      const { chunkIndex, voice } = JSON.parse(body);
+      generatedFor(voice).add(chunkIndex);
+      return new Response(
+        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
+        { status: 200 },
+      );
+    }, manifestFor);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function renderAtOpeningBurst(bookId) {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId={bookId} chunks={longBook} />
+      </ChakraProvider>,
+    );
+
+    // The opening look-ahead burst covers Chunks 0-10, so Chunk 11 is the first Sentence
+    // past the end of the timeline and Chunks 12+ are past a gap.
+    await waitFor(() => expect(metadataTrack().cues).toHaveLength(11));
+    return screen.getByTestId('audio-element');
+  }
+
+  test('re-points the element at a playlist starting where the Listener landed', async () => {
+    const audioEl = await renderAtOpeningBurst('book-repoint');
+    const srcAssignments = recordSrcAssignments(audioEl);
+
+    fireEvent.click(screen.getByTestId('sentence-15-0'));
+
+    await waitFor(() => expect(srcAssignments).toHaveLength(1));
+    expect(srcAssignments[0]).toContain('from=15');
+    expect(srcAssignments[0]).toContain('/api/books/book-repoint/playlist.m3u8');
+  });
+
+  test('plays from the target once its Chunk is on the new timeline', async () => {
+    const audioEl = await renderAtOpeningBurst('book-repoint-time');
+
+    // Somewhere other than zero first, so landing on the new timeline's zero is a move
+    // rather than the value the element already held.
+    fireEvent.click(screen.getByTestId('sentence-6-0'));
+    expect(audioEl.currentTime).toBe(6);
+
+    fireEvent.click(screen.getByTestId('sentence-15-0'));
+
+    // Chunk 15 opens the new playlist, so it sits at its zero rather than at second 15.
+    await waitFor(() => expect(metadataTrack().cues.getCueById('15')?.startTime).toBe(0));
+    expect(audioEl.currentTime).toBe(0);
+    expect(screen.getByTestId('sentence-15-0')).toHaveAttribute('data-active', 'true');
+  });
+
+  // Audio is cached per (Book, voice), so what the previous voice had narrated says
+  // nothing about the new one. Trusting it would leave a seek parked against a playlist
+  // that truncates before the target - the ticket 05 hang this ticket exists to close.
+  test('does not treat the previous voice’s Chunks as reachable after a voice change', async () => {
+    const audioEl = await renderAtOpeningBurst('book-voice-reach');
+
+    openSettings();
+    fireEvent.click(
+      within(screen.getByRole('radiogroup', { name: /朗讀聲音/i })).getByRole('radio', {
+        name: 'Yun-Jhe',
+      }),
+    );
+    await waitFor(() => expect(audioEl.src).toContain('voice=zh-TW-YunJheNeural'));
+
+    // The new voice has narrated nothing yet beyond its own opening burst, so Chunk 8 is
+    // reachable only if the Chunks before it were generated for *this* voice.
+    const srcAssignments = recordSrcAssignments(audioEl);
+    fireEvent.click(screen.getByTestId('sentence-8-0'));
+
+    // Either it is genuinely reachable and the seek lands, or the playlist moves - what
+    // it must never do is park against a timeline that will never reach it.
+    await waitFor(() => expect(srcAssignments.length > 0 || audioEl.currentTime > 0).toBe(true));
+  });
+
+  // The rule this preserves: what the Listener skipped is not narrated. That is the whole
+  // reason the playlist moves rather than the gap being filled.
+  test('never generates the Chunks that were skipped over', async () => {
+    await renderAtOpeningBurst('book-skip');
+
+    fireEvent.click(screen.getByTestId('sentence-15-0'));
+
+    await waitFor(() => expect(requestedChunkIndexes()).toContain(15));
+    // Look-ahead runs forward from the new position.
+    await waitFor(() => expect(requestedChunkIndexes()).toContain(19));
+    expect(requestedChunkIndexes().filter((index) => index >= 11 && index <= 14)).toEqual([]);
+  });
+
+  // Ticket 05's deferred seek is still the right answer when the playlist can grow to
+  // reach the target - re-pointing there would reload the element for nothing.
+  test('does not re-point for a target the playlist can still grow to reach', async () => {
+    const audioEl = await renderAtOpeningBurst('book-contiguous');
+    const srcAssignments = recordSrcAssignments(audioEl);
+
+    fireEvent.click(screen.getByTestId('sentence-11-0'));
+
+    await waitFor(() => expect(audioEl.currentTime).toBe(11));
+    expect(srcAssignments).toEqual([]);
+  });
+
+  test('does not re-point for a target already on the timeline', async () => {
+    const audioEl = await renderAtOpeningBurst('book-within');
+    const srcAssignments = recordSrcAssignments(audioEl);
+
+    fireEvent.click(screen.getByTestId('sentence-4-0'));
+
+    expect(audioEl.currentTime).toBe(4);
+    expect(srcAssignments).toEqual([]);
+  });
+
+  // Going back to a Chunk the current playlist starts after needs the same treatment as
+  // going forward past a gap: it isn't on this timeline, so the timeline has to move.
+  test('goes back to a Chunk before the playlist start by re-pointing again', async () => {
+    const audioEl = await renderAtOpeningBurst('book-back-across');
+
+    fireEvent.click(screen.getByTestId('sentence-15-0'));
+    await waitFor(() => expect(metadataTrack().cues.getCueById('15')?.startTime).toBe(0));
+
+    const srcAssignments = recordSrcAssignments(audioEl);
+    fireEvent.click(screen.getByTestId('sentence-3-0'));
+
+    await waitFor(() => expect(srcAssignments).toHaveLength(1));
+    expect(srcAssignments[0]).toContain('from=3');
+    // Chunks 3-10 are generated and contiguous, so the new timeline covers them all.
+    await waitFor(() => expect(metadataTrack().cues.getCueById('3')?.startTime).toBe(0));
+    expect(metadataTrack().cues.getCueById('10')?.startTime).toBe(7);
+    expect(screen.getByTestId('sentence-3-0')).toHaveAttribute('data-active', 'true');
+  });
+});
+
 describe('AudioPlayer playback lock', () => {
   const twoSentenceChunks = ['第一句。第二句。', '第三句。第四句。'];
   const boundariesByChunk = {

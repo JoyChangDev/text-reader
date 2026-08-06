@@ -107,6 +107,60 @@ describe('GET /api/books/[bookId]/manifest', () => {
     ]);
   });
 
+  // The client re-points the element at a playlist starting further in when a seek target
+  // is past a gap; the cue times have to be rebased onto that same timeline, or every
+  // highlight lands at the wrong second (see ticket 07).
+  describe('?from', () => {
+    test('rebases the timeline on the given Chunk while leaving Sentence ids alone', async () => {
+      getBook.mockResolvedValueOnce({
+        bookId: 'book-1',
+        chunks: ['你好。世界。', '你好。世界。', '你好。世界。'],
+      });
+      getCachedChunks.mockResolvedValueOnce([
+        chunkAudio(0, 7.5),
+        chunkAudio(1, 4),
+        chunkAudio(2, 6),
+      ]);
+
+      const response = await GET(
+        requestFor('book-1', '?voice=zh-TW-default&from=1'),
+        paramsFor('book-1'),
+      );
+      const body = await response.json();
+
+      expect(body.chunks[0]).toEqual({
+        index: 0,
+        isGenerated: true,
+        startSeconds: null,
+        sentences: [],
+      });
+      expect(body.chunks[1]).toEqual({
+        index: 1,
+        isGenerated: true,
+        startSeconds: 0,
+        // Ids stay Book-global - a Sentence's identity doesn't depend on where the Book
+        // is being played from.
+        sentences: [
+          { id: 2, startSeconds: 0, endSeconds: 1 },
+          { id: 3, startSeconds: 2, endSeconds: 3 },
+        ],
+      });
+      expect(body.chunks[2].startSeconds).toBe(4);
+    });
+
+    test('rejects a start that names no Chunk in this Book with 400', async () => {
+      getBook.mockResolvedValueOnce({ bookId: 'book-1', chunks: ['你好。'] });
+      getCachedChunks.mockResolvedValueOnce([chunkAudio(0, 3)]);
+
+      const response = await GET(
+        requestFor('book-1', '?voice=zh-TW-default&from=4'),
+        paramsFor('book-1'),
+      );
+
+      expect(response.status).toBe(400);
+    });
+  });
+
   test('rejects a request with no voice with 400', async () => {
     const response = await GET(requestFor('book-1', ''), paramsFor('book-1'));
 

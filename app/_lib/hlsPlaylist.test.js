@@ -56,6 +56,49 @@ describe('buildEventPlaylist', () => {
     expect(playlist).not.toContain('https://blob.example/book-1/2/voice.mp3');
   });
 
+  // A Listener who jumps past a stretch the playlist can't reach gets a playlist that
+  // starts where they landed (see ticket 07) - the Chunks they skipped stay ungenerated,
+  // and must not truncate the stream they are now listening to.
+  describe('starting from a Chunk other than the first', () => {
+    test('omits every Chunk before the start', () => {
+      const playlist = buildEventPlaylist([segment(0, 5), segment(1, 4), segment(2, 3)], {
+        from: 1,
+      });
+
+      expect(lines(playlist).slice(5)).toEqual([
+        '#EXTINF:4.000,',
+        'https://blob.example/book-1/1/voice.mp3',
+        '#EXTINF:3.000,',
+        'https://blob.example/book-1/2/voice.mp3',
+        '#EXT-X-ENDLIST',
+      ]);
+    });
+
+    test('is unaffected by a gap before the start', () => {
+      const playlist = buildEventPlaylist([null, segment(1, 4), segment(2, 3)], { from: 1 });
+
+      expect(playlist).toContain('https://blob.example/book-1/1/voice.mp3');
+      expect(playlist).toContain('https://blob.example/book-1/2/voice.mp3');
+      expect(playlist).toContain('#EXT-X-ENDLIST');
+    });
+
+    test('still stops at the first gap at or after the start', () => {
+      const playlist = buildEventPlaylist([null, segment(1, 4), null, segment(3, 3)], { from: 1 });
+
+      expect(lines(playlist).slice(5)).toEqual([
+        '#EXTINF:4.000,',
+        'https://blob.example/book-1/1/voice.mp3',
+      ]);
+      expect(playlist).not.toContain('#EXT-X-ENDLIST');
+    });
+
+    test('ignores segments before the start when computing the target duration', () => {
+      const playlist = buildEventPlaylist([segment(0, 30), segment(1, 4)], { from: 1 });
+
+      expect(playlist).toContain('#EXT-X-TARGETDURATION:4');
+    });
+  });
+
   test('targets the ceiling of the longest included segment when durations are unequal', () => {
     const playlist = buildEventPlaylist([segment(0, 3.2), segment(1, 9.4), segment(2, 1.75)]);
 

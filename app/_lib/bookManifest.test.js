@@ -158,4 +158,98 @@ describe('buildBookManifest', () => {
   test('returns no Chunks for a Book with no text', () => {
     expect(buildBookManifest({ chunks: [], chunkAudio: [] })).toEqual({ chunks: [] });
   });
+
+  // A Book can be played from part-way in, when the Listener jumps past a stretch that
+  // was never narrated and the playlist therefore can't reach (see ticket 07). The
+  // timeline the element plays starts at that Chunk, so the cue times have to as well.
+  describe('starting from a Chunk other than the first', () => {
+    const threeChunks = [TWO_SENTENCE_TEXT, TWO_SENTENCE_TEXT, TWO_SENTENCE_TEXT];
+    const threeGenerated = [generated(7.5), generated(4, { index: 1 }), generated(5, { index: 2 })];
+
+    test('places the start Chunk at zero and accumulates from there', () => {
+      const manifest = buildBookManifest(
+        { chunks: threeChunks, chunkAudio: threeGenerated },
+        { from: 1 },
+      );
+
+      expect(manifest.chunks.map(({ startSeconds }) => startSeconds)).toEqual([null, 0, 4]);
+    });
+
+    test('rebases Sentence times onto the same zero', () => {
+      const manifest = buildBookManifest(
+        { chunks: threeChunks, chunkAudio: threeGenerated },
+        { from: 1 },
+      );
+
+      expect(manifest.chunks[1].sentences).toEqual([
+        { id: 2, startSeconds: 0, endSeconds: 1 },
+        { id: 3, startSeconds: 2, endSeconds: 3 },
+      ]);
+    });
+
+    // The identity of a Sentence can't depend on where the Book happens to be played
+    // from, or the reading position and the stored resume format would not survive a
+    // re-point.
+    test('leaves Sentence ids unchanged', () => {
+      const fromStart = buildBookManifest({ chunks: threeChunks, chunkAudio: threeGenerated });
+      const fromMiddle = buildBookManifest(
+        { chunks: threeChunks, chunkAudio: threeGenerated },
+        { from: 1 },
+      );
+
+      expect(fromMiddle.chunks[2].sentences.map(({ id }) => id)).toEqual([4, 5]);
+      expect(fromMiddle.chunks[2].sentences.map(({ id }) => id)).toEqual(
+        fromStart.chunks[2].sentences.map(({ id }) => id),
+      );
+    });
+
+    // They are still reported - the client reads isGenerated across the whole Book to
+    // decide whether a seek target is reachable without re-pointing at all.
+    test('reports Chunks before the start as generated but off this timeline', () => {
+      const manifest = buildBookManifest(
+        { chunks: threeChunks, chunkAudio: threeGenerated },
+        { from: 1 },
+      );
+
+      expect(manifest.chunks[0]).toEqual({
+        index: 0,
+        isGenerated: true,
+        startSeconds: null,
+        sentences: [],
+      });
+    });
+
+    // The point of starting here: an ungenerated Chunk before the start is exactly what
+    // the Listener jumped over, and it must not truncate the timeline they land on.
+    test('is unaffected by a gap before the start Chunk', () => {
+      const manifest = buildBookManifest(
+        { chunks: threeChunks, chunkAudio: [undefined, generated(4, { index: 1 }), generated(5)] },
+        { from: 1 },
+      );
+
+      expect(manifest.chunks.map(({ startSeconds }) => startSeconds)).toEqual([null, 0, 4]);
+    });
+
+    test('still truncates at the first gap at or after the start Chunk', () => {
+      const manifest = buildBookManifest(
+        {
+          chunks: threeChunks,
+          chunkAudio: [generated(7.5), undefined, generated(5, { index: 2 })],
+        },
+        { from: 1 },
+      );
+
+      expect(manifest.chunks.map(({ startSeconds }) => startSeconds)).toEqual([null, null, null]);
+    });
+
+    test('past the end of the Book yields no timeline at all', () => {
+      const manifest = buildBookManifest(
+        { chunks: threeChunks, chunkAudio: threeGenerated },
+        { from: 9 },
+      );
+
+      expect(manifest.chunks.every(({ startSeconds }) => startSeconds === null)).toBe(true);
+      expect(manifest.chunks).toHaveLength(3);
+    });
+  });
 });

@@ -18,7 +18,7 @@ The track is created with `audio.addTextTrack('metadata')` rather than declared 
 - [x] `deriveSentenceSpans` is no longer imported by `useBookPlayer` — its only caller is now the ticket 03 manifest route. The module and its tests stay. _Done in ticket 04, with the deletion above._
 - [x] `activeSentenceIndex` is a Book-global Sentence ordinal internally, mapped to and from `(resumeIndex, resumeSentenceIndex)` at the persistence edge and to `(chunkIndex, sentenceIndex)` at the `TranscriptView` edge, so neither the stored format nor `TranscriptView`'s props change.
 - [x] Same-region seeking sets `audio.currentTime = cue.startTime` — the one remaining write to `currentTime` in the codebase, in `applySeek`.
-- [ ] **Partial.** Seeking to a Sentence whose Chunk is not yet in the playlist keeps the existing `pendingSeekRef` behaviour: the highlight moves immediately so the Listener sees what is queued, generation is requested for that Chunk, and `currentTime` is applied once the playlist has grown to cover it. _The mechanism is built and tested, but "once the playlist has grown to cover it" is unreachable for a target more than one Chunk past the generated region — see "The gap a forward seek leaves behind" below. Needs its own ticket before this phase closes._
+- [x] Seeking to a Sentence whose Chunk is not yet in the playlist keeps the existing `pendingSeekRef` behaviour: the highlight moves immediately so the Listener sees what is queued, generation is requested for that Chunk, and `currentTime` is applied once the playlist has grown to cover it. _Completed by [ticket 07](07-seeking-past-the-generated-region.md), which covers the case this ticket left unreachable — see "The gap a forward seek leaves behind" below._
 - [x] Seeking backwards works without reloading the element, since every earlier segment is still in the playlist. A test asserts no `src` assignment occurs on a backwards seek.
 - [x] The `AudioPlayer.test.jsx` harness gains a fake `addTextTrack` returning a stub track that records `addCue` calls and can be driven to fire `cuechange`. _Installed from `vitest.setup.js` rather than the test file — see the notes._
 - [x] Tests: a `cuechange` naming cue `N` sets `activeSentenceIndex` to N with no `timeupdate`; manifest arrival adds exactly that Chunk's cues with absolute times; a forward seek past the generated region requests generation and defers the `currentTime` write; a backwards seek applies immediately.
@@ -51,13 +51,15 @@ Two of the deletions above are already done (ticked, with the reason). Three thi
 
 ### The gap a forward seek leaves behind
 
-Not introduced here, not fixed here, and worth a ticket of its own before this phase closes.
+Not introduced here, not fixed here. **Resolved by [ticket 07](07-seeking-past-the-generated-region.md)**, which keeps the phase-1.5 rule below and moves the playlist instead of filling the gap.
 
 `seekToSentence` deliberately generates only the target Chunk, never the ones skipped over — a phase-1.5 rule, with a test enshrining it, and correct when each Chunk was its own audio file. It no longer holds. The playlist truncates at the first gap (`hlsPlaylist.js`) and the manifest follows it, so a Chunk past an ungenerated one has no `startSeconds` and gets no cues. Meanwhile the look-ahead anchor has moved to the target, so `chunkFetchPlan` runs forward from there and never goes back to fill the gap.
 
 Concretely: on a 20-Chunk Book, opening it generates 0–10; clicking a Sentence in Chunk 15 generates 15 alone; Chunks 11–14 are never requested by anything; the playlist stays 11 segments long; the parked seek waits forever and playback stops at the end of Chunk 10.
 
-Seeking within or just past the generated region — the case ticket 06 needs, and the common one — works, and is what the deferred-seek test covers. Fixing the gap means choosing a policy for how much to generate on a long jump, which is a spec-level tradeoff against the size of the TTS burst, not a call to make inside this ticket. The checklist item above is left unticked accordingly.
+Seeking within or just past the generated region — the case ticket 06 needs, and the common one — works, and is what the deferred-seek test covers.
+
+Fixing the gap meant choosing a policy, which is a spec-level tradeoff rather than a call to make inside this ticket. It was settled in favour of serving the Book from the Chunk the Listener landed on: the skipped Chunks stay ungenerated, and the reload it costs falls on an explicit foreground gesture, which is not the failure ADR 0003 identified. See ticket 07.
 
 ### Still not verified in a browser
 

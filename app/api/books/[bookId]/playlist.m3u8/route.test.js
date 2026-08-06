@@ -27,6 +27,54 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
     vi.clearAllMocks();
   });
 
+  // A Listener who jumps past a stretch that was never narrated is served the Book from
+  // where they landed, since the playlist can't reach across the gap they skipped (see
+  // ticket 07).
+  describe('?from', () => {
+    test('serves the Book from the given Chunk', async () => {
+      getBook.mockResolvedValueOnce({ bookId: 'book-1', chunks: ['一。', '二。', '三。'] });
+      getCachedChunks.mockResolvedValueOnce([chunkAudio(0, 5), chunkAudio(1, 4), chunkAudio(2, 3)]);
+
+      const response = await GET(
+        requestFor('book-1', '?voice=zh-TW-default&from=1'),
+        paramsFor('book-1'),
+      );
+      const body = await response.text();
+
+      expect(body).not.toContain('https://blob.example/book-1/0/zh-TW-default.mp3');
+      expect(body).toContain('https://blob.example/book-1/1/zh-TW-default.mp3');
+      expect(body).toContain('https://blob.example/book-1/2/zh-TW-default.mp3');
+    });
+
+    // The whole point: the Chunks the Listener skipped are still ungenerated, and must
+    // not truncate the stream they are now listening to.
+    test('is unaffected by a gap before the given Chunk', async () => {
+      getBook.mockResolvedValueOnce({ bookId: 'book-1', chunks: ['一。', '二。', '三。'] });
+      getCachedChunks.mockResolvedValueOnce([undefined, chunkAudio(1, 4), chunkAudio(2, 3)]);
+
+      const response = await GET(
+        requestFor('book-1', '?voice=zh-TW-default&from=1'),
+        paramsFor('book-1'),
+      );
+      const body = await response.text();
+
+      expect(body).toContain('https://blob.example/book-1/1/zh-TW-default.mp3');
+      expect(body).toContain('#EXT-X-ENDLIST');
+    });
+
+    test('rejects a start that names no Chunk in this Book with 400', async () => {
+      getBook.mockResolvedValueOnce({ bookId: 'book-1', chunks: ['一。', '二。'] });
+      getCachedChunks.mockResolvedValueOnce([chunkAudio(0, 5), chunkAudio(1, 4)]);
+
+      const response = await GET(
+        requestFor('book-1', '?voice=zh-TW-default&from=7'),
+        paramsFor('book-1'),
+      );
+
+      expect(response.status).toBe(400);
+    });
+  });
+
   test('serves the EVENT playlist for the Book and voice as an HLS media playlist', async () => {
     getBook.mockResolvedValueOnce({ bookId: 'book-1', chunks: ['一。', '二。'] });
     getCachedChunks.mockResolvedValueOnce([chunkAudio(0, 5.5), chunkAudio(1, 4)]);

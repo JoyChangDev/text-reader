@@ -26,19 +26,28 @@ const LOOKAHEAD = 10;
 // request on every single sentence boundary (see phase 1.5 ticket 05).
 const RESUME_PERSIST_DEBOUNCE_MS = 400;
 
-// The EVENT playlist for this (Book, voice) - one continuous source for the whole Book,
-// served by /api/books/[bookId]/playlist.m3u8 (see ticket 03). It grows as Chunks
-// generate, so the media stack keeps re-fetching it and moves between segments on its
-// own; nothing in this hook runs at a Chunk boundary.
-function playlistUrl(bookId, voice) {
-  return `/api/books/${encodeURIComponent(bookId)}/playlist.m3u8?voice=${encodeURIComponent(voice)}`;
+// Both HLS routes (see ticket 03) are addressed the same way: a Book, a voice, and which
+// Chunk to start at. `from` is normally 0 and moves only when the Listener seeks somewhere
+// the playlist can't reach (see seekToSentence and ticket 07); it is left off the query
+// entirely at 0, so an ordinary listening session's URLs are unchanged by its existence.
+function bookAudioUrl(route, { bookId, voice, from }) {
+  const query = new URLSearchParams({ voice });
+  if (from > 0) query.set('from', String(from));
+  return `/api/books/${encodeURIComponent(bookId)}/${route}?${query}`;
 }
 
-// The absolute Sentence times for the same (Book, voice), which become this element's
-// metadata cues (see ticket 03). It grows alongside the playlist, so it is re-read every
-// time a Chunk finishes generating.
-function manifestUrl(bookId, voice) {
-  return `/api/books/${encodeURIComponent(bookId)}/manifest?voice=${encodeURIComponent(voice)}`;
+// The EVENT playlist: one continuous source for the stretch of the Book being listened
+// to. It grows as Chunks generate, so the media stack keeps re-fetching it and moves
+// between segments on its own; nothing in this hook runs at a Chunk boundary.
+function playlistUrl(source) {
+  return bookAudioUrl('playlist.m3u8', source);
+}
+
+// The absolute Sentence times that become this element's metadata cues. They are relative
+// to the playlist's own zero, so it has to be read for the same `from` the element is
+// playing or every cue lands at the wrong second.
+function manifestUrl(source) {
+  return bookAudioUrl('manifest', source);
 }
 
 // Plays a Book as one continuous HLS source: the caller attaches `audioRef` to a single
@@ -60,6 +69,9 @@ export function useBookPlayer({
 }) {
   const [chunkAudio, setChunkAudio] = useState({});
   const [wantsToPlay, setWantsToPlay] = useState(false);
+  // Which Chunk the playlist currently being played starts at. Only seekToSentence moves
+  // it, and only when the Listener asks for somewhere this playlist can't reach.
+  const [playlistStart, setPlaylistStart] = useState(0);
   const audioRef = useRef(null);
   const pendingFetchesRef = useRef(new Set());
 
@@ -146,6 +158,15 @@ export function useBookPlayer({
   // Which Chunks already have cues. The manifest always describes the whole Book so far,
   // so every read but the first re-describes Chunks that are already on the track.
   const cuedChunksRef = useRef(new Set());
+  // Which Chunks the Book has narrated audio for, across the whole Book rather than just
+  // the stretch on the timeline - the manifest reports it for every Chunk. It is what
+  // seekToSentence needs to tell "the playlist will reach there" from "it never can".
+  //
+  // Replaced wholesale on every manifest read rather than accumulated: the manifest is
+  // keyed by voice, so what one voice had narrated says nothing about the next, and a set
+  // that only ever grew would keep insisting Chunks are reachable that the new voice has
+  // never generated.
+  const generatedChunksRef = useRef(new Set());
   // A Sentence the Listener has chosen that has no cue yet, so no time to seek to. Held
   // until its Chunk reaches the timeline (see applySeek). A saved resume position starts
   // life as one of these - opening a Book part-way through is the same problem, and until
@@ -200,22 +221,29 @@ export function useBookPlayer({
     return () => track.removeEventListener('cuechange', handleCueChange);
   }, []);
 
-  // Re-read whenever another Chunk finishes generating, which is when the Book gains
-  // Sentences that can be placed on the timeline.
+  // Read on mount and again whenever another Chunk finishes generating, which is when the
+  // Book gains Sentences that can be placed on the timeline. The mount read matters even
+  // for a Book that generates nothing this session: it is how opening a partly-narrated
+  // Book learns what is already there, which seekToSentence needs before the first
+  // /api/audio-chunks call has resolved.
   const readyChunkCount = Object.values(chunkAudio).filter(
     (entry) => entry.status === 'ready',
   ).length;
-  const manifestSrc = manifestUrl(bookId, voice);
+  const manifestSrc = manifestUrl({ bookId, voice, from: playlistStart });
 
   useEffect(() => {
     const track = trackRef.current;
-    if (!track || readyChunkCount === 0) return undefined;
+    if (!track) return undefined;
 
     let cancelled = false;
     fetch(manifestSrc)
       .then((response) => (response.ok ? response.json() : null))
       .then((manifest) => {
         if (cancelled || !Array.isArray(manifest?.chunks)) return;
+
+        generatedChunksRef.current = new Set(
+          manifest.chunks.filter(({ isGenerated }) => isGenerated).map(({ index }) => index),
+        );
 
         for (const chunk of manifest.chunks) {
           if (chunk.sentences.length === 0 || cuedChunksRef.current.has(chunk.index)) continue;
@@ -243,11 +271,13 @@ export function useBookPlayer({
     };
   }, [applySeek, manifestSrc, readyChunkCount]);
 
-  const src = playlistUrl(bookId, voice);
+  const src = playlistUrl({ bookId, voice, from: playlistStart });
   // The only assignment to `src` in the codebase: once on mount, and again only when the
-  // Book or voice changes. Re-pointing it reloads the element, which is why nothing else
-  // is allowed to touch it - a reload mid-Book is exactly the interruption this phase
-  // exists to remove. `speed` is a dependency only because loading a source resets
+  // Book, the voice, or the stretch being played changes. Re-pointing it reloads the
+  // element, which is why nothing else is allowed to touch it - a reload mid-Book is
+  // exactly the interruption this phase exists to remove, and the two things that do it
+  // are both explicit Listener gestures made in the foreground, never a boundary the app
+  // crossed on its own. `speed` is a dependency only because loading a source resets
   // playbackRate, so the current speed has to be re-applied with each load; the guard
   // means a speed change on its own returns before touching anything.
   const loadedSrcRef = useRef(null);
@@ -267,9 +297,9 @@ export function useBookPlayer({
     audio.src = src;
     audio.playbackRate = speed;
 
-    // A voice change is a different timeline, so every cue on the old one is now wrong.
-    // Drop them and re-park the reading position, which the new voice's manifest will
-    // resolve to a new time.
+    // A different voice, or a playlist starting somewhere else, is a different timeline -
+    // every cue on the old one is now wrong rather than merely stale. Drop them; the new
+    // manifest brings the same Sentences back at their new times.
     if (isReload) {
       const track = trackRef.current;
       // Backwards, since each removal shifts everything after it down one.
@@ -277,7 +307,9 @@ export function useBookPlayer({
         track.removeCue(track.cues[index]);
       }
       cuedChunksRef.current = new Set();
-      pendingSeekRef.current = activeOrdinalRef.current;
+      // A seek is already parked when the reload is what that seek asked for. A voice
+      // change has no target of its own, so it re-parks wherever reading currently is.
+      pendingSeekRef.current ??= activeOrdinalRef.current;
     }
   }, [src, speed]);
 
@@ -434,16 +466,47 @@ export function useBookPlayer({
     };
   }, []);
 
+  // Whether the playlist now loaded could ever reach a Chunk, which is not the same as
+  // whether it has yet. It truncates at its first gap, so it reaches Chunk N only if
+  // every Chunk from its start up to N is narrated - one that isn't, and never will be
+  // unless something asks for it, walls off everything after it (see ticket 07).
+  //
+  // The manifest is the only authority on what is narrated, deliberately - the client's
+  // own `chunkAudio` says a Chunk generated, but not whether the playlist can place it
+  // (a Chunk cached before durationSeconds existed can't be - see ticket 02). Getting
+  // this wrong in the optimistic direction parks a seek against a playlist that will
+  // never reach it, which is the ticket 05 hang; getting it wrong the other way costs one
+  // extra reload. So it trusts only what the routes themselves report.
+  const canPlaylistReach = useCallback(
+    (chunkIndex) => {
+      if (chunkIndex < playlistStart) return false;
+
+      for (let index = playlistStart; index < chunkIndex; index += 1) {
+        if (!generatedChunksRef.current.has(index)) return false;
+      }
+      return true;
+    },
+    [playlistStart],
+  );
+
   // Selects where reading is, identified by a Chunk and its index within that Chunk's
   // Sentences - the click target for both the current Chunk's text and any other's,
   // generated or not (see phase 1.5 ticket 01). A Chunk that isn't ready yet is fetched
   // directly here, bypassing chunkFetchPlan's sequential look-ahead ordering, so seeking
-  // ahead doesn't force generating every Chunk in between.
+  // ahead doesn't force generating every Chunk in between. That rule is why the third
+  // case below exists at all.
   //
-  // Seeking backwards needs nothing special: every earlier segment is still in the same
-  // playlist, so it is a move along the timeline the element is already playing, never a
-  // reload. Seeking forwards past the generated region is the one case the playhead can't
-  // follow immediately - applySeek parks it until that Chunk has cues.
+  // Three ways the playhead gets to the target, in order of how little they disturb:
+  //
+  //  - It is already on this timeline, so applySeek writes currentTime and that is all.
+  //    Seeking backwards inside the playlist is always this case.
+  //  - It is past the end of the timeline but the playlist can still grow to it, so
+  //    applySeek parks the seek and the cue's arrival applies it.
+  //  - The playlist can never reach it - the Listener jumped over a stretch that was
+  //    never narrated, or back to before this playlist starts - so the Book is served
+  //    from there instead. That reloads the element, which is safe precisely here: it is
+  //    an explicit gesture in the foreground, not the background `.play()` on a freshly
+  //    loaded element that ADR 0003 identified.
   const seekToSentence = useCallback(
     (chunkIndex, sentenceIndex) => {
       // An explicit click always persists this reading position right away, bypassing
@@ -455,13 +518,21 @@ export function useBookPlayer({
       // The highlight moves whether or not the audio can, so the Listener always sees
       // what they queued.
       setActiveOrdinal(ordinal);
-      applySeek(ordinal);
+
+      if (canPlaylistReach(chunkIndex)) {
+        applySeek(ordinal);
+      } else {
+        // Parked before the re-point so the reload path adopts this target rather than
+        // re-parking wherever reading was.
+        pendingSeekRef.current = ordinal;
+        setPlaylistStart(chunkIndex);
+      }
 
       if (chunkAudio[chunkIndex]?.status !== 'ready') {
         fetchChunk(chunkIndex);
       }
     },
-    [applySeek, chunkAudio, fetchChunk, ordinals, persistResumePosition],
+    [applySeek, canPlaylistReach, chunkAudio, fetchChunk, ordinals, persistResumePosition],
   );
 
   return {
