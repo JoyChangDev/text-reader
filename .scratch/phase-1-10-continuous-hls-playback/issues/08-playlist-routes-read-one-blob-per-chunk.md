@@ -8,6 +8,18 @@
 
 Found by running the real dev server against the live Blob store while trying to close ticket 04's last item. It is a blocker for that item and for ticket 06, and it is not a storage misconfiguration — the app is doing it to itself.
 
+## Before you start — read this, don't re-derive it
+
+Everything below was measured on 2026-08-07. If you are picking this up on a different machine, or in a fresh session, these four things will otherwise cost you an hour.
+
+**The store's 403s are this ticket's own bug, not a misconfiguration.** If public blob URLs return 403 while `list()`/`head()` keep working, that is the rate limiting described under Measured. Do not go looking at the Vercel dashboard, the store's access mode, or the quota — all three were checked and ruled out. Wait roughly half an hour and it clears. Above all, do not run repeated fan-out reads to "confirm" it; that is what re-triggers it.
+
+**Local dev works against the real Blob store, but `.env.local` is gitignored.** A fresh clone has no `BLOB_READ_WRITE_TOKEN`, so every route 502s until you run `vercel env pull`. `.claude/launch.json` is committed, so `npm run dev` on port 3100 is already wired.
+
+**The `vercel` CLI may not be installed** — it was not on the machine this was written on. `vercel install upstash` needs it, or use the Marketplace in the dashboard instead.
+
+**Verifying stage 1 costs one request, not a sweep.** Call the playlist route once for a Book with a few thousand Chunks and look at the wall time: 5.4s before, well under a second after. Do not loop.
+
 ## What happens
 
 [`readCachedChunks`](../../../app/_lib/audioGenerationService.js) issues one `storageClient.get()` per Chunk index, all at once:
