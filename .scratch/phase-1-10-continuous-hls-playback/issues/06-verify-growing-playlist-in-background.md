@@ -2,9 +2,11 @@
 
 **What to build:** Nothing — the measurement the phase's load-bearing risk actually requires. Confirm on a physical iPhone that playback continues across the boundary where the media stack must re-fetch a growing EVENT playlist to discover new segments, in both a Safari tab and standalone PWA mode.
 
-**Blocked by:** 05
+**Blocked by:** 05, 08
 
-**Status:** ready-for-human
+**Status:** blocked
+
+> **Do not run this until [ticket 08](08-playlist-routes-read-one-blob-per-chunk.md) lands.** Each playlist poll currently fans out one Blob read per Chunk of the whole Book, which trips the store's rate limiting and makes segment fetches return 403 for tens of minutes. On a device that presents as playback stopping at a segment boundary partway through a listening session — which is indistinguishable from the failure this ticket exists to measure, and would be recorded against the EVENT playlist wrongly.
 
 The spike behind [ADR 0003](../../../docs/adr/0003-hls-continuous-playback.md) served a **complete VOD** playlist. This phase serves a **growing EVENT** playlist, and when playback reaches the last known segment the media stack must re-fetch the playlist to learn about more. Whether it does that reliably while backgrounded is unverified — and if it does not, the failure looks exactly like the bug this phase set out to fix, just at a coarser granularity.
 
