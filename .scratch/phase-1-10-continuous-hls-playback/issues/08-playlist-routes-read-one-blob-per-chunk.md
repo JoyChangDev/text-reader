@@ -46,7 +46,7 @@ The failure is **intermittent and looks like something else**. During ticket 06 
 
 It also means ticket 04's remaining item cannot be honestly checked off: segments do fetch correctly from real Vercel Blob URLs (verified — real MP3 bytes, 200) but only when the store is not busy being rate-limited by our own routes.
 
-- [ ] A playlist or manifest request costs a bounded number of Blob reads, independent of how many Chunks the Book has.
+- [x] A playlist or manifest request costs a bounded number of Blob reads, independent of how many Chunks the Book has. _Done in stage 1 for the normal case — the cost is now the length of the generated run, not the Book. A fully-narrated Book is still O(Book); that is what the Redis index in stage 2 closes._
 - [ ] Generating a Chunk updates whatever index the routes read, so a growing Book still grows the playlist — the EVENT playlist's whole mechanism depends on it.
 - [ ] The index carries what `isPlayableChunk` needs (`url`, `durationSeconds`) and what the manifest needs (`boundaries`), or the routes stay O(Chunk) for the data they can't get from it.
 - [ ] A Chunk cached before `durationSeconds` existed is still reported ungenerated, so ticket 02's lazy re-measurement still triggers.
@@ -56,10 +56,44 @@ It also means ticket 04's remaining item cannot be honestly checked off: segment
 
 ## Comments
 
-### Design note, not yet decided
+### Design — decided
 
-The obvious shape is a per-(Book, voice) index blob — one JSON document listing each generated Chunk's `url`, `durationSeconds` and `boundaries` — written by `/api/audio-chunks` as it generates, read once by each route. That turns both routes into a single Blob read.
+Two facts settled the shape.
 
-The open questions are concurrency and size. Concurrency: `/api/audio-chunks` requests fire in parallel (the look-ahead window is requested all at once), so a read-modify-write of a shared index will lose updates unless it is made safe. Size: `boundaries` is word-level TTS output for every Sentence, so a single index for a 2,000-Chunk Book may be large enough to want splitting — possibly a light index for the playlist and per-Chunk metadata still read lazily for the manifest, which only needs the Chunks actually on the timeline.
+**Blob URLs are derivable, so the index never stores them.** `cacheKey` is `${bookId}/${chunkIndex}/${voice}` and `put` uses `addRandomSuffix: false`, so a segment URL is a pure function of (store, Book, Chunk, voice).
 
-Worth settling before implementing, since it changes what ticket 03 built.
+**Vercel Blob has no compare-and-swap.** In `@vercel/blob@2.6.1`, `ifMatch` exists only on the delete options ("Can only be used when deleting a single URL"); `put` takes `PutCommandOptions`, which adds only `multipart`. So a shared index blob under the look-ahead's parallel writers would lose updates undetectably. An index in Blob is therefore out, and `list()` is out too — it is an Advanced Operation, 2,000/month on Hobby, so it cannot be on a polled path.
+
+**The index goes in Redis (Upstash, via the Vercel Marketplace).** A small, hot, mutable, concurrently-written index is a database shape, not an object-storage shape. `HSET` writes a single field atomically, so generation needs no read-modify-write and no retry loop at all. Audio itself stays in Blob.
+
+Two hashes per (Book, voice), because their read frequencies differ by orders of magnitude:
+
+| key                               | field → value                       | read by                                  | size                                                         |
+| --------------------------------- | ----------------------------------- | ---------------------------------------- | ------------------------------------------------------------ |
+| `book:{bookId}:{voice}:durations` | chunkIndex → `durationSeconds`      | playlist, `HGETALL`                      | ~14 KB at 2,000 Chunks                                       |
+| `book:{bookId}:{voice}:cues`      | chunkIndex → derived Sentence spans | manifest, `HMGET` for placed Chunks only | ~130–450 KB whole, but only the placed range is ever fetched |
+
+**Cues store derived spans, not `boundaries`.** Measured on the live store, per-Chunk metadata averages 3,561 bytes and is almost entirely word-level `boundaries` — ~7 MB across 2,000 Chunks. The manifest never returns `boundaries`; it returns what `deriveSentenceSpans` makes of them, roughly four Sentences of two numbers each. Deriving at generation time is a 20–50× reduction _and_ takes `deriveSentenceSpans` off the request path, which is most of the 4.7s the manifest route currently spends in application code. `boundaries` stays in the per-Chunk Blob as the raw record.
+
+**Redis is a cache, not the source of truth.** Per-Chunk Blob metadata stays authoritative, so an evicted or unavailable Redis degrades to a rebuild rather than data loss. That makes the fallback path load-bearing, which is why the first checklist item below is worth doing on its own even before Redis exists.
+
+### Staging
+
+1. **Stop reading past the first gap.** — **done**, see the notes below. The playlist truncates there, so everything beyond it is read for nothing. Reading from `from` until the first miss costs O(contiguous generated run) instead of O(Book): 12 reads instead of 1,983 on the Book currently in the store. No new state, no service, no migration — and it is exactly the shape the Redis-miss fallback needs, so it is not throwaway.
+2. **Add the Redis index.** Needs Upstash provisioned first (`vercel install upstash`, or the Marketplace in the dashboard) — credentials are injected as environment variables, so this cannot land until that exists.
+
+### Stage 1 notes
+
+`readCachedChunks` now scans forward from `from` in batches of 16 and stops at the first Chunk that isn't playable. Batched rather than one at a time because a strictly sequential scan would cost a round trip per Chunk; 16 covers the whole look-ahead window in one trip while staying far below what looks like abnormal traffic.
+
+**`from` moved into `readBookAudio`, and `parsePlaylistStart` with it.** The scan has to start where the playlist starts, or a Listener who jumped over an ungenerated stretch (ticket 07) would stop at the gap they already jumped past and get an empty playlist. Validating `from` needs the Book's length, so it can only happen after the lookup — which is also why it belongs there rather than in each route. Both routes lost their duplicated preamble as a result, and the "the two routes must agree about `from`" property is now structural instead of conventional.
+
+**One semantic change, deliberate.** A Chunk stored beyond the first gap now reports `isGenerated: false`, because nothing looked at it. That is already what the playlist concludes — it truncates at the gap — and ticket 07's client re-points rather than waiting for a timeline that can never reach it. Nothing regenerates unnecessarily either: `getOrGenerateAudio` checks the cache before synthesizing, so a Chunk that really is stored comes back from cache without touching edge-tts.
+
+Two route tests were leaking `mockResolvedValueOnce` values — they queued a `getCachedChunks` result the route never consumed, which then spilled into whichever test ran next. Both now assert `getCachedChunks` was never called, which is the behaviour worth pinning anyway.
+
+**Not yet verified against the real store.** The store was still rate-limited from the diagnosis that found this bug — requests fail at the very first read, before any of the new code runs — and recovery took roughly half an hour last time. Re-run the playlist route against the live store once it clears; the number to look for is a response well under a second where it was 5.4s.
+
+### Stage 2 not startable yet
+
+It needs an Upstash resource on the account (`vercel install upstash`, or the Marketplace in the dashboard). That is a provisioning action requiring Vercel auth and billing consent, so it has to come from the repo owner.

@@ -62,9 +62,10 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
       expect(body).toContain('#EXT-X-ENDLIST');
     });
 
+    // No getCachedChunks mock: the Chunk audio is never read, which is the point - an
+    // unusable start is rejected before anything touches the store.
     test('rejects a start that names no Chunk in this Book with 400', async () => {
       getBook.mockResolvedValueOnce({ bookId: 'book-1', chunks: ['一。', '二。'] });
-      getCachedChunks.mockResolvedValueOnce([chunkAudio(0, 5), chunkAudio(1, 4)]);
 
       const response = await GET(
         requestFor('book-1', '?voice=zh-TW-default&from=7'),
@@ -72,6 +73,7 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
       );
 
       expect(response.status).toBe(400);
+      expect(getCachedChunks).not.toHaveBeenCalled();
     });
   });
 
@@ -93,6 +95,7 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
       bookId: 'book-1',
       voice: 'zh-TW-default',
       chunkCount: 2,
+      from: 0,
     });
   });
 
@@ -117,6 +120,7 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
       bookId: 'book-1',
       voice: 'zh-TW-HsiaoYuNeural',
       chunkCount: 1,
+      from: 0,
     });
   });
 

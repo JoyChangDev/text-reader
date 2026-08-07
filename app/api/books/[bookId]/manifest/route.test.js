@@ -66,6 +66,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
       bookId: 'book-1',
       voice: 'zh-TW-default',
       chunkCount: 2,
+      from: 0,
     });
   });
 
@@ -79,6 +80,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
       bookId: 'book-1',
       voice: 'zh-TW-HsiaoYuNeural',
       chunkCount: 1,
+      from: 0,
     });
   });
 
@@ -148,9 +150,10 @@ describe('GET /api/books/[bookId]/manifest', () => {
       expect(body.chunks[2].startSeconds).toBe(4);
     });
 
+    // No getCachedChunks mock: the Chunk audio is never read, which is the point - an
+    // unusable start is rejected before anything touches the store.
     test('rejects a start that names no Chunk in this Book with 400', async () => {
       getBook.mockResolvedValueOnce({ bookId: 'book-1', chunks: ['你好。'] });
-      getCachedChunks.mockResolvedValueOnce([chunkAudio(0, 3)]);
 
       const response = await GET(
         requestFor('book-1', '?voice=zh-TW-default&from=4'),
@@ -158,6 +161,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
       );
 
       expect(response.status).toBe(400);
+      expect(getCachedChunks).not.toHaveBeenCalled();
     });
   });
 

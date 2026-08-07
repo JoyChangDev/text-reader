@@ -56,16 +56,48 @@ export async function getOrGenerateAudio(
   return storageClient.put(key, { ...generated, durationSeconds });
 }
 
+// How many Chunks are read per round trip. Wide enough that the look-ahead window
+// (LOOKAHEAD = 10 in useBookPlayer) is normally covered in one, narrow enough that a
+// burst never looks to the Blob store like abnormal traffic — see ticket 08, where an
+// unbounded fan-out got the store's firewall to 403 every public read for half an hour.
+const READ_BATCH = 16;
+
 // The read-only bulk counterpart to getOrGenerateAudio, for the playlist and manifest
 // routes: what a (Book, voice) already has, one entry per Chunk index and undefined where
 // that Chunk isn't cached. It never synthesizes and never repairs — /api/audio-chunks
 // stays the only thing that calls edge-tts (see ticket 03).
-export async function readCachedChunks({ storageClient }, { bookId, voice, chunkCount }) {
-  return Promise.all(
-    Array.from({ length: chunkCount }, (_, chunkIndex) =>
-      storageClient.get(cacheKey({ bookId, chunkIndex, voice })),
-    ),
-  );
+//
+// It reads forward from `from` in batches and stops at the first Chunk that isn't there.
+// Everything past that gap is read for nothing: the playlist truncates at it and the
+// manifest follows, so a Chunk beyond it has no place on the timeline however complete
+// its own audio is. The cost is therefore the length of the generated run, not the length
+// of the Book — the difference between 12 reads and 1,983 on a real Book. A Chunk past
+// the gap comes back undefined because this never looked, which is the same conclusion
+// the playlist reaches about it anyway.
+//
+// `from` is the Chunk the caller's playlist starts at (see ticket 07). The scan has to
+// honour it, or a Listener who jumped over an ungenerated stretch would get an empty
+// playlist: the scan would stop at the gap they already jumped past.
+export async function readCachedChunks({ storageClient }, { bookId, voice, chunkCount, from = 0 }) {
+  const chunks = new Array(chunkCount).fill(undefined);
+
+  for (let start = from; start < chunkCount; start += READ_BATCH) {
+    const end = Math.min(start + READ_BATCH, chunkCount);
+    const batch = await Promise.all(
+      Array.from({ length: end - start }, (_, offset) =>
+        storageClient.get(cacheKey({ bookId, chunkIndex: start + offset, voice })),
+      ),
+    );
+
+    const gap = batch.findIndex((metadata) => !isPlayableChunk(metadata));
+    batch.slice(0, gap === -1 ? batch.length : gap).forEach((metadata, offset) => {
+      chunks[start + offset] = metadata;
+    });
+
+    if (gap !== -1) break;
+  }
+
+  return chunks;
 }
 
 const defaultClients = {
@@ -81,6 +113,6 @@ export function generateAudioForChunk({ bookId, chunkIndex, text, voice }) {
   return getOrGenerateAudio(defaultClients, { bookId, chunkIndex, voice, text });
 }
 
-export function getCachedChunks({ bookId, voice, chunkCount }) {
-  return readCachedChunks(defaultClients, { bookId, voice, chunkCount });
+export function getCachedChunks({ bookId, voice, chunkCount, from }) {
+  return readCachedChunks(defaultClients, { bookId, voice, chunkCount, from });
 }

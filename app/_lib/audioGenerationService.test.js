@@ -213,6 +213,89 @@ describe('readCachedChunks', () => {
     expect(chunks).toEqual([]);
     expect(storageClient.get).not.toHaveBeenCalled();
   });
+
+  // Each of these reads is an unauthenticated fetch of a public Blob URL, and reading one
+  // per Chunk of a whole Book at once is what trips the store's rate limiting (see ticket
+  // 08). Everything past the first gap is read for nothing anyway: the playlist truncates
+  // there and the manifest follows it.
+  describe('bounding the read to what the timeline can use', () => {
+    const cached = (index) => ({
+      url: `https://blob.example/${index}.mp3`,
+      boundaries: [],
+      durationSeconds: 5,
+    });
+
+    function storageWith(generatedIndexes) {
+      return {
+        get: vi.fn(async (key) => {
+          const index = Number(key.split('/')[1]);
+          return generatedIndexes.includes(index) ? cached(index) : undefined;
+        }),
+      };
+    }
+
+    function readIndexes(storageClient) {
+      return storageClient.get.mock.calls.map(([key]) => Number(key.split('/')[1]));
+    }
+
+    test('stops at the first gap instead of reading the rest of the Book', async () => {
+      const storageClient = storageWith([0, 1, 2]);
+
+      const chunks = await readCachedChunks(
+        { storageClient },
+        { bookId: 'book-1', voice: 'zh-TW-default', chunkCount: 500 },
+      );
+
+      expect(chunks).toHaveLength(500);
+      expect(chunks.slice(0, 3)).toEqual([cached(0), cached(1), cached(2)]);
+      expect(chunks[3]).toBeUndefined();
+      expect(Math.max(...readIndexes(storageClient))).toBeLessThan(50);
+    });
+
+    // A Chunk past the gap reads as ungenerated because this never looked. That is what
+    // the playlist already concluded about it, and the client re-points rather than
+    // waiting for a timeline that can't reach it (ticket 07).
+    test('reports a Chunk beyond the gap as absent even if it is stored', async () => {
+      const storageClient = storageWith([0, 1, 400]);
+
+      const chunks = await readCachedChunks(
+        { storageClient },
+        { bookId: 'book-1', voice: 'zh-TW-default', chunkCount: 500 },
+      );
+
+      expect(chunks[400]).toBeUndefined();
+      expect(readIndexes(storageClient)).not.toContain(400);
+    });
+
+    // The Listener seeking past a gap re-points the playlist to start there, so the scan
+    // has to start there too - otherwise it stops at a gap the Listener already jumped
+    // over and the re-pointed playlist comes back empty.
+    test('starts at the given Chunk, ignoring a gap before it', async () => {
+      const storageClient = storageWith([15, 16, 17]);
+
+      const chunks = await readCachedChunks(
+        { storageClient },
+        { bookId: 'book-1', voice: 'zh-TW-default', chunkCount: 500, from: 15 },
+      );
+
+      expect(chunks.slice(15, 18)).toEqual([cached(15), cached(16), cached(17)]);
+      expect(chunks[0]).toBeUndefined();
+      expect(readIndexes(storageClient)).not.toContain(0);
+      expect(readIndexes(storageClient)).toContain(15);
+    });
+
+    test('reads a contiguous run in far fewer round trips than one per Chunk', async () => {
+      const storageClient = storageWith(Array.from({ length: 11 }, (unused, i) => i));
+
+      await readCachedChunks(
+        { storageClient },
+        { bookId: 'book-1', voice: 'zh-TW-default', chunkCount: 1983 },
+      );
+
+      // The whole Book was 1,983 reads before this; the generated run is 11 Chunks long.
+      expect(storageClient.get.mock.calls.length).toBeLessThan(50);
+    });
+  });
 });
 
 describe('generateAudioForChunk', () => {
