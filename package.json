@@ -19,6 +19,7 @@
   "dependencies": {
     "@chakra-ui/react": "^3.36.0",
     "@emotion/react": "^11.14.0",
+    "@upstash/redis": "^1.38.2",
     "@vercel/blob": "^2.6.1",
     "edge-tts-universal": "^1.4.0",
     "next": "16.2.10",
