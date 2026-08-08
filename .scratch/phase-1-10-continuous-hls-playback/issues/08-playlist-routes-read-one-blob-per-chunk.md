@@ -12,7 +12,13 @@ Found by running the real dev server against the live Blob store while trying to
 
 Everything below was measured on 2026-08-07. If you are picking this up on a different machine, or in a fresh session, these four things will otherwise cost you an hour.
 
-**The store's 403s are this ticket's own bug, not a misconfiguration.** If public blob URLs return 403 while `list()`/`head()` keep working, that is the rate limiting described under Measured. Do not go looking at the Vercel dashboard, the store's access mode, or the quota — all three were checked and ruled out. Wait roughly half an hour and it clears. Above all, do not run repeated fan-out reads to "confirm" it; that is what re-triggers it.
+**The store's 403s are this ticket's own bug, not a misconfiguration.** They are caused by the fan-out below, so the fix is this ticket, not a setting. Above all, do not run repeated fan-out reads to "confirm" it; that is what causes it.
+
+> **Corrected 2026-08-08 — the mechanism below is wrong, and "wait half an hour" is wrong.** This section used to say the quota had been "checked and ruled out". It had not: what was checked was **Storage** (1.5% of 1 GB), the one metric never under pressure. The metric that actually blew is **Simple Operations — 11.3k against a 10k monthly allowance**, and every `storageClient.get()` spends one. At 1,983 reads per request, roughly five playlist requests exhaust a month.
+>
+> Consequences for anyone picking this up: a 403 from Blob **does not** distinguish quota exhaustion from the platform firewall — a single quiet `get()` 403s under quota exhaustion just as a burst does. And exhaustion does **not** clear in half an hour; it clears on the billing cycle (**access resumes 2026-09-06**). Read the dashboard's four metrics, not one. See [ticket 09](09-blob-usage-indicator-costs-an-advanced-operation.md) for the readings and for the same bug shape in the capacity indicator.
+>
+> This also raises what stage 2 is for. Stage 1 makes a poll cost the length of the generated run, which **grows over a listening session** — several hundred Simple Operations per poll by mid-Book, against 10k a month. Stage 2 takes the polled path to **zero** Blob operations. That is not a performance improvement; on Hobby it is the difference between the app working and not.
 
 **Local dev works against the real Blob store, but `.env.local` is gitignored.** A fresh clone has no `BLOB_READ_WRITE_TOKEN`, so every route 502s until you run `vercel env pull`. `.claude/launch.json` is committed, so `npm run dev` on port 3100 is already wired.
 
@@ -51,6 +57,8 @@ The playlist is an EVENT playlist. The media stack re-fetches it continuously du
 The store has Firewall enabled, and [Vercel Blob's security docs](https://vercel.com/docs/vercel-blob/security) say Blob is behind a platform-wide firewall that "blocks abnormal or suspicious levels of incoming requests". 1,983 parallel unauthenticated reads is that. The authenticated API is unaffected, which is exactly the split observed.
 
 Recovery is not quick: still 403 after three minutes of quiet, recovered after roughly half an hour.
+
+> **Superseded — see the correction at the top.** Two claims in this section did not survive: `storageClient.get()` is not an unauthenticated public fetch (it is passed a token, and spends a Simple Operation per call), and the half-hour recovery above describes at most a transient episode, not the state the store is in. The reading it was inferred from was **Storage**; the metric that actually blew is **Simple Operations**, which recovers on the billing cycle. Do not plan around half an hour.
 
 ## Why this matters beyond being slow
 
@@ -104,7 +112,7 @@ Two hashes per (Book, voice), because their read frequencies differ by orders of
 
 Two route tests were leaking `mockResolvedValueOnce` values — they queued a `getCachedChunks` result the route never consumed, which then spilled into whichever test ran next. Both now assert `getCachedChunks` was never called, which is the behaviour worth pinning anyway.
 
-**Not yet verified against the real store.** The store was still rate-limited from the diagnosis that found this bug — requests fail at the very first read, before any of the new code runs — and recovery took roughly half an hour last time. Re-run the playlist route against the live store once it clears; the number to look for is a response well under a second where it was 5.4s.
+**Not yet verified against the real store, and cannot be until 2026-09-06.** Requests fail at the very first read, before any of the new code runs. This originally said "recovery took roughly half an hour last time" — that is wrong, see the correction at the top: the store is over its **Simple Operations** allowance (11.3k / 10k) and access resumes on the billing cycle, **2026-09-06**. Do not keep retrying before then; every attempt is another operation against a quota that is already spent. On that date, re-run the playlist route against the live store; the number to look for is a response well under a second where it was 5.4s.
 
 ### Stage 2 not startable yet
 
