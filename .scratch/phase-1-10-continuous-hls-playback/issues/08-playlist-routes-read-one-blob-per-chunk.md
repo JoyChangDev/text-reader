@@ -114,6 +114,26 @@ Two route tests were leaking `mockResolvedValueOnce` values — they queued a `g
 
 **Not yet verified against the real store, and cannot be until 2026-09-06.** Requests fail at the very first read, before any of the new code runs. This originally said "recovery took roughly half an hour last time" — that is wrong, see the correction at the top: the store is over its **Simple Operations** allowance (11.3k / 10k) and access resumes on the billing cycle, **2026-09-06**. Do not keep retrying before then; every attempt is another operation against a quota that is already spent. On that date, re-run the playlist route against the live store; the number to look for is a response well under a second where it was 5.4s.
 
-### Stage 2 not startable yet
+### Stage 2 — in progress since 2026-08-08
 
-It needs an Upstash resource on the account (`vercel install upstash`, or the Marketplace in the dashboard). That is a provisioning action requiring Vercel auth and billing consent, so it has to come from the repo owner.
+Upstash is provisioned (Vercel Dashboard → project → Storage → Create Database, not the Marketplace "Install" button, which links an existing account, and not "Build with v0", which is unrelated). Don't re-derive the following.
+
+**The credentials arrive under the legacy Vercel KV names.** `KV_REST_API_URL`, `KV_REST_API_TOKEN`, `KV_REST_API_READ_ONLY_TOKEN`, `KV_URL`, `REDIS_URL`. So `@upstash/redis`'s `Redis.fromEnv()` **does not work** — it looks for `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`. Construct the client explicitly from the `KV_REST_API_*` pair. `REDIS_URL`/`KV_URL` are TCP connection strings; don't use them, the REST client is the right shape for serverless.
+
+**Getting them locally needs `vercel link` first.** `vercel env pull` fails with "Your codebase isn't linked to a project" until then, because `.vercel/project.json` is gitignored. On `vercel link`, answer **yes** to "Link to existing project?" — answering no silently creates a new empty one. `env pull` overwrites `.env.local` rather than merging.
+
+**The client's return types are not consistent between commands.** Probed against the real service: the same hash values come back as strings from `HGETALL` and as numbers from `HMGET`. Coerce with `Number()`; a string reaching the playlist builder renders as `#EXTINF:"12.5"`.
+
+**Where the segment URL's origin comes from — decided.** The design above settles that URLs are derivable and so are never stored, but not where the store origin comes from. It is recovered from a real `put` response and recorded once, rather than parsed out of `BLOB_READ_WRITE_TOKEN` (undocumented token format) or configured as a second env var. Storing URLs in the index instead would put ~220 KB on a continuously polled path at 2,000 Chunks — this ticket's own cost, moved to Redis.
+
+Done so far: [chunkIndex.js](../../../app/_lib/chunkIndex.js), the pure half — `readIndexedRun` turns an index read into the same shape `readCachedChunks` returns, scanning from `from` to the first gap. A miss is `undefined` meaning "ask Blob", deliberately distinct from an empty run meaning "nothing is generated", because the index is a cache and must never be able to convince a route that a fully-narrated Book is empty.
+
+Still to do:
+
+1. The Redis I/O — `HGETALL` durations plus the recorded origin in one pipeline; `HMGET` cues for placed Chunks only.
+2. Generation writes the index, deriving Sentence spans at generation time.
+3. `readBookAudio` reads the index and falls back to the stage 1 Blob scan on a miss.
+4. `bookManifest` takes pre-derived spans, taking `deriveSentenceSpans` off the request path.
+5. **Check Upstash's own free-tier command allowance first.** Playback polls the playlist continuously, one `HGETALL` each. If that doesn't fit, the shape has to change (longer client poll interval, or cache headers on the playlist response) — which affects everything above, so it is worth settling before writing more.
+
+The two live-store criteria cannot be verified before **2026-09-06**; see the correction at the top.
