@@ -11,22 +11,51 @@ vi.mock('@/app/_lib/blobUsage', () => ({
   cleanupBlobs: vi.fn(),
 }));
 
+function renderIndicator() {
+  render(
+    <ChakraProvider>
+      <BlobUsageIndicator />
+    </ChakraProvider>,
+  );
+}
+
+// Reveals the usage the way a Listener does. Mounting deliberately doesn't - see ticket 09.
+async function checkUsage() {
+  fireEvent.click(screen.getByRole('button', { name: /查看用量/ }));
+  return screen.findByText(/%/);
+}
+
 describe('BlobUsageIndicator', () => {
   beforeEach(() => {
     getUsage.mockReset();
     cleanupBlobs.mockReset();
   });
 
-  test('shows the current usage percent', async () => {
+  test('does not read the Blob store just because the page rendered', () => {
+    renderIndicator();
+
+    expect(getUsage).not.toHaveBeenCalled();
+  });
+
+  test('shows the current usage percent once the Listener asks for it', async () => {
     getUsage.mockResolvedValue({ usedBytes: 50, quotaBytes: 100, percent: 50 });
 
-    render(
-      <ChakraProvider>
-        <BlobUsageIndicator />
-      </ChakraProvider>,
-    );
+    renderIndicator();
+    await checkUsage();
 
-    expect(await screen.findByText(/50%/)).toBeInTheDocument();
+    expect(screen.getByText(/50%/)).toBeInTheDocument();
+  });
+
+  test('leaves the control usable when the usage check fails', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    getUsage.mockRejectedValue(new Error('usage failed'));
+
+    renderIndicator();
+    fireEvent.click(screen.getByRole('button', { name: /查看用量/ }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /查看用量/ })).toBeEnabled());
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   test('clicking "clean up now" triggers cleanup and refreshes the usage', async () => {
@@ -35,12 +64,8 @@ describe('BlobUsageIndicator', () => {
       .mockResolvedValueOnce({ usedBytes: 10, quotaBytes: 100, percent: 10 });
     cleanupBlobs.mockResolvedValue({ deleted: ['book-1/0/voice-a.mp3'] });
 
-    render(
-      <ChakraProvider>
-        <BlobUsageIndicator />
-      </ChakraProvider>,
-    );
-    await screen.findByText(/50%/);
+    renderIndicator();
+    await checkUsage();
 
     fireEvent.click(screen.getByRole('button', { name: /立即清理/ }));
 
@@ -53,12 +78,8 @@ describe('BlobUsageIndicator', () => {
     getUsage.mockResolvedValue({ usedBytes: 50, quotaBytes: 100, percent: 50 });
     cleanupBlobs.mockRejectedValue(new Error('cleanup failed'));
 
-    render(
-      <ChakraProvider>
-        <BlobUsageIndicator />
-      </ChakraProvider>,
-    );
-    await screen.findByText(/50%/);
+    renderIndicator();
+    await checkUsage();
 
     fireEvent.click(screen.getByRole('button', { name: /立即清理/ }));
 
