@@ -1,0 +1,248 @@
+import { AwsClient } from 'aws4fetch';
+
+// Wraps Cloudflare R2's S3-compatible API — the only file in the app that talks to a storage
+// provider. See
+// .scratch/phase-1-11-object-storage-migration/issues/02-object-storage-client-on-aws4fetch.md,
+// and .scratch/phase-1-audiobook-reader/issues/04-audio-generation-service.md for the seam
+// itself. Audio and its boundary metadata are stored as two objects under a deterministic
+// pathname derived from the cache key, so a later `get` can find them again.
+//
+// Signing is aws4fetch rather than @aws-sdk/client-s3 because this module is imported
+// transitively by the playlist route, which the media stack re-fetches continuously during
+// playback: the SDK's megabytes and cold start would land on the one path phases 1.8-1.10
+// were spent making reliable in the background. The price is that ListObjectsV2 comes back
+// as XML, which is ticket 03's parser.
+
+const metadataPathname = (key) => `${key}.json`;
+const audioPathname = (key) => `${key}.mp3`;
+
+// R2 speaks path-style S3 on a per-account host, and signs against a fixed region.
+const R2_REGION = 'auto';
+const r2Endpoint = (accountId) => `https://${accountId}.r2.cloudflarestorage.com`;
+
+// SigV4 signs the canonical URI, so the key has to be encoded before it is signed rather
+// than left to whatever the runtime does with the URL. Separators stay separators: a
+// pathname is `<bookId>/<chunkIndex>/<voice>.mp3`, not one opaque segment.
+const encodeKey = (pathname) => pathname.split('/').map(encodeURIComponent).join('/');
+
+// deriveSegmentUrl in chunkIndex.js concatenates origin and pathname, and audioPathname has
+// no leading slash, so an origin missing its trailing slash yields `…workers.devbook-1/…`.
+// Rejected here rather than quietly repaired. Normalising would fix only this call site:
+// deriveSegmentUrl concatenates raw, and ticket 04 points it at this same variable, so a
+// slashless origin would then produce playable URLs from `put` and broken ones from the
+// Chunk index — the two disagreeing about a value they are supposed to share. Both READMEs
+// say to keep the slash; this makes that true rather than advisory.
+function requireTrailingSlash(segmentOrigin) {
+  if (!segmentOrigin.endsWith('/')) {
+    throw new Error(
+      `Object storage is misconfigured: ${ENV_NAMES.segmentOrigin} must end with a slash, got "${segmentOrigin}".`,
+    );
+  }
+
+  return segmentOrigin;
+}
+
+// Segments were served with a long max-age under the previous provider, and the Worker
+// passes stored headers through rather than inventing them (see workers/segments/README.md),
+// so the value has to be set at write time or playback loses caching it already had.
+const AUDIO_CACHE_CONTROL = 'public, max-age=2592000';
+
+// aws4fetch retries a 5xx or a 429 ten times by default, backing off exponentially from 50ms
+// — up to about half a minute held open. This module is on the playlist route the media stack
+// re-fetches during playback, where a request that eventually fails slowly is worse than one
+// that fails: the route has its own fallback, and phases 1.8-1.10 were spent on not stalling
+// there. Two retries covers a blip and caps the delay at a few hundred milliseconds.
+const RETRIES = 2;
+
+// edge-tts hands back a Blob, and which Blob implementation that is depends on the runtime.
+// A Request built by undici accepts Node's and silently stringifies a foreign one to the
+// nine bytes "undefined" — an upload that succeeds and plays as nothing. Reading the Blob to
+// bytes here makes the write independent of that, at no cost: it is already wholly in memory,
+// and audioGenerationService has read the same bytes to measure the duration.
+const toBytes = (body) => (typeof body?.arrayBuffer === 'function' ? body.arrayBuffer() : body);
+
+const ENV_NAMES = {
+  accountId: 'R2_ACCOUNT_ID',
+  bucket: 'R2_BUCKET',
+  accessKeyId: 'R2_ACCESS_KEY_ID',
+  secretAccessKey: 'R2_SECRET_ACCESS_KEY',
+  segmentOrigin: 'SEGMENT_ORIGIN',
+};
+
+function missingSettings(resolved, required) {
+  return required.filter((name) => !resolved[name]).map((name) => ENV_NAMES[name]);
+}
+
+// The four the S3 endpoint cannot be addressed without. `segmentOrigin` is required only by
+// `put`, which is the one method that has to name a URL a Listener will play from.
+const STORE_SETTINGS = ['accountId', 'bucket', 'accessKeyId', 'secretAccessKey'];
+
+export function createObjectStorageClient(overrides = {}) {
+  // Resolved per call rather than at construction. Every consumer builds its default client
+  // at module scope, so reading the environment there would fix whatever was set at import
+  // time and would turn an unconfigured environment into an import-time crash — including in
+  // the test suite, which imports these modules with no credentials at all. An absent
+  // configuration instead fails at the seam, loudly, and never as an empty result: a `get`
+  // that resolved undefined would read as "this Chunk isn't generated yet", and a `list` that
+  // resolved [] would read as an empty store.
+  function settings(required) {
+    const {
+      accountId = process.env.R2_ACCOUNT_ID,
+      bucket = process.env.R2_BUCKET,
+      accessKeyId = process.env.R2_ACCESS_KEY_ID,
+      secretAccessKey = process.env.R2_SECRET_ACCESS_KEY,
+      segmentOrigin = process.env.SEGMENT_ORIGIN,
+    } = overrides;
+
+    const resolved = { accountId, bucket, accessKeyId, secretAccessKey, segmentOrigin };
+    const missing = missingSettings(resolved, required);
+    if (missing.length > 0) {
+      throw new Error(`Object storage is not configured: set ${missing.join(', ')}.`);
+    }
+
+    return resolved;
+  }
+
+  // Held across calls, because an AwsClient carries the cache of derived signing keys: the
+  // four chained HMACs that turn the secret into a date/region/service key. A fresh instance
+  // per request re-derives all four every time, which readCachedChunks would pay sixteen
+  // times over per batch on the playlist route. Keyed by the credentials so a rotated key or
+  // a test's overrides can't be served by a client signing with the previous secret.
+  let signer;
+  function signerFor({ accessKeyId, secretAccessKey }) {
+    if (signer?.accessKeyId !== accessKeyId || signer?.secretAccessKey !== secretAccessKey) {
+      signer = new AwsClient({
+        accessKeyId,
+        secretAccessKey,
+        service: 's3',
+        region: R2_REGION,
+        retries: RETRIES,
+      });
+    }
+
+    return signer;
+  }
+
+  // One signed request against one object. `pathname` is a literal key, already suffixed.
+  async function request(pathname, { method, body, contentType, cacheControl } = {}) {
+    const { accountId, bucket, accessKeyId, secretAccessKey } = settings(STORE_SETTINGS);
+    const aws = signerFor({ accessKeyId, secretAccessKey });
+
+    const headers = {};
+    if (contentType) headers['content-type'] = contentType;
+    if (cacheControl) headers['cache-control'] = cacheControl;
+
+    return aws.fetch(`${r2Endpoint(accountId)}/${bucket}/${encodeKey(pathname)}`, {
+      method,
+      body,
+      headers,
+    });
+  }
+
+  // The one behaviour that does not port from @vercel/blob for free: its get() resolved null
+  // on a 404, while S3 answers with an error response. readCachedChunks' "this Chunk isn't
+  // generated yet" branch, libraryService's empty-index path and getBook's snapshot fallback
+  // all read absence as undefined. Anything other than a 404 still throws, so a store that is
+  // broken or forbidden is never mistaken for a store that is empty.
+  //
+  // A 404 alone is not enough to conclude that, because S3 also answers 404 for NoSuchBucket:
+  // a typo in R2_BUCKET or R2_ACCOUNT_ID would make every read resolve undefined, which reads
+  // as a Library with no Books and a Book with no audio, and regenerates the lot into a
+  // bucket that isn't there. The XML body distinguishes the two, so it is read rather than
+  // discarded — the cost is parsing a short body on the "not generated yet" path, which is
+  // already the path that decided not to play anything.
+  async function getObject(pathname) {
+    const response = await request(pathname, { method: 'GET' });
+    if (response.status === 404) {
+      const body = await response.text().catch(() => '');
+      if (body.includes('<Code>NoSuchBucket</Code>')) {
+        throw new Error(`Object storage read failed with 404: ${body.slice(0, 500)}`);
+      }
+
+      return undefined;
+    }
+
+    await throwUnlessOk(response, 'read');
+    return response;
+  }
+
+  async function putObject(pathname, body, contentType, cacheControl) {
+    const response = await request(pathname, { method: 'PUT', body, contentType, cacheControl });
+    await throwUnlessOk(response, 'write');
+  }
+
+  return {
+    async get(key) {
+      const response = await getObject(metadataPathname(key));
+      return response ? response.json() : undefined;
+    },
+
+    async put(key, { audio, boundaries, durationSeconds }) {
+      // Writes go to the S3 endpoint, reads to the Worker, so the URL that goes into stored
+      // metadata cannot be the one just written to — it would put an unplayable address into
+      // the Chunk's own <bookId>/<chunkIndex>/<voice>.json and into everything that trusts
+      // stored metadata. Resolved up front so a missing or slashless origin fails before
+      // either object is written rather than after the audio has landed. Ticket 04 makes
+      // this same value the Chunk index's base.
+      const { segmentOrigin } = settings([...STORE_SETTINGS, 'segmentOrigin']);
+      const origin = requireTrailingSlash(segmentOrigin);
+
+      await putObject(audioPathname(key), await toBytes(audio), 'audio/mpeg', AUDIO_CACHE_CONTROL);
+
+      const persisted = {
+        url: `${origin}${audioPathname(key)}`,
+        boundaries,
+        durationSeconds,
+      };
+      await putObject(metadataPathname(key), JSON.stringify(persisted), 'application/json');
+
+      return persisted;
+    },
+
+    // Reads back the raw MP3 bytes already stored under key, for the lazy-remeasurement
+    // path in audioGenerationService.js — a cache hit predating durationSeconds needs
+    // the original audio to measure without resynthesizing it.
+    async getAudioBytes(key) {
+      const response = await getObject(audioPathname(key));
+      return response ? response.arrayBuffer() : undefined;
+    },
+
+    // A generic counterpart to get() for callers that only need to persist plain JSON
+    // under a key (e.g. libraryService.js's index/chunks blobs) rather than the
+    // audio+boundaries pair get/put above are specifically shaped for.
+    async putJson(key, data) {
+      await putObject(metadataPathname(key), JSON.stringify(data), 'application/json');
+    },
+
+    // Unlike get/put's key (a cache key mapped through metadataPathname/audioPathname),
+    // del/list operate on literal pathnames, e.g. as returned by list() itself.
+    async del(pathname) {
+      const response = await request(pathname, { method: 'DELETE' });
+      await throwUnlessOk(response, 'delete');
+    },
+
+    // Deferred to ticket 03, which brings the ListObjectsV2 XML parser and the continuation
+    // loop with it. Throwing rather than resolving [] is the point: an empty listing is a
+    // plausible answer, so getUsage would report 0% of the quota used and the cleanup cron
+    // would report a clean sweep, both indistinguishable from the truth. deleteBook orphans
+    // the Book's audio either way — its list() call is the last step, after the index has
+    // already been rewritten — but it at least says so.
+    async list(prefix) {
+      throw new Error(
+        'Object storage list() is not implemented yet — see ticket 03 of phase 1.11.',
+      );
+    },
+  };
+}
+
+// S3 puts the reason in an XML body, and losing it makes a 403 from an expired key
+// indistinguishable from a 403 from a wrong bucket. Truncated because the body is
+// occasionally an HTML error page from something in front of the endpoint.
+async function throwUnlessOk(response, what) {
+  if (response.ok) return;
+
+  const detail = await response.text().catch(() => '');
+  throw new Error(
+    `Object storage ${what} failed with ${response.status}: ${detail.slice(0, 500)}`.trim(),
+  );
+}

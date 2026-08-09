@@ -1,8 +1,8 @@
-import { createBlobStorageClient } from './blobStorageClient';
+import { createObjectStorageClient } from './objectStorageClient';
 
 const REPORTS_KEY = 'pronunciation-reports/index';
 
-const defaultClients = { storageClient: createBlobStorageClient() };
+const defaultClients = { storageClient: createObjectStorageClient() };
 
 // Listener-flagged mispronunciations, stored for manual review only - no automatic
 // correction or SSML override happens from this (see

@@ -5,8 +5,8 @@ const { fakeStorageClient, fakeTtsClient } = vi.hoisted(() => ({
   fakeTtsClient: { synthesize: vi.fn() },
 }));
 
-vi.mock('./blobStorageClient', () => ({
-  createBlobStorageClient: () => fakeStorageClient,
+vi.mock('./objectStorageClient', () => ({
+  createObjectStorageClient: () => fakeStorageClient,
 }));
 vi.mock('./edgeTtsClient', () => ({
   createEdgeTtsClient: () => fakeTtsClient,

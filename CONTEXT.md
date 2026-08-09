@@ -19,9 +19,9 @@ The person using the app on a given device. Owns device-scoped preferences (e.g.
 _Avoid_: User, reader (reader is fine in prose/UI copy, but "Listener" is the precise term when distinguishing device-level settings from Book-level state)
 
 **Library**:
-The Listener's persisted list of Books, held server-side so a Book uploaded on one device can be seen and resumed from another. The list itself is a Vercel Blob document; each Book's resume position is stored separately (see below).
+The Listener's persisted list of Books, held server-side so a Book uploaded on one device can be seen and resumed from another. The list itself is a JSON object in the object store; each Book's resume position is stored separately (see below).
 _Avoid_: describing it as device-scoped or `localStorage`-backed — it was both before phase 1.6.
 
 **Resume position**:
-Where a Listener stopped in a Book, as an atomic (Chunk, Sentence) pair with the time it was reached. Lives in Redis, with a Blob snapshot as a backstop — see [ADR 0004](docs/adr/0004-resume-position-store.md).
+Where a Listener stopped in a Book, as an atomic (Chunk, Sentence) pair with the time it was reached. Lives in Redis, with a snapshot in the object store as a backstop — see [ADR 0004](docs/adr/0004-resume-position-store.md).
 _Avoid_: reading position, progress (progress is the derived percentage shown in the Library, not the stored position)

@@ -1,8 +1,8 @@
-import { createBlobStorageClient } from './blobStorageClient';
 import { isPlayableChunk } from './chunkAudio';
 import { audioPathname, storeBase } from './chunkIndex';
 import { createEdgeTtsClient } from './edgeTtsClient';
 import { measureMp3Duration } from './mp3Frames';
+import { createObjectStorageClient } from './objectStorageClient';
 import { createChunkIndexClient } from './redisChunkIndex';
 import { deriveCueSpans } from './sentenceSpans';
 
@@ -141,7 +141,7 @@ export async function readCachedChunks({ storageClient }, { bookId, voice, chunk
 const defaultChunkIndexClient = createChunkIndexClient();
 
 const defaultClients = {
-  storageClient: createBlobStorageClient(),
+  storageClient: createObjectStorageClient(),
   ttsClient: createEdgeTtsClient(),
   chunkIndexClient: defaultChunkIndexClient,
 };

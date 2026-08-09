@@ -1,5 +1,5 @@
-import { createBlobStorageClient } from './blobStorageClient';
 import { splitIntoSentences } from './chunkText';
+import { createObjectStorageClient } from './objectStorageClient';
 import { createResumePositionClient } from './redisResumePosition';
 
 const INDEX_KEY = 'library/index';
@@ -28,7 +28,7 @@ function legacyPosition(summary) {
 }
 
 const defaultClients = {
-  storageClient: createBlobStorageClient(),
+  storageClient: createObjectStorageClient(),
   positionClient: createResumePositionClient(),
 };
 

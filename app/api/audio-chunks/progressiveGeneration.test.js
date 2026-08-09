@@ -1,32 +1,51 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { buildMp3Frames, MP3_FRAME_DURATION_SECONDS } from '@/app/_lib/mp3Frames.fixture';
 
 // Fake the two external dependencies (object storage, edge-tts) at the lowest level so
 // this test exercises the real chunking + Audio Generation Service + both API routes
-// end-to-end, without a real network call or real Vercel Blob storage.
+// end-to-end, without a real network call or a real bucket. For storage that level is now
+// fetch itself: objectStorageClient.js signs and issues its own requests, so faking here
+// keeps the real client - signing, suffixing, 404-means-absent - inside what is covered
+// rather than replacing it with a stub.
 const { blobStore, synthesizeCalls } = vi.hoisted(() => ({
   blobStore: new Map(),
   synthesizeCalls: [],
 }));
 
-vi.mock('@vercel/blob', () => ({
-  async get(pathname) {
-    if (!blobStore.has(pathname)) {
-      return null;
-    }
-    // blobStorageClient.js wraps this in `new Response(result.stream)`, which accepts a
-    // plain string or byte body just as well as a real stream.
-    return { stream: blobStore.get(pathname) };
-  },
-  async put(pathname, data) {
+const R2_ENV = {
+  R2_ACCOUNT_ID: 'acct-1',
+  R2_BUCKET: 'text-reader',
+  R2_ACCESS_KEY_ID: 'AKIAEXAMPLE',
+  R2_SECRET_ACCESS_KEY: 'secret-example',
+  SEGMENT_ORIGIN: 'https://segments.test/',
+};
+
+// The bucket-relative object key, back out of the signed URL the client formed.
+function objectKey(url) {
+  return decodeURIComponent(new URL(url).pathname).slice(`/${R2_ENV.R2_BUCKET}/`.length);
+}
+
+async function fakeStorageFetch(request) {
+  const key = objectKey(request.url);
+
+  if (request.method === 'GET') {
+    return blobStore.has(key)
+      ? new Response(blobStore.get(key), { status: 200 })
+      : new Response('<Error><Code>NoSuchKey</Code></Error>', { status: 404 });
+  }
+
+  if (request.method === 'PUT') {
     // Audio is kept as bytes rather than text: the duration measurement reads it back, and
-    // decoding MP3 frames as UTF-8 would not round-trip.
-    const content = typeof data === 'string' ? data : new Uint8Array(await data.arrayBuffer());
-    blobStore.set(pathname, content);
-    return { url: `https://blob.test/${pathname}` };
-  },
-}));
+    // decoding MP3 frames as UTF-8 would not round-trip. Metadata is kept as text so a test
+    // can seed and read it as JSON.
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    blobStore.set(key, key.endsWith('.json') ? new TextDecoder().decode(bytes) : bytes);
+    return new Response(null, { status: 200 });
+  }
+
+  return new Response(null, { status: 405 });
+}
 
 // The fake's audio has to be real MP3 frames, because the generation path now measures its
 // duration and an unmeasurable Chunk is treated as uncacheable. See app/_lib/mp3Frames.js.
@@ -64,6 +83,13 @@ describe('progressive generation orchestration', () => {
   beforeEach(() => {
     blobStore.clear();
     synthesizeCalls.length = 0;
+    Object.entries(R2_ENV).forEach(([name, value]) => vi.stubEnv(name, value));
+    vi.stubGlobal('fetch', vi.fn(fakeStorageFetch));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   test('walks a full short book end-to-end: chunk it, then generate every chunk in order', async () => {

@@ -1,4 +1,4 @@
-import { createBlobStorageClient } from './blobStorageClient';
+import { createObjectStorageClient } from './objectStorageClient';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const EXCLUDED_PREFIXES = ['library/', 'pronunciation-reports/'];
@@ -38,7 +38,7 @@ export function computeUsagePercent({ blobs, quotaBytes }) {
   return (sumBytes(blobs) / quotaBytes) * 100;
 }
 
-const defaultClients = { storageClient: createBlobStorageClient() };
+const defaultClients = { storageClient: createObjectStorageClient() };
 
 export async function getUsage(
   { storageClient } = defaultClients,

@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** ready-for-agent
+**Status:** ready-for-human — built and green, but two consumer test files were edited after all (written up below), and the "no consumer test changes" criterion is a judgement call about whether that is acceptable.
 
 Not blocked by [ticket 01](01-r2-bucket-and-segment-worker.md): the tests mock `fetch`, so the whole of this ticket can be written and verified before a bucket exists. It cannot be _run_ against R2 until 01 lands, which is what [ticket 05](05-cut-over-and-measure.md) is for.
 
@@ -22,17 +22,17 @@ Every consumer injects this client and is tested against a fake, so the whole po
 
 ## Acceptance criteria
 
-- [ ] `objectStorageClient.js` exports `createObjectStorageClient` with the same eight methods, arguments and return shapes as today's client.
-- [ ] Credentials and the bucket/endpoint come from environment variables; nothing is hardcoded, and an absent configuration fails loudly at the seam rather than silently returning empty results.
-- [ ] **A missing object resolves to `undefined` from `get` and `getAudioBytes`**, never throws.
-- [ ] A non-404 error (403, 500, a network failure) still throws, so a broken store is not mistaken for an empty one.
-- [ ] `put` returns the same `{ url, boundaries, durationSeconds }` shape, with `url` being the **playable** segment URL rather than the S3 endpoint — see the note below.
-- [ ] Objects are written with a `Content-Type` (`audio/mpeg`, `application/json`), so the Worker can serve them without sniffing.
-- [ ] `del` accepts the literal pathname form the existing callers pass, unchanged.
-- [ ] **The client's tests mock `fetch`, not `aws4fetch`** — they assert the request that was actually formed (method, URL, signed headers) and how the response was interpreted.
-- [ ] **No consumer test file changes.** `libraryService.test.js`, `audioGenerationService.test.js` and `blobCleanupService.test.js` pass untouched.
-- [ ] `@vercel/blob` is removed from `package.json` and imported nowhere.
-- [ ] The full suite, `npm run lint` and `npm run format:check` pass.
+- [x] `objectStorageClient.js` exports `createObjectStorageClient` with the same ~~eight~~ **six** methods, arguments and return shapes as today's client. (`get`, `put`, `getAudioBytes`, `putJson`, `del`, `list` — the ticket's "eight" was a miscount.)
+- [x] Credentials and the bucket/endpoint come from environment variables; nothing is hardcoded, and an absent configuration fails loudly at the seam rather than silently returning empty results.
+- [x] **A missing object resolves to `undefined` from `get` and `getAudioBytes`**, never throws.
+- [x] A non-404 error (403, 500, a network failure) still throws, so a broken store is not mistaken for an empty one.
+- [x] `put` returns the same `{ url, boundaries, durationSeconds }` shape, with `url` being the **playable** segment URL rather than the S3 endpoint — see the note below.
+- [x] Objects are written with a `Content-Type` (`audio/mpeg`, `application/json`), so the Worker can serve them without sniffing.
+- [x] `del` accepts the literal pathname form the existing callers pass, unchanged.
+- [x] **The client's tests mock `fetch`, not `aws4fetch`** — they assert the request that was actually formed (method, URL, signed headers) and how the response was interpreted.
+- [ ] **No consumer test file changes.** `libraryService.test.js` and `blobCleanupService.test.js` pass untouched; `audioGenerationService.test.js` and `progressiveGeneration.test.js` did not. See "Two consumer tests changed" below.
+- [x] `@vercel/blob` is removed from `package.json` and imported nowhere.
+- [x] The full suite (511 tests, 52 files) and `npm run lint` pass. `npm run format:check` does **not**, and did not before this work either — see "format:check was already failing" below.
 
 ## Comments
 
@@ -45,3 +45,123 @@ This is the same fact that makes [ticket 04](04-segment-origin-becomes-configura
 ### No consumer test may change — treat a failure here as a finding
 
 This criterion is the whole argument for the seam, and it is worth being strict about. Tickets 08 and 10 both moved substantial machinery — a Redis index, a resume-position store — without touching a consumer test, because storage access was already behind one injected client. If swapping the provider underneath it does require editing `libraryService.test.js`, then something has been reaching past the seam and that is worth finding out now rather than absorbing quietly.
+
+### Two consumer tests changed, for two different reasons
+
+Reported rather than absorbed, as asked. The seam held where the ticket predicted, and leaked
+where it did not think to look.
+
+**`libraryService.test.js`, `blobCleanupService.test.js` and `pronunciationReportService.test.js`
+are untouched and pass.** All three build a plain object literal and pass it in, so the provider
+swap is genuinely invisible to them. That is the criterion's actual claim, and it holds.
+
+**`audioGenerationService.test.js` changed by two lines**, and this is not a leak. It substitutes
+its fake with `vi.mock('./blobStorageClient', …)` rather than by injection, because
+`generateAudioForChunk` reads `defaultClients` from module scope and there is nothing to inject
+into. A module mock names the module, so the rename the spec mandates — "only the storage client
+module and its factory are renamed" — necessarily moves it. The two decisions are in direct
+conflict, and this criterion cannot be met while the other is honoured. Nothing about the
+_contract_ changed: the fake's methods, arguments and return shapes are as they were.
+
+**`progressiveGeneration.test.js` was reaching past the seam**, which is the finding. It mocked
+`@vercel/blob` directly — the vendor package, not the client — so removing the dependency left it
+mocking nothing. It is now faked at `fetch` instead, which is strictly better than restoring the
+old arrangement: the file's stated purpose is to fake external dependencies "at the lowest level"
+so everything above them is real, and with the client signing its own requests, `fetch` _is_ that
+level. The real client — suffixing, signing, 404-means-absent, the segment URL — is now inside
+what those five end-to-end tests cover, where before it was replaced wholesale.
+
+The narrow lesson: a seam is only as good as the way tests reach it. Two of the four consumers
+inject, and were free. The two that mock by module path both had to move.
+
+### aws4fetch's defaults are wrong for this app in two ways, both silent
+
+Neither was predictable from the docs; both surfaced only because the tests assert over `fetch`.
+
+**It retries a 5xx or a 429 ten times**, backing off exponentially from 50ms — up to roughly half
+a minute of a request held open. On the playlist route the media stack re-polls during playback,
+a request that fails slowly is worse than one that fails: the route has a fallback and phases
+1.8–1.10 were spent on not stalling there. Set to two retries, and pinned by a test, because it
+is a default that will otherwise be silently re-inherited.
+
+**A `Request` body it does not recognise becomes the nine bytes `"undefined"`.** `put` is handed
+a `Blob` from edge-tts, and undici's `Request` accepts Node's `Blob` but stringifies a foreign one
+— which is exactly what jsdom hands it under test. An upload that succeeds, stores nine bytes and
+plays as nothing. Production would not have hit it (the server runtime's `Blob` is Node's), but
+the failure mode is bad enough that the client now reads the Blob to bytes before writing, which
+costs nothing: it is already wholly in memory and `audioGenerationService` has already read the
+same bytes to measure the duration.
+
+### `list()` throws rather than returning `[]`
+
+Deferred to ticket 03 as instructed, but the stub is not inert. `getUsage` would report an empty
+store and `deleteBook`'s cascade would silently orphan every audio object under a Book — with
+nothing left to notice, since the Book is already out of the index. Between this ticket and 03,
+the capacity indicator and the cleanup cron therefore fail loudly. That is the intended state;
+ticket 05 is the first thing that runs against a real bucket.
+
+### `SEGMENT_ORIGIN` landed here rather than in ticket 04
+
+As the note above allows: `put` cannot return a playable `url` without it. Ticket 04 inherits the
+variable rather than introducing it, and still owns taking the Chunk index off its stored origin.
+`workers/segments/README.md` has been updated to say so, and the README now documents the whole
+environment — the five R2 settings, the two Redis ones and `BLOB_QUOTA_BYTES` — which nothing in
+the repo recorded before.
+
+### What code review changed
+
+Two axes, both run against the finished diff. Five findings were real and are fixed; the rest
+are recorded here as deliberate.
+
+**Fixed — a fresh `AwsClient` per request.** It was constructed inside the request helper, so
+aws4fetch's cache of derived signing keys (four chained HMACs from secret to date/region/service
+key) started empty every time and was thrown away. `readCachedChunks` fires sixteen parallel
+`get`s per batch on the playlist route — the exact path the retry tuning above exists to protect,
+and the reason the file's header gives for not taking the AWS SDK. Now held in the closure and
+keyed by the credentials, so a rotated key still gets a new signer.
+
+**Fixed — a 404 was read as "absent" whatever it meant.** S3 answers 404 for `NoSuchBucket` as
+well as `NoSuchKey`, so a typo in `R2_BUCKET` or `R2_ACCOUNT_ID` would have made every read
+resolve `undefined`: a Library with no Books, every Book with no audio, and generation
+cheerfully rewriting the lot into a bucket that does not exist. Exactly the failure the criterion
+"so a broken store is not mistaken for an empty one" names, arriving through the one status code
+the criterion told us to treat as benign. The XML body distinguishes them and is now read.
+
+**Fixed — the trailing-slash normaliser was creating the divergence it claimed to prevent.** It
+repaired a slashless `SEGMENT_ORIGIN` here only; `deriveSegmentUrl` concatenates raw, and ticket
+04 points it at this same variable, so a slashless origin would have given playable URLs from
+`put` and broken ones from the Chunk index. Now rejected with a message naming the variable,
+which also makes both READMEs' "keep the trailing slash" true rather than advisory.
+
+**Fixed — two comments stated things that were not so.** The `put` comment repeated this
+ticket's own `library/<book>/<chunk>/<voice>.json`, but Chunk metadata is `<bookId>/<chunkIndex>/
+<voice>.json` at the bucket root; `library/` holds the index, the chunks and the resume
+snapshots. And the `list()` comment claimed throwing saves `deleteBook`'s cascade from silently
+orphaning audio — it does not, because the `list()` call is the last step, after the index has
+already been rewritten. The audio is orphaned either way; what the throw buys is that the
+capacity indicator and the cleanup cron cannot report a clean, empty store.
+
+**Flagged, per `docs/agents/domain.md`'s "flag ADR conflicts" rule.** ADR 0004 names Vercel Blob
+as the resume snapshot's store. A dated note has been appended saying the store changed and the
+decision did not — the ADR's reasoning turned on Redis having an atomic compare and the snapshot
+being second-best, neither of which is a property of the provider. The text above it is left
+alone: the provider named in a decision's reasoning is part of the record of why it was made.
+`CONTEXT.md`'s two Vercel Blob references are corrected, since it describes what is true now.
+
+**Left deliberately.** The README's environment section documents the Redis variables and
+`BLOB_QUOTA_BYTES` alongside the five this ticket introduces, which reaches into ticket 04's
+"documented in the README" criterion — but nothing in the repo recorded any of them before, and
+a section that documents three-fifths of an environment is worse than one that documents it.
+Ticket 04 inherits it already satisfied. The stale comments in `chunkIndex.js` (`addRandomSuffix`,
+`BLOB_READ_WRITE_TOKEN`), `redisChunkIndex.js` (`ORIGIN_KEY`) and `blobCleanupService.js` (Vercel's
+1 GiB) are all on lines ticket 04's "What this removes" deletes outright, so they are left for it.
+
+### format:check was already failing
+
+The criterion cannot be met by this ticket. `npm run format:check` reports 95 files at `HEAD`,
+including `README.md`, `vitest.config.js` and other files untouched here: the working copy is
+checked out with CRLF line endings and Prettier defaults to `endOfLine: "lf"`. Every file this
+ticket touched was already in that failing set, and `pronunciationReportService.js`, `CONTEXT.md`,
+`RESOURCES.md` and `workers/segments/README.md` came _out_ of it. Fixing the cause means either a
+repo-wide re-write of ~95 files or a `.gitattributes`/Prettier setting, which is its own change
+and does not belong in a storage migration.

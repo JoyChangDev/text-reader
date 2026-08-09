@@ -23,9 +23,13 @@ cd workers/segments && npx wrangler deploy
 ```
 
 The origin belongs in this table as well as in the deployment, so a cold session can find what
-the app should be configured with without opening the Cloudflare dashboard.
+the app should be configured with without opening the Cloudflare dashboard. The app reads it from
+`SEGMENT_ORIGIN` — introduced early by
+[ticket 02](../../.scratch/phase-1-11-object-storage-migration/issues/02-object-storage-client-on-aws4fetch.md),
+because a write response to the S3 endpoint cannot yield the host a Listener plays from, so the
+storage client needed the value in order to return a playable `url` at all.
 [Ticket 04](../../.scratch/phase-1-11-object-storage-migration/issues/04-segment-origin-becomes-configuration.md)
-turns it into app configuration, and takes the value from here.
+takes the Chunk index off its stored origin and onto the same variable.
 
 **Keep the trailing slash.** `deriveSegmentUrl` concatenates — `` `${base}${audioPathname(...)}` ``
 in [app/\_lib/chunkIndex.js](../../app/_lib/chunkIndex.js) — and `audioPathname` has no leading
