@@ -27,7 +27,7 @@ While in the dashboards, take Upstash's command count over the same window: [tic
 ## Acceptance criteria
 
 - [ ] The deployed app reads and writes R2, with the segment origin, R2 credentials and Redis credentials all set in the deployment environment.
-- [ ] The Library index blob and the Redis Chunk index are cleared of the abandoned Books; the Library shows no Book whose audio is unreachable.
+- [ ] The Library index blob and the Redis Chunk index are cleared of the abandoned Books; the Library shows no Book whose audio is unreachable. _The clearing itself ran clean on 2026-08-10 — both halves turned out to be already empty rather than merely cleared, see "What the clearing actually found". Un-ticked because the failed upload below then put a Book back into the index with no chunks blob behind it, which is precisely the state this criterion forbids. Re-run the script after deploying the Content-Length fix._
 - [ ] A Book uploads, narrates, and plays from the new store, on a physical iPhone.
 - [ ] **Playback crosses at least two segment boundaries with the app backgrounded**, which is the property phases 1.8 to 1.10 exist for and the one a new serving path could quietly break.
 - [ ] Seeking to a Sentence inside the currently-playing Chunk works, exercising the Worker's range handling against a real media element rather than against a hand-made request.
@@ -66,8 +66,127 @@ has ever written a byte there from the app; Redis meanwhile holds every hash the
 Books wrote. The loop would find no Books, delete nothing, and print success. Between
 `book:*` and `library:resume` the sweep covers every key the app owns.
 
+> **Corrected 2026-08-10 — the second half of that premise is wrong. Redis was empty too.**
+> "Redis holds every hash the Vercel-era Books wrote" was never true, and the run below
+> measured it: `DBSIZE` is 0. Both Redis features shipped on 2026-08-09 — the Chunk index in
+> `9960435`, the resume position in `e5ac705` — and writing either one requires generating a
+> Chunk, which requires Blob, which has been over its Simple Operations allowance since
+> 2026-08-08. Nothing ever ran. The Vercel-era Books predate all of it; their state lived in
+> Blob and in the Library index blob, never in Redis.
+>
+> **The decision to sweep by pattern still stands, but not for the reason given above.** The
+> reason that survives is the weaker and more durable one: the sweep does not have to know
+> what is in Redis to clear it, whereas deriving from the index stakes correctness on the two
+> sources describing the same set of Books. That assumption happened to be false here in the
+> other direction from the one this section imagined, which is the point — an approach that
+> never needed it was right either way.
+
+One key the sweep would _not_ have caught: `blob:origin`, written by ticket 08's stage 2 and
+removed by [ticket 04](04-segment-origin-becomes-configuration.md), matches neither `book:*`
+nor `library:resume`. Confirmed `null` on 2026-08-10, for the same reason as everything else —
+writing it required a generation that never happened. Nothing to do, but a future sweep that
+runs against a store where generation _did_ occur should not assume the two patterns are still
+exhaustive.
+
 Not run as part of this work — it deletes real state, so it waits for whoever runs the actual
 cutover, pointed at the real deployment's credentials.
+
+### What the clearing actually found — 2026-08-10
+
+`npm run clear-abandoned-library`, run locally against the deployment's credentials:
+
+```
+Library index names 0 Book(s).
+Library index reset to [].
+Cleared 0 Chunk index key(s) and every stored resume position.
+```
+
+Two zeroes, which on the reading this ticket was written with would mean the script had been
+pointed at the wrong database. It had not. Checked with the same `--env-file=.env.local`
+credentials the script itself loads — deliberately not through the Upstash console, which can
+only tell you that _some_ database is empty and not that _the one the script used_ is:
+
+```
+database host : precious-tuna-208475.upstash.io
+DBSIZE        : 0
+blob:origin   : null
+SCAN 0 *      : cursor "0", no keys
+```
+
+`SCAN` returning to cursor `0` on the first pass with an empty array is a complete sweep of the
+keyspace, and agrees with `DBSIZE`. So the store was empty, not unreachable. See the correction
+under "The clearing script" for why.
+
+**Two things this leaves for whoever takes the baseline readings.** `Library index reset to []`
+is a real `PUT`, so it spends one Class A — take the R2 starting figure _after_ the script, not
+before. And the check above spent 3 Upstash commands; take the Upstash starting figure at the
+moment narration begins rather than reusing anything read earlier.
+
+**`SEGMENT_ORIGIN` is absent from the local `.env.local`** (the other six are present). It is
+not needed by the clearing script, which only does `get`/`put`/`del` on known keys and derives
+no segment URLs — but it is needed by anything that generates, and it is the one variable whose
+misconfiguration the app cannot detect: [segmentOrigin.js](../../../app/_lib/segmentOrigin.js)
+validates presence and the trailing slash, not whether the origin points anywhere real. Confirm
+it in the deployment's Production environment before generating, and note that
+`vercel env pull` defaults to Development and overwrites rather than merges.
+
+### The first real upload 411'd, and this is the ticket that could find it — 2026-08-10
+
+The first Book ever uploaded to R2 from the app failed, and failed in the exact way this
+ticket's opening paragraph anticipated in the abstract: _"Everything before it was written
+against mocked `fetch`; nothing has yet stored a byte in R2 from the app."_
+
+**What was observed.** A 3,379-Chunk Book uploaded, the Library listed it, the reader route
+opened it, and the transcript was empty with playback dead. `/api/library` had answered 502:
+
+```
+Adding the book to the library failed Error: Object storage write failed with 411:
+<Error><Code>MissingContentLength</Code><Message>You must provide the Content-Length HTTP
+header.</Message></Error>
+```
+
+Listing R2 confirmed the split: `library/index.json` existed (6,929 bytes, written at
+2026-08-09T17:03:28Z) and `library/<bookId>/chunks.json` did not. `addBook` writes the index
+first and the chunks blob second, so the Book was in the Library describing audio and text
+that were never stored.
+
+**The cause is that framing was left to the runtime.** `request()` set `content-type` and
+`cache-control` and passed the body straight through, relying on whatever sends the request to
+supply `Content-Length`. Node's `fetch` does, for a string body of any size — verified locally
+at 6,929 B, 100 KB, 1 MB and 2 MB, all with `Content-Length` present and no
+`Transfer-Encoding: chunked`. Vercel's did not, for the ~2 MB body. The smaller index blob
+written moments earlier on the identical code path went through, which is what made the
+failure look size-dependent rather than runtime-dependent.
+
+Neither runtime puts the header on the `Headers` object — `new Request(url, {body})` reports
+`content-length` as `null` even when the wire carries it — so nothing in the process could have
+noticed the difference.
+
+**This is not reproducible from a development machine, and that is the finding.** A local run
+against real R2 with real credentials passes with or without the fix, because Node supplies the
+header either way. Only the deployed runtime exhibits it. Four tickets of unit tests against a
+mocked `fetch` could not have caught this, and neither could a local integration test.
+
+**The fix** ([objectStorageClient.js](../../../app/_lib/objectStorageClient.js)) encodes a
+string body to bytes and sets `content-length` from `byteLength`, so the framing no longer
+depends on the runtime at all. Two properties are worth keeping in mind:
+
+- **Counted in bytes, never characters.** The largest object written is a Book's chunks blob,
+  mostly CJK at 3 bytes per character; `String.length` would understate it threefold and
+  truncate the object. The bytes counted are the bytes sent.
+- **Safe to set by hand.** `content-length` is in aws4fetch's `UNSIGNABLE_HEADERS`, so it never
+  reaches the signature — read from the installed source rather than assumed, the same way
+  ticket 08 settled the client's deserializers.
+
+**Still unverified against the runtime that failed.** The unit tests pin that the header is set
+and that the value is a byte count; they cannot pin that Vercel sends it. Redeploy, re-run
+`npm run clear-abandoned-library` to drop the half-written Book, and upload again — the
+transcript appearing is the proof.
+
+**The failure was silent, which is a separate defect.** Three layers each turned an error into
+an absence: the client's `addBook` does not check `response.ok`, `addBook` on the server writes
+the index before the chunks blob with no rollback, and `getBook` reads a missing chunks blob as
+`?? []`. Opened as [ticket 06](06-a-failed-write-reads-as-an-empty-book.md).
 
 ### If the measurement disagrees
 
