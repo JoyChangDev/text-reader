@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** ready-for-agent
+**Status:** ready-for-human — built 2026-08-09, see the notes at the bottom. The Lua script has never run against the real service.
 
 Found on 2026-08-09 while checking Vercel Blob's operation classes for ticket 08's stage 2. Third instance of the same bug shape as [ticket 08](08-playlist-routes-read-one-blob-per-chunk.md) and [ticket 09](09-blob-usage-indicator-costs-an-advanced-operation.md) — a storage call on a hot path whose cost nobody was counting — but this one is on the **write** side, and it spends the smaller of the two quotas.
 
@@ -57,16 +57,16 @@ Rejected alternatives:
 
 ## Acceptance criteria
 
-- [ ] Saving the reading position during playback costs **zero** Blob operations of any class.
-- [ ] The position is written as a single atomic field per Book — no read of the index before writing, and no retry loop.
-- [ ] A position save and a concurrent `addBook` or `deleteBook` cannot lose each other's write.
-- [ ] **Every stored position carries an `updatedAt` recording when the position changed on the client**, not when the request reached the server.
-- [ ] **A write whose `updatedAt` is older than the stored one is rejected, and that comparison is atomic** — not a read followed by a conditional write.
-- [ ] **A deliberate backward seek still persists.** The rule is "newer `updatedAt` wins", never "higher Sentence ordinal wins".
-- [ ] `listBooks` and `getBook` return the shape they return today, so `BookLibrary.jsx`, `page.jsx` and `useBookPlayer.js`'s persistence effect need no change.
-- [ ] A Book with no position in Redis falls back to the Blob snapshot rather than resuming at zero.
-- [ ] An unavailable Redis degrades to the Blob snapshot rather than losing the Listener's place, and a failed save never surfaces as a playback error.
-- [ ] The Blob snapshot is written only at the existing flush points, never per Sentence.
+- [x] Saving the resume position during playback costs **zero** Blob operations of any class. _`updateResumeIndex` without `snapshot` touches only `positionClient.write`, and the route no longer reads the index to prove the Book exists._
+- [x] The position is written as a single atomic field per Book — no read of the index before writing, and no retry loop. _`WRITE_IF_NEWER`, one `EVAL`._
+- [x] A position save and a concurrent `addBook` or `deleteBook` cannot lose each other's write. _The position path never reads or writes `library/index`, and the snapshot has its own per-Book blob._
+- [x] **Every stored position carries an `updatedAt` recording when the position changed on the client**, not when the request reached the server. _Stamped in `persistResumePosition`; the route 400s without it._
+- [x] **A write whose `updatedAt` is older than the stored one is rejected, and that comparison is atomic** — not a read followed by a conditional write. _Upstash has no `WATCH`, so the compare lives inside the Lua script. When Redis returns no verdict at all, the snapshot compares for itself before overwriting._
+- [x] **A deliberate backward seek still persists.** The rule is "newer `updatedAt` wins", never "higher Sentence ordinal wins".
+- [x] `listBooks` and `getBook` return the shape they return today, so `BookLibrary.jsx`, `page.jsx` and `useBookPlayer.js`'s persistence effect need no change. _`withPosition` re-adds both fields; no consumer changed._
+- [x] A Book with no position in Redis falls back to the Blob snapshot rather than resuming at zero. _In `getBook`, the read that decides where playback resumes._
+- [x] An unavailable Redis degrades to the Blob snapshot rather than losing the Listener's place, and a failed save never surfaces as a playback error. _`listBooks` reads the snapshots too, but only when Redis cannot answer at all — a Book added after this ticket has no position on its summary, so without that its progress would read 0% for the whole outage._
+- [x] The Blob snapshot is written only at the existing flush points, never per Sentence. _Only `flushOnHiddenRef` passes `snapshot: true`._
 
 ## Comments
 
@@ -89,3 +89,23 @@ The same Book open on two devices, both online, is still last-write-wins — jus
 ### Not measured
 
 The ~330/hour figure is derived from `chunkText`'s 200-char / 4-Sentence cap, not observed. The store has been over its Blob quota since 2026-08-08 and cannot be read before **2026-09-06** (see ticket 08's correction). The estimate does not need to be exact to be decisive — the gap is roughly 50×, not 2× — but whoever runs ticket 08's runbook on 2026-09-06 should record the real number while they are in the dashboard, as step 7 already has them watching the counters during a listening session.
+
+### What landed, and the one thing no test could reach
+
+Built 2026-08-09. The decision that Redis is authoritative here — the opposite of ticket 08's cache-only arrangement — is recorded in [ADR 0004](../../../docs/adr/0004-resume-position-store.md) rather than only in this ticket, because it is the kind of thing the next person will want to find without knowing which ticket caused it.
+
+Storage layout now:
+
+| what                                                 | where | written when                                            |
+| ---------------------------------------------------- | ----- | ------------------------------------------------------- |
+| `library/index`                                      | Blob  | a Book is added or deleted — no position on it any more |
+| `library:resume` hash, three numeric fields per Book | Redis | every Sentence, atomically, newest-`updatedAt`-wins     |
+| `library/<bookId>/resume`                            | Blob  | the backgrounding flush points only                     |
+
+Resolution order when reading: Redis → the snapshot → the field left on the summary before this ticket → the start. The third rung is what stops every existing Book resetting to zero, and it can be deleted once no Book in the store predates this change.
+
+**The Lua script has never run against the real service.** `redisResumePosition.test.js` sends it to a fake that records rather than interprets, so what is pinned is which script, keys and arguments go out — not that Redis accepts it. Two things to check the first time it runs for real: that `EVAL` returns `1`/`0` as integers rather than strings (the client's deserializers are inconsistent enough that ticket 08 was caught by exactly this), and that a second save with an identical `Date.now()` is refused rather than erroring. Neither is likely; both are cheap to look at and would otherwise present as "the resume position silently stopped moving".
+
+Worth folding into ticket 08's 2026-09-06 runbook while the dashboard is open: the Advanced Operations figure this ticket is built on (~330/hour) was derived from `chunkText`'s sizing, never measured. A listening session now ought to move that counter by a handful rather than by hundreds, and that delta is the proof this worked.
+
+`app/dev-preview/previewFetchMock.js` still models the pre-ticket-10 shape — it embeds `resumeIndex` in its fake index and ignores `updatedAt`/`snapshot`. It intercepts `fetch` rather than exercising the real route, so nothing is broken by that, but the preview harness and the real API now describe different things and it will mislead whoever reads it next.

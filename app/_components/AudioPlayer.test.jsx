@@ -1291,6 +1291,8 @@ describe('AudioPlayer resume-index persistence', () => {
     expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
       resumeIndex: 0,
       resumeSentenceIndex: 0,
+      updatedAt: expect.any(Number),
+      snapshot: false,
     });
 
     fireEvent.click(screen.getByTestId('sentence-1-0'));
@@ -1299,6 +1301,8 @@ describe('AudioPlayer resume-index persistence', () => {
       expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
         resumeIndex: 1,
         resumeSentenceIndex: 0,
+        updatedAt: expect.any(Number),
+        snapshot: false,
       }),
     );
   });
@@ -1318,6 +1322,8 @@ describe('AudioPlayer resume-index persistence', () => {
       expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
         resumeIndex: 0,
         resumeSentenceIndex: 1,
+        updatedAt: expect.any(Number),
+        snapshot: false,
       }),
     );
   });
@@ -1338,6 +1344,8 @@ describe('AudioPlayer resume-index persistence', () => {
       expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
         resumeIndex: 1,
         resumeSentenceIndex: 0,
+        updatedAt: expect.any(Number),
+        snapshot: false,
       }),
     );
     expect(libraryPatchCalls()).toHaveLength(1);
@@ -1643,9 +1651,14 @@ describe('AudioPlayer background flush of resume-position persistence', () => {
     expect(libraryPatchCalls()).toHaveLength(0);
     setVisibilityState('hidden');
 
+    // snapshot: true only here. Backgrounding is the last moment the position is known
+    // before the OS may kill the process, and it is the one place that asks for the
+    // durable Blob copy - ordinary per-Sentence saves go to Redis alone (ticket 10).
     expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
       resumeIndex: 1,
       resumeSentenceIndex: 0,
+      updatedAt: expect.any(Number),
+      snapshot: true,
     });
   });
 
@@ -1662,6 +1675,8 @@ describe('AudioPlayer background flush of resume-position persistence', () => {
     expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
       resumeIndex: 1,
       resumeSentenceIndex: 0,
+      updatedAt: expect.any(Number),
+      snapshot: true,
     });
   });
 
@@ -1676,6 +1691,8 @@ describe('AudioPlayer background flush of resume-position persistence', () => {
       expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
         resumeIndex: 0,
         resumeSentenceIndex: 0,
+        updatedAt: expect.any(Number),
+        snapshot: false,
       }),
     );
     const patchCallCountAfterDebounce = libraryPatchCalls().length;
@@ -1708,6 +1725,8 @@ describe('AudioPlayer background flush of resume-position persistence', () => {
     expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
       resumeIndex: 0,
       resumeSentenceIndex: 1,
+      updatedAt: expect.any(Number),
+      snapshot: false,
     });
   });
 });

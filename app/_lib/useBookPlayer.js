@@ -331,12 +331,20 @@ export function useBookPlayer({
   // rather than just the Chunk. A network call, so a failure is caught here -
   // fire-and-forget from the caller's perspective, since there's no UI for surfacing a
   // failed resume-position save.
+  // `updatedAt` is stamped here rather than on the server so it records when reading
+  // actually reached this position on this device. A device that was offline flushes late,
+  // and without this its hour-old position would overwrite a newer one from another device
+  // purely by arriving second - the failure Phase 2's offline downloads make routine (see
+  // ticket 10). `snapshot` is only set by the flush path below; ordinary per-Sentence saves
+  // go to Redis alone and cost no Blob operation at all.
   const persistResumePosition = useCallback(
-    (chunkIndex, sentenceIndex) => {
+    (chunkIndex, sentenceIndex, { snapshot = false } = {}) => {
       lastPersistedRef.current = { chunkIndex, sentenceIndex };
       updateResumeIndex(bookId, {
         resumeIndex: chunkIndex,
         resumeSentenceIndex: sentenceIndex,
+        updatedAt: Date.now(),
+        snapshot,
       }).catch((error) => {
         console.error('Failed to persist resume position', error);
       });
@@ -408,7 +416,10 @@ export function useBookPlayer({
       if (last && last.chunkIndex === currentIndex && last.sentenceIndex === activeSentenceIndex) {
         return;
       }
-      persistResumePosition(currentIndex, activeSentenceIndex);
+      // The one place that asks for a durable snapshot. Backgrounding is the last moment
+      // the position is known before the OS may kill the process, and it happens once a
+      // session rather than once a Sentence - which is what keeps the Blob cost bounded.
+      persistResumePosition(currentIndex, activeSentenceIndex, { snapshot: true });
     };
   });
   useEffect(() => {

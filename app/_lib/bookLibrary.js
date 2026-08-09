@@ -30,11 +30,18 @@ export async function getBook(bookId) {
   return response.json();
 }
 
-export async function updateResumeIndex(bookId, { resumeIndex, resumeSentenceIndex }) {
+// `updatedAt` is stamped by the caller, not here and not by the server: it has to say when
+// the position changed on this device, so that a device coming back from being offline
+// cannot overwrite a newer position simply by arriving last (see ticket 10). `snapshot`
+// asks the server to also write the durable copy, and belongs only to the flush points.
+export async function updateResumeIndex(
+  bookId,
+  { resumeIndex, resumeSentenceIndex, updatedAt, snapshot = false },
+) {
   const response = await fetch(`${BASE_URL}/${bookId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resumeIndex, resumeSentenceIndex }),
+    body: JSON.stringify({ resumeIndex, resumeSentenceIndex, updatedAt, snapshot }),
   });
 
   return response.json();

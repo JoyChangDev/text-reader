@@ -71,49 +71,71 @@ describe('PATCH /api/library/[bookId]', () => {
     expect(updateResumeIndex).not.toHaveBeenCalled();
   });
 
-  test('returns 404 when the book does not exist', async () => {
-    updateResumeIndex.mockResolvedValueOnce(null);
-
-    const response = await PATCH(
+  // A position with no timestamp cannot be compared against the stored one, so it would
+  // either be dropped in silence or win against every later save (see ticket 10).
+  test('rejects a request whose updatedAt is missing or not a number with 400', async () => {
+    const missing = await PATCH(
       jsonRequest({ resumeIndex: 3, resumeSentenceIndex: 0 }),
-      paramsFor('missing'),
-    );
-
-    expect(response.status).toBe(404);
-    expect(updateResumeIndex).toHaveBeenCalledWith('missing', {
-      resumeIndex: 3,
-      resumeSentenceIndex: 0,
-    });
-  });
-
-  test('updates the resume index and resume sentence index together, and returns the updated summary', async () => {
-    const summary = {
-      bookId: 'book-1',
-      title: 'First Book',
-      resumeIndex: 3,
-      resumeSentenceIndex: 1,
-    };
-    updateResumeIndex.mockResolvedValueOnce(summary);
-
-    const response = await PATCH(
-      jsonRequest({ resumeIndex: 3, resumeSentenceIndex: 1 }),
       paramsFor('book-1'),
     );
+    const wrongType = await PATCH(
+      jsonRequest({ resumeIndex: 3, resumeSentenceIndex: 0, updatedAt: 'soon' }),
+      paramsFor('book-1'),
+    );
+
+    expect(missing.status).toBe(400);
+    expect(wrongType.status).toBe(400);
+    expect(updateResumeIndex).not.toHaveBeenCalled();
+  });
+
+  // Deliberately no 404 for an unknown Book: proving it exists means reading the Library
+  // index, which is the Blob operation this path exists to stop spending. A position
+  // stored against a Book that isn't there is unreachable and costs nothing.
+  test('does not read the Library index to check the Book exists', async () => {
+    const position = { resumeIndex: 3, resumeSentenceIndex: 0, updatedAt: 1_000 };
+    // This file has no shared mock reset, and the GET suite above calls getBook.
+    getBook.mockClear();
+    updateResumeIndex.mockResolvedValueOnce(position);
+
+    const response = await PATCH(jsonRequest(position), paramsFor('missing'));
+
+    expect(response.status).toBe(200);
+    expect(getBook).not.toHaveBeenCalled();
+  });
+
+  test('passes the position, its updatedAt and the snapshot flag through', async () => {
+    const position = { resumeIndex: 3, resumeSentenceIndex: 1, updatedAt: 1_000 };
+    updateResumeIndex.mockResolvedValueOnce(position);
+
+    const response = await PATCH(jsonRequest({ ...position, snapshot: true }), paramsFor('book-1'));
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toEqual(summary);
-    expect(updateResumeIndex).toHaveBeenCalledWith('book-1', {
-      resumeIndex: 3,
-      resumeSentenceIndex: 1,
-    });
+    expect(body).toEqual(position);
+    expect(updateResumeIndex).toHaveBeenCalledWith('book-1', { ...position, snapshot: true });
+  });
+
+  // Ordinary per-Sentence saves must not ask for a Blob write, so an absent flag has to
+  // mean false rather than "whatever the body happened to contain".
+  test('defaults the snapshot flag to false when the caller omits it', async () => {
+    updateResumeIndex.mockResolvedValueOnce({});
+
+    await PATCH(
+      jsonRequest({ resumeIndex: 3, resumeSentenceIndex: 1, updatedAt: 1_000 }),
+      paramsFor('book-1'),
+    );
+
+    expect(updateResumeIndex).toHaveBeenCalledWith(
+      'book-1',
+      expect.objectContaining({ snapshot: false }),
+    );
   });
 
   test('returns a 502 when updating the resume position fails', async () => {
-    updateResumeIndex.mockRejectedValueOnce(new Error('blob put failed'));
+    updateResumeIndex.mockRejectedValueOnce(new Error('redis eval failed'));
 
     const response = await PATCH(
-      jsonRequest({ resumeIndex: 3, resumeSentenceIndex: 0 }),
+      jsonRequest({ resumeIndex: 3, resumeSentenceIndex: 0, updatedAt: 1_000 }),
       paramsFor('book-1'),
     );
 

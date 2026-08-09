@@ -1,6 +1,5 @@
-import { Redis } from '@upstash/redis';
-
 import { toCueSpans, toStoredSpans } from './chunkIndex';
+import { orMiss, redisFromEnv } from './upstashRedis';
 
 // The I/O half of the Chunk index (chunkIndex.js holds the pure half) - see
 // .scratch/phase-1-10-continuous-hls-playback/issues/08-playlist-routes-read-one-blob-per-chunk.md.
@@ -23,28 +22,6 @@ const cuesKey = ({ bookId, voice }) => `book:${bookId}:${voice}:cues`;
 // write and the read for a value that is the same every time.
 const ORIGIN_KEY = 'blob:origin';
 
-// The credentials arrive under the legacy Vercel KV names, so Redis.fromEnv() does not
-// work - it looks for UPSTASH_REDIS_REST_*. The REST client is the right shape for
-// serverless; KV_URL/REDIS_URL are TCP connection strings and are deliberately unused.
-function redisFromEnv() {
-  const url = process.env.KV_REST_API_URL;
-  const token = process.env.KV_REST_API_TOKEN;
-  return url && token ? new Redis({ url, token }) : undefined;
-}
-
-// A miss and a failure are the same outcome to every caller, so they are the same code
-// path here. Logged rather than silent: an index that has quietly stopped answering looks
-// exactly like one that was never written, and the only difference visible from outside is
-// that the routes got slow again.
-async function orMiss(what, run) {
-  try {
-    return await run();
-  } catch (error) {
-    console.warn(`The Chunk index could not ${what}; falling back to Blob`, error);
-    return undefined;
-  }
-}
-
 // redis is injected so tests substitute a fake instead of reaching Upstash, matching how
 // audioGenerationService.js takes its storageClient. An absent client is not an error: a
 // fresh clone with no credentials gets a client whose reads miss and whose writes drop, so
@@ -56,7 +33,7 @@ export function createChunkIndexClient({ redis = redisFromEnv() } = {}) {
     async readIndex({ bookId, voice }) {
       if (!redis) return undefined;
 
-      return orMiss('be read', async () => {
+      return orMiss('the Chunk index could not be read', async () => {
         const [durations, base] = await redis
           .pipeline()
           .hgetall(durationsKey({ bookId, voice }))
@@ -75,7 +52,7 @@ export function createChunkIndexClient({ redis = redisFromEnv() } = {}) {
       // HMGET with no field is an error, and there is nothing to ask for anyway.
       if (chunkIndexes.length === 0) return [];
 
-      return orMiss('return cues', async () => {
+      return orMiss('the Chunk index could not return cues', async () => {
         const [values] = await redis
           .pipeline()
           .hmget(cuesKey({ bookId, voice }), ...chunkIndexes.map(String))
@@ -105,7 +82,7 @@ export function createChunkIndexClient({ redis = redisFromEnv() } = {}) {
       // isPlayableChunk, applied before the entry exists rather than after.
       if (!(durationSeconds > 0) || !base) return;
 
-      await orMiss('be written', () =>
+      await orMiss('the Chunk index could not be written', () =>
         redis
           .pipeline()
           .hset(durationsKey({ bookId, voice }), { [chunkIndex]: durationSeconds })

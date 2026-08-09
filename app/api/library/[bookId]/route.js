@@ -20,7 +20,7 @@ export async function GET(request, { params }) {
 
 export async function PATCH(request, { params }) {
   const { bookId } = await params;
-  const { resumeIndex, resumeSentenceIndex } = await request.json();
+  const { resumeIndex, resumeSentenceIndex, updatedAt, snapshot } = await request.json();
 
   if (resumeIndex === undefined || resumeIndex === null) {
     return NextResponse.json({ error: 'resumeIndex is required' }, { status: 400 });
@@ -28,14 +28,23 @@ export async function PATCH(request, { params }) {
   if (resumeSentenceIndex === undefined || resumeSentenceIndex === null) {
     return NextResponse.json({ error: 'resumeSentenceIndex is required' }, { status: 400 });
   }
+  // Rejected at the boundary rather than stored: a position with no timestamp can never be
+  // compared against a stored one, so it would either be dropped silently or win forever.
+  if (!Number.isFinite(updatedAt)) {
+    return NextResponse.json({ error: 'updatedAt must be a number' }, { status: 400 });
+  }
 
   try {
-    const book = await updateResumeIndex(bookId, { resumeIndex, resumeSentenceIndex });
-    if (!book) {
-      return NextResponse.json({ error: 'book not found' }, { status: 404 });
-    }
+    // No 404 for an unknown Book: proving it exists means reading the Library index, which
+    // is the Blob operation this whole path exists to stop spending (see ticket 10).
+    const position = await updateResumeIndex(bookId, {
+      resumeIndex,
+      resumeSentenceIndex,
+      updatedAt,
+      snapshot: snapshot === true,
+    });
 
-    return NextResponse.json(book);
+    return NextResponse.json(position);
   } catch (error) {
     console.error('Updating the resume position failed', error);
     return NextResponse.json({ error: 'Updating the resume position failed' }, { status: 502 });

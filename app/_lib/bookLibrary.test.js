@@ -66,23 +66,33 @@ describe('bookLibrary', () => {
   });
 
   describe('updateResumeIndex', () => {
-    test('PATCHes /api/library/[bookId] with the new resume index and resume sentence index together', async () => {
-      const summary = {
-        bookId: 'book-1',
-        title: 'First Book',
-        resumeIndex: 5,
-        resumeSentenceIndex: 2,
-      };
-      global.fetch.mockResolvedValue(new Response(JSON.stringify(summary), { status: 200 }));
+    test('PATCHes /api/library/[bookId] with the position, its updatedAt and the snapshot flag', async () => {
+      const position = { resumeIndex: 5, resumeSentenceIndex: 2, updatedAt: 1_000 };
+      global.fetch.mockResolvedValue(new Response(JSON.stringify(position), { status: 200 }));
 
-      const result = await updateResumeIndex('book-1', { resumeIndex: 5, resumeSentenceIndex: 2 });
+      const result = await updateResumeIndex('book-1', { ...position, snapshot: true });
 
-      expect(result).toEqual(summary);
+      expect(result).toEqual(position);
       expect(global.fetch).toHaveBeenCalledWith('/api/library/book-1', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resumeIndex: 5, resumeSentenceIndex: 2 }),
+        body: JSON.stringify({ ...position, snapshot: true }),
       });
+    });
+
+    // Ordinary per-Sentence saves go to Redis alone; only the flush points ask for the
+    // durable copy, and that is what keeps the Blob cost bounded (see ticket 10).
+    test('does not ask for a snapshot unless the caller says so', async () => {
+      global.fetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      await updateResumeIndex('book-1', {
+        resumeIndex: 5,
+        resumeSentenceIndex: 2,
+        updatedAt: 1_000,
+      });
+
+      const [, { body }] = global.fetch.mock.calls[0];
+      expect(JSON.parse(body).snapshot).toBe(false);
     });
   });
 
