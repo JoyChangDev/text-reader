@@ -20,16 +20,16 @@ Gates the whole phase, because it produces the one value everything else is conf
 
 ## Acceptance criteria
 
-- [ ] The bucket exists, is private, and has never had `r2.dev` enabled.
-- [ ] The Worker is deployed on a `*.workers.dev` subdomain and returns an object placed in the bucket by hand.
-- [ ] **A range request returns 206 with only the requested bytes**, not 200 with the whole object — see the note below.
-- [ ] The response carries CORS headers permitting the app's origin, and an `OPTIONS` preflight succeeds.
-- [ ] `Content-Type` is `audio/mpeg` for an `.mp3` key, so the media element is not left to sniff it.
-- [ ] A request for a key that does not exist returns 404, not 200 with an empty body.
-- [ ] **On a physical iPhone**, an `.m3u8` listing several segments served by this Worker plays continuously across at least two segment boundaries.
-- [ ] Seeking backwards and forwards within a single segment works during that playback.
-- [ ] `workers/segments/` and its `wrangler.toml` are committed, and the README records the deploy command, the binding name, and the resulting origin.
-- [ ] `npm run lint` still passes with the new directory present.
+- [x] The bucket exists, is private, and has never had `r2.dev` enabled.
+- [x] The Worker is deployed on a `*.workers.dev` subdomain and returns an object placed in the bucket by hand.
+- [x] **A range request returns 206 with only the requested bytes**, not 200 with the whole object — see the note below.
+- [x] The response carries CORS headers permitting the app's origin, and an `OPTIONS` preflight succeeds.
+- [x] `Content-Type` is `audio/mpeg` for an `.mp3` key, so the media element is not left to sniff it.
+- [x] A request for a key that does not exist returns 404, not 200 with an empty body.
+- [x] **On a physical iPhone**, an `.m3u8` listing several segments served by this Worker plays continuously across at least two segment boundaries.
+- [x] Seeking backwards and forwards within a single segment works during that playback.
+- [x] `workers/segments/` and its `wrangler.toml` are committed, and the README records the deploy command, the binding name, and the resulting origin.
+- [x] `npm run lint` still passes with the new directory present.
 
 ## Comments
 
@@ -46,3 +46,91 @@ It does not point the app at the new origin, migrate anything, or touch the Verc
 ### Record the origin somewhere the next ticket can find it
 
 [Ticket 04](04-segment-origin-becomes-configuration.md) turns the origin into configuration, and the value comes from here. Put it in the `workers/segments/README.md` as well as in the deployment, so a cold session does not have to open the Cloudflare dashboard to find out what the app should be configured with.
+
+### The range request bit three times, and none of the three looked like a failure
+
+The ticket predicted the shape of this and still understated it. Every one of these returned
+something that a listen test would have accepted.
+
+**Round one, found by `curl`.** The first deploy answered `bytes=0-99` with the right hundred
+bytes under `Content-Range: bytes NaN-NaN/85248`. Nothing truncated, nothing over-sent. Two
+mistakes about R2's `R2Range`, both invisible without reading headers:
+
+- **It carries every field**, so `'suffix' in range` is true even for an offset/length range: the
+  suffix branch ran for an ordinary request and computed `size - undefined`.
+- **It is populated even when no range was asked for**, resolved to the whole object, so it cannot
+  answer "is this partial" — only the request's own `Range` header can. A plain `GET` was
+  returning `206` over the entire file.
+
+**Round two, found while checking a code-review claim** that the surviving `!object.range` clause
+was dead. It was not dead for the reason given, and probing it turned up worse:
+
+| `Range` sent      | answered                      | should be                                         |
+| ----------------- | ----------------------------- | ------------------------------------------------- |
+| `bytes=abc`       | `206` + `bytes 0-85247/85248` | `200` — RFC 9110 says ignore an unparseable range |
+| `bytes=0-9,20-29` | `206` + whole file            | `200`                                             |
+| `bytes=99999999-` | **`500`**                     | `416`                                             |
+
+R2 resolves a header it cannot parse to the whole object rather than rejecting it, so "resolved a
+range" and "was asked for a range" are still not the same question — the honest test is whether
+the resolved length is shorter than the object. And a range starting past the end makes R2 _throw_,
+which without a catch becomes a 500 on the segment origin: the most expensive wrong diagnosis
+available, since it reads as "the Worker is broken" rather than "the client asked for nonsense".
+
+None of these three arise from Safari, which sends well-formed single ranges. That is exactly why
+they survived a physical-device test that passed on the first try.
+
+### What verified what
+
+- Range behaviour, over `curl`: closed (`0-99`), mid-file (`1000-1099`), suffix (`-100`) and
+  open-ended (`85148-`) return 206 with a correct `Content-Range`; a plain GET returns 200 with no
+  `Content-Range`; `HEAD` returns 200 with no body; malformed, multi-range and out-of-bounds behave
+  as the table above says they should. The first hundred bytes hash equal to the local `seg-0.mp3`,
+  so this is the right bytes and not merely a plausible length.
+- CORS, in a real browser rather than by header inspection: a cross-origin `fetch` carrying a
+  `Range` header (a preflighted request) returned 206, and JS could read `Content-Range` — which
+  only works because `Access-Control-Expose-Headers` lists it. `curl` cannot test this; it does not
+  enforce the same-origin policy.
+- Privacy, via `wrangler r2 bucket dev-url get`: "Public access via the r2.dev URL is disabled."
+  That the URL was _never_ enabled rests on the account's history rather than on this observation.
+- The physical iPhone, on the Vercel preview, with the playlist served from the app's origin and
+  the segments from the Worker — deliberately cross-origin, because a playlist served from the
+  bucket alongside its segments would never exercise CORS at all. Media events recorded:
+  `duration 72.50s` (equal to the six `#EXTINF` values summed), then `playing` at 0.00s and `ended`
+  at 72.52s with **no `waiting` and no `stalled` in between** — five boundaries crossed, not the
+  two required. Seeking within the first segment ran 6.24 → 4.64 → 5.15 → 5.66 → 6.24 → … → 2.47s,
+  every `seeking` matched by a `seeked`, with `playing` resuming after.
+
+### Two rules here are not in this ticket
+
+**The Worker serves only `.mp3`.** The bucket also holds `library/<bookId>/chunks.json` — the full
+text of an uploaded Book — and this Worker is the entire boundary between a private bucket and the
+open internet, so whatever it will serve is public. Nothing reads Library JSON over this path; that
+goes over the authenticated S3 API. Without the rule, the only thing protecting a Book's text is
+that its `bookId` is an unguessable UUID. Its cost: a future non-`.mp3` read over this origin — an
+fMP4 or AAC segment, say — would 404, and 404 already means "this Chunk isn't generated yet", so
+the mistake would wear another mistake's clothes.
+
+**It answers 416**, which the README first recorded as something it deliberately would not do. That
+was written believing an unsatisfiable range would degrade quietly; it 500s instead. The 416 is
+only given once the object is known to exist, so a genuinely broken store still fails loudly.
+
+Both are deviations from "no application logic". Recorded so a later reader can weigh them rather
+than discover them.
+
+### The recorded origin carries a trailing slash on purpose
+
+`deriveSegmentUrl` concatenates — `` `${base}${audioPathname(...)}` `` — and `audioPathname` has no
+leading slash, which is why `storeBase` sliced a Vercel URL down to one ending in `/`. Ticket 04 is
+told to take the origin from the README, so the README records
+`https://leia.text-reader.workers.dev/` with the slash. Without it every segment URL comes out as
+`…workers.devdemo-book/0/….mp3`. The Worker tolerates either form; the hazard is entirely on the
+configuration side, which is where the value is about to go.
+
+### `audio/mpeg` is a property of the write path, not of this Worker
+
+The criterion "`Content-Type` is `audio/mpeg` for an `.mp3` key" passes here because the probe
+object was uploaded with `--content-type=audio/mpeg` and the Worker echoes stored metadata rather
+than inventing it. The guarantee therefore lives in [ticket 02](02-object-storage-client-on-aws4fetch.md),
+whose own criterion is that objects are written with a `Content-Type`. If that regresses, this
+Worker will faithfully serve the wrong type and this ticket's tick will still be honest.

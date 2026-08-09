@@ -1,0 +1,22 @@
+# Deploy from this directory: `npx wrangler deploy`
+# See ./README.md, and the ticket that opened this:
+# .scratch/phase-1-11-object-storage-migration/issues/01-r2-bucket-and-segment-worker.md
+
+# `leia` is the Worker's name and therefore its hostname; the account's workers.dev subdomain
+# is `text-reader`, so the two compose into leia.text-reader.workers.dev. The directory is
+# named for what the Worker does, the deployment for what it is called - ticket 01 asks for
+# workers/segments/ by path, so the two are allowed to differ.
+name = "leia"
+main = "worker.js"
+compatibility_date = "2026-08-09"
+
+# The Worker's name is the *.workers.dev hostname, so renaming it moves the segment origin
+# every stored Book is played from. It is configuration on the app's side (ticket 04), not a
+# value derived at runtime, so a rename is a coordinated change rather than a free one.
+workers_dev = true
+
+# The Worker reaches the bucket through this binding and holds no credentials. The app's S3
+# keys are for writes only and are deliberately not available here.
+[[r2_buckets]]
+binding = "SEGMENTS"
+bucket_name = "text-reader"
