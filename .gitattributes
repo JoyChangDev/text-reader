@@ -1,0 +1,5 @@
+# Force LF in the working tree regardless of core.autocrlf, so a checkout on Windows can't
+# reintroduce the CRLF/Prettier mismatch this file exists to close (endOfLine: "lf" in
+# .prettierrc.json). Git's own heuristic still detects binaries under `text=auto` and leaves
+# them untouched.
+* text=auto eol=lf

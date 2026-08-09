@@ -9,7 +9,7 @@ server-assigned timestamp.
 **Status:** done
 
 - [x] `pronunciationReportService.js` implements `submitReport({ bookTitle, phrase,
-  description })`, storing `{ bookTitle, phrase, description, reportedAt }` (a
+description })`, storing `{ bookTitle, phrase, description, reportedAt }` (a
       server-generated timestamp, not user-supplied) via the shared storage seam
 - [x] `POST /api/pronunciation-reports` calls `submitReport`
 - [x] Selecting a phrase in the transcript (native text selection) surfaces a "report
