@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+import { buildListObjectsXml } from './listObjectsXml.fixture';
 import { createObjectStorageClient } from './objectStorageClient';
 
 // fetch is mocked, aws4fetch is not: the wire is the real boundary here, so these assert the
@@ -239,14 +240,130 @@ describe('createObjectStorageClient', () => {
   });
 
   describe('list', () => {
-    // Deferred to ticket 03, which brings the ListObjectsV2 XML parser with it. It throws
-    // rather than resolving [] so a caller cannot mistake "not written yet" for "nothing
-    // stored" - cleanup would report 0% used and deleteBook would silently orphan audio.
-    test('fails loudly rather than reporting an empty bucket', async () => {
+    const audio = {
+      key: 'book-1/0/voice-a.mp3',
+      lastModified: '2026-08-01T10:00:00.000Z',
+      size: 40960,
+    };
+    const metadata = {
+      key: 'book-1/0/voice-a.json',
+      lastModified: '2026-08-01T10:00:01.000Z',
+      size: 512,
+    };
+    const page = (options) => new Response(buildListObjectsXml(options), { status: 200 });
+
+    test('lists the bucket under a prefix, as the records callers already receive', async () => {
+      fakeFetch.mockResolvedValue(page({ objects: [audio, metadata], prefix: 'book-1/' }));
       const client = createObjectStorageClient(CONFIG);
 
-      await expect(client.list('book-1/')).rejects.toThrow(/not implemented/i);
-      expect(fakeFetch).not.toHaveBeenCalled();
+      const listed = await client.list('book-1/');
+
+      const request = requestAt();
+      expect(request.method).toBe('GET');
+      expect(request.url).toBe(`${OBJECT_BASE}?list-type=2&prefix=book-1%2F`);
+      expect(request.authorization).toMatch(/^AWS4-HMAC-SHA256 /);
+      expect(listed).toEqual([
+        { pathname: 'book-1/0/voice-a.mp3', size: 40960, uploadedAt: '2026-08-01T10:00:00.000Z' },
+        { pathname: 'book-1/0/voice-a.json', size: 512, uploadedAt: '2026-08-01T10:00:01.000Z' },
+      ]);
+    });
+
+    // getUsage and cleanupBlobs list the whole bucket.
+    test('lists every key when given no prefix', async () => {
+      fakeFetch.mockResolvedValue(page({ objects: [audio] }));
+      const client = createObjectStorageClient(CONFIG);
+
+      await client.list();
+
+      expect(requestAt().url).toBe(`${OBJECT_BASE}?list-type=2`);
+    });
+
+    // S3 caps a page at 1,000 keys and a 1,983-Chunk Book stores nearly 4,000 objects, so a
+    // single-page listing under-reports usage, under-cleans, and leaves deleteBook's cascade
+    // orphaning most of a Book's audio. Ticket 09 left this alone because another page was
+    // another Advanced Operation against a 2,000/month allowance; on R2 it is a Class A
+    // operation against a million, so the only reason not to fix it is gone.
+    test('follows the continuation token until the listing is complete', async () => {
+      fakeFetch
+        .mockResolvedValueOnce(page({ objects: [audio], nextContinuationToken: 'token-2' }))
+        .mockResolvedValueOnce(page({ objects: [metadata] }));
+      const client = createObjectStorageClient(CONFIG);
+
+      const listed = await client.list('book-1/');
+
+      expect(requestAt(1).url).toBe(
+        `${OBJECT_BASE}?list-type=2&prefix=book-1%2F&continuation-token=token-2`,
+      );
+      expect(listed.map(({ pathname }) => pathname)).toEqual([
+        'book-1/0/voice-a.mp3',
+        'book-1/0/voice-a.json',
+      ]);
+    });
+
+    test('stops after the page that carries no token, rather than asking again', async () => {
+      fakeFetch.mockResolvedValue(page({ objects: [audio] }));
+      const client = createObjectStorageClient(CONFIG);
+
+      await client.list('book-1/');
+
+      expect(fakeFetch).toHaveBeenCalledTimes(1);
+    });
+
+    // The reason list() threw between tickets 02 and 03 rather than resolving []: an empty
+    // listing is a plausible answer, so a store that is broken or forbidden would report 0%
+    // of the quota used and a clean sweep, both indistinguishable from the truth.
+    test('throws rather than reporting an empty bucket when the store rejects the listing', async () => {
+      fakeFetch.mockResolvedValue(new Response('<Error>AccessDenied</Error>', { status: 403 }));
+      const client = createObjectStorageClient(CONFIG);
+
+      await expect(client.list('book-1/')).rejects.toThrow(/403/);
+    });
+
+    test('throws when the bucket does not exist, which S3 answers with a 404', async () => {
+      fakeFetch.mockResolvedValue(
+        new Response('<Error><Code>NoSuchBucket</Code></Error>', { status: 404 }),
+      );
+      const client = createObjectStorageClient(CONFIG);
+
+      await expect(client.list('book-1/')).rejects.toThrow(/404/);
+    });
+
+    // A short listing has the same shape as a complete one, so under-reporting is invisible
+    // in what comes back: getUsage would report a fraction of the store, the cron a clean
+    // sweep, and deleteBook would orphan the audio it did not see. The parser stays lenient
+    // and reports these; refusing them is this client's job.
+    test('throws when a page says it was truncated but offers no way to continue', async () => {
+      const truncated = buildListObjectsXml({
+        objects: [audio],
+        nextContinuationToken: 'token-2',
+      }).replace('<NextContinuationToken>token-2</NextContinuationToken>', '');
+      fakeFetch.mockResolvedValue(new Response(truncated, { status: 200 }));
+      const client = createObjectStorageClient(CONFIG);
+
+      await expect(client.list('book-1/')).rejects.toThrow(/truncated/i);
+    });
+
+    // A 200 carrying an error page from something in front of the endpoint parses to zero
+    // records, which is indistinguishable from an empty bucket.
+    test('throws on a 200 whose body is not a listing, rather than reading it as empty', async () => {
+      fakeFetch.mockResolvedValue(
+        new Response('<html><body>502 Bad Gateway</body></html>', { status: 200 }),
+      );
+      const client = createObjectStorageClient(CONFIG);
+
+      await expect(client.list('book-1/')).rejects.toThrow(/did not answer with a listing/);
+    });
+
+    // A fresh Response per call, because a body can only be read once - reusing one would
+    // fail on the second page for a reason that has nothing to do with what is under test.
+    test('throws rather than looping forever when the store repeats a continuation token', async () => {
+      fakeFetch.mockImplementation(async () =>
+        page({ objects: [audio], nextContinuationToken: 'token-2' }),
+      );
+      const client = createObjectStorageClient(CONFIG);
+
+      await expect(client.list('book-1/')).rejects.toThrow(/repeated its continuation token/);
+      expect(fakeFetch).toHaveBeenCalledTimes(2);
     });
   });
 

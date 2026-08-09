@@ -45,8 +45,11 @@ Object storage (Cloudflare R2 — see [the phase 1.11 spec](specs/phase-1-11-obj
 - `R2_BUCKET` — bucket name (`text-reader`).
 - `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` — an R2 API token for the app. It is used for writes;
   the segment Worker reaches the bucket through a binding and holds no credentials of its own.
-- `SEGMENT_ORIGIN` — where a Listener plays segments from, i.e. the Worker's origin.
+- `SEGMENT_ORIGIN` — where a Listener plays segments from, i.e. the Worker's origin. Both the
+  `url` stored with a Chunk's metadata and the URLs the playlist derives from the Chunk index
+  come from it, so it is the one value the write path and the read path must agree about.
   **Keep the trailing slash**: segment URLs are the origin concatenated with the object pathname.
+  Absent or slashless, it throws at the seam naming itself, rather than yielding URLs that 404.
 
 Redis (Upstash, under the legacy Vercel KV names — see [app/\_lib/upstashRedis.js](app/_lib/upstashRedis.js)):
 
@@ -59,8 +62,9 @@ Optional:
 
 The bucket is private. The app writes to it over the S3 API, and
 [`workers/segments/`](workers/segments/README.md) is the only public read path, so `SEGMENT_ORIGIN`
-is a different host from the one writes go to. That is why the storage client builds a segment's
-URL from configuration rather than from the response to the write that stored it.
+is a different host from the one writes go to. That is why segment URLs are built from
+configuration rather than from the response to the write that stored them — and why nothing
+records an origin, so there is nothing to go stale if the store ever moves again.
 
 Absent R2 settings are not silently tolerated: the storage client throws on first use, naming what
 is missing, rather than reporting a store that looks empty.

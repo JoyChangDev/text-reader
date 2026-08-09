@@ -29,13 +29,16 @@ the app should be configured with without opening the Cloudflare dashboard. The 
 because a write response to the S3 endpoint cannot yield the host a Listener plays from, so the
 storage client needed the value in order to return a playable `url` at all.
 [Ticket 04](../../.scratch/phase-1-11-object-storage-migration/issues/04-segment-origin-becomes-configuration.md)
-takes the Chunk index off its stored origin and onto the same variable.
+took the Chunk index off its stored origin and onto the same variable, so it is now the only
+place either path learns this host from — read and validated in
+[app/\_lib/segmentOrigin.js](../../app/_lib/segmentOrigin.js).
 
 **Keep the trailing slash.** `deriveSegmentUrl` concatenates — `` `${base}${audioPathname(...)}` ``
 in [app/\_lib/chunkIndex.js](../../app/_lib/chunkIndex.js) — and `audioPathname` has no leading
-slash, which is why `storeBase` used to slice a Vercel URL down to one ending in `/`. Configured
-without it, every segment URL comes out as `…workers.devdemo-book/0/….mp3`. The Worker itself
-tolerates either form; the hazard is entirely on the configuration side.
+slash. Configured without it, every segment URL comes out as `…workers.devdemo-book/0/….mp3`. The
+app refuses a slashless origin rather than repairing it, so this fails at the seam naming the
+variable instead of on playback. The Worker itself tolerates either form; the hazard is entirely
+on the configuration side.
 
 ## The pathname scheme
 

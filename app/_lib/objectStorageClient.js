@@ -1,5 +1,8 @@
 import { AwsClient } from 'aws4fetch';
 
+import { parseListObjectsXml } from './listObjectsXml';
+import { requireSegmentOrigin } from './segmentOrigin';
+
 // Wraps Cloudflare R2's S3-compatible API — the only file in the app that talks to a storage
 // provider. See
 // .scratch/phase-1-11-object-storage-migration/issues/02-object-storage-client-on-aws4fetch.md,
@@ -11,7 +14,7 @@ import { AwsClient } from 'aws4fetch';
 // transitively by the playlist route, which the media stack re-fetches continuously during
 // playback: the SDK's megabytes and cold start would land on the one path phases 1.8-1.10
 // were spent making reliable in the background. The price is that ListObjectsV2 comes back
-// as XML, which is ticket 03's parser.
+// as XML, which listObjectsXml.js parses.
 
 const metadataPathname = (key) => `${key}.json`;
 const audioPathname = (key) => `${key}.mp3`;
@@ -24,23 +27,6 @@ const r2Endpoint = (accountId) => `https://${accountId}.r2.cloudflarestorage.com
 // than left to whatever the runtime does with the URL. Separators stay separators: a
 // pathname is `<bookId>/<chunkIndex>/<voice>.mp3`, not one opaque segment.
 const encodeKey = (pathname) => pathname.split('/').map(encodeURIComponent).join('/');
-
-// deriveSegmentUrl in chunkIndex.js concatenates origin and pathname, and audioPathname has
-// no leading slash, so an origin missing its trailing slash yields `…workers.devbook-1/…`.
-// Rejected here rather than quietly repaired. Normalising would fix only this call site:
-// deriveSegmentUrl concatenates raw, and ticket 04 points it at this same variable, so a
-// slashless origin would then produce playable URLs from `put` and broken ones from the
-// Chunk index — the two disagreeing about a value they are supposed to share. Both READMEs
-// say to keep the slash; this makes that true rather than advisory.
-function requireTrailingSlash(segmentOrigin) {
-  if (!segmentOrigin.endsWith('/')) {
-    throw new Error(
-      `Object storage is misconfigured: ${ENV_NAMES.segmentOrigin} must end with a slash, got "${segmentOrigin}".`,
-    );
-  }
-
-  return segmentOrigin;
-}
 
 // Segments were served with a long max-age under the previous provider, and the Worker
 // passes stored headers through rather than inventing them (see workers/segments/README.md),
@@ -66,15 +52,16 @@ const ENV_NAMES = {
   bucket: 'R2_BUCKET',
   accessKeyId: 'R2_ACCESS_KEY_ID',
   secretAccessKey: 'R2_SECRET_ACCESS_KEY',
-  segmentOrigin: 'SEGMENT_ORIGIN',
 };
 
 function missingSettings(resolved, required) {
   return required.filter((name) => !resolved[name]).map((name) => ENV_NAMES[name]);
 }
 
-// The four the S3 endpoint cannot be addressed without. `segmentOrigin` is required only by
-// `put`, which is the one method that has to name a URL a Listener will play from.
+// The four the S3 endpoint cannot be addressed without. The segment origin is not among them:
+// it names a different host entirely, is shared with the Chunk index, and is required only by
+// `put` — the one method that has to name a URL a Listener will play from. It lives in
+// segmentOrigin.js for that reason.
 const STORE_SETTINGS = ['accountId', 'bucket', 'accessKeyId', 'secretAccessKey'];
 
 export function createObjectStorageClient(overrides = {}) {
@@ -91,10 +78,9 @@ export function createObjectStorageClient(overrides = {}) {
       bucket = process.env.R2_BUCKET,
       accessKeyId = process.env.R2_ACCESS_KEY_ID,
       secretAccessKey = process.env.R2_SECRET_ACCESS_KEY,
-      segmentOrigin = process.env.SEGMENT_ORIGIN,
     } = overrides;
 
-    const resolved = { accountId, bucket, accessKeyId, secretAccessKey, segmentOrigin };
+    const resolved = { accountId, bucket, accessKeyId, secretAccessKey };
     const missing = missingSettings(resolved, required);
     if (missing.length > 0) {
       throw new Error(`Object storage is not configured: set ${missing.join(', ')}.`);
@@ -137,6 +123,47 @@ export function createObjectStorageClient(overrides = {}) {
       body,
       headers,
     });
+  }
+
+  // One page of ListObjectsV2. Addressed at the bucket rather than at a key, which is why it
+  // does not go through `request` above: the query string is the whole of the request, and
+  // aws4fetch signs it as part of the canonical request, so it has to be on the URL before
+  // signing rather than appended after.
+  async function listPage(prefix, continuationToken) {
+    const { accountId, bucket, accessKeyId, secretAccessKey } = settings(STORE_SETTINGS);
+    const aws = signerFor({ accessKeyId, secretAccessKey });
+
+    const url = new URL(`${r2Endpoint(accountId)}/${bucket}`);
+    url.searchParams.set('list-type', '2');
+    if (prefix) url.searchParams.set('prefix', prefix);
+    if (continuationToken) url.searchParams.set('continuation-token', continuationToken);
+
+    const response = await aws.fetch(url.toString(), { method: 'GET' });
+    await throwUnlessOk(response, 'list');
+
+    const body = await response.text();
+    const page = parseListObjectsXml(body);
+
+    // Two ways a 200 can carry an answer that is short rather than complete, and both are
+    // invisible in the records themselves — a listing missing half its keys has the same
+    // shape as one that had half that many. Left unchecked they are the failure this whole
+    // ticket is about: getUsage reports a fraction of the store, the cleanup cron reports a
+    // clean sweep, and deleteBook's cascade orphans the audio it did not see, with nothing
+    // left to notice because the Book is already out of the index.
+    //
+    // The parser stays lenient by design and reports these rather than throwing on them, so
+    // that a caller which only wants what could be read still can. This one does not.
+    if (!page.isListing) {
+      throw new Error(`Object storage list did not answer with a listing: ${body.slice(0, 500)}`);
+    }
+
+    if (page.isTruncated && !page.nextContinuationToken) {
+      throw new Error(
+        'Object storage list was truncated but returned no continuation token, so the rest of the listing is unreachable.',
+      );
+    }
+
+    return page;
   }
 
   // The one behaviour that does not port from @vercel/blob for free: its get() resolved null
@@ -184,8 +211,7 @@ export function createObjectStorageClient(overrides = {}) {
       // stored metadata. Resolved up front so a missing or slashless origin fails before
       // either object is written rather than after the audio has landed. Ticket 04 makes
       // this same value the Chunk index's base.
-      const { segmentOrigin } = settings([...STORE_SETTINGS, 'segmentOrigin']);
-      const origin = requireTrailingSlash(segmentOrigin);
+      const origin = requireSegmentOrigin(overrides.segmentOrigin);
 
       await putObject(audioPathname(key), await toBytes(audio), 'audio/mpeg', AUDIO_CACHE_CONTROL);
 
@@ -221,16 +247,38 @@ export function createObjectStorageClient(overrides = {}) {
       await throwUnlessOk(response, 'delete');
     },
 
-    // Deferred to ticket 03, which brings the ListObjectsV2 XML parser and the continuation
-    // loop with it. Throwing rather than resolving [] is the point: an empty listing is a
-    // plausible answer, so getUsage would report 0% of the quota used and the cleanup cron
-    // would report a clean sweep, both indistinguishable from the truth. deleteBook orphans
-    // the Book's audio either way — its list() call is the last step, after the index has
-    // already been rewritten — but it at least says so.
+    // Every key under `prefix`, or the whole bucket without one. Pages are followed to the
+    // end rather than stopping at S3's 1,000-key cap: a 1,983-Chunk Book stores nearly 4,000
+    // objects, so a single page would under-report usage, under-clean, and leave deleteBook's
+    // cascade orphaning most of a Book's audio with nothing left to notice. Ticket 09 left
+    // that unfixed because a page was an Advanced Operation against a 2,000/month allowance;
+    // on R2 it is a Class A operation against a million.
+    //
+    // Sequential rather than parallel because each page's token comes out of the one before,
+    // and neither caller is on a request path a Listener waits on — the cleanup cron and the
+    // Library's delete.
     async list(prefix) {
-      throw new Error(
-        'Object storage list() is not implemented yet — see ticket 03 of phase 1.11.',
-      );
+      const objects = [];
+      let continuationToken;
+
+      do {
+        const page = await listPage(prefix, continuationToken);
+        objects.push(...page.objects);
+
+        // A store that answered with the token it was just given would spin here forever,
+        // and both callers are things that must finish — the daily cron and the Library's
+        // delete. Cheaper to refuse than to diagnose a request that never returns.
+        if (
+          page.nextContinuationToken !== undefined &&
+          page.nextContinuationToken === continuationToken
+        ) {
+          throw new Error('Object storage list repeated its continuation token.');
+        }
+
+        continuationToken = page.nextContinuationToken;
+      } while (continuationToken);
+
+      return objects;
     },
   };
 }

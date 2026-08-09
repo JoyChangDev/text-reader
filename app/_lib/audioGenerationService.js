@@ -1,5 +1,4 @@
 import { isPlayableChunk } from './chunkAudio';
-import { audioPathname, storeBase } from './chunkIndex';
 import { createEdgeTtsClient } from './edgeTtsClient';
 import { measureMp3Duration } from './mp3Frames';
 import { createObjectStorageClient } from './objectStorageClient';
@@ -45,10 +44,6 @@ async function indexChunk(chunkIndexClient, { bookId, chunkIndex, voice, text },
       durationSeconds: metadata.durationSeconds,
       // Derived here, once, instead of on every manifest request over every placed Chunk.
       spans: deriveCueSpans({ text, boundaries: metadata.boundaries ?? [] }),
-      base: storeBase({
-        url: metadata.url,
-        pathname: audioPathname({ bookId, chunkIndex, voice }),
-      }),
     },
   );
 

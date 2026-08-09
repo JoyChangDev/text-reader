@@ -1,4 +1,5 @@
 import { toCueSpans, toStoredSpans } from './chunkIndex';
+import { requireSegmentOrigin } from './segmentOrigin';
 import { orMiss, redisFromEnv } from './upstashRedis';
 
 // The I/O half of the Chunk index (chunkIndex.js holds the pure half) - see
@@ -16,29 +17,29 @@ import { orMiss, redisFromEnv } from './upstashRedis';
 const durationsKey = ({ bookId, voice }) => `book:${bookId}:${voice}:durations`;
 const cuesKey = ({ bookId, voice }) => `book:${bookId}:${voice}:cues`;
 
-// Segment URLs are derivable from the store's origin (see chunkIndex.js), so the origin is
-// the one thing the index has to record that isn't per-Chunk. It is global rather than
-// per-Book: one store backs every Book, and recording it per-Book would multiply both the
-// write and the read for a value that is the same every time.
-const ORIGIN_KEY = 'blob:origin';
-
 // redis is injected so tests substitute a fake instead of reaching Upstash, matching how
 // audioGenerationService.js takes its storageClient. An absent client is not an error: a
 // fresh clone with no credentials gets a client whose reads miss and whose writes drop, so
 // the app still plays - just at stage 1's cost.
 export function createChunkIndexClient({ redis = redisFromEnv() } = {}) {
   return {
-    // What the playlist needs, in one round trip: every indexed duration for this
-    // (Book, voice) plus the store origin its segment URLs are derived from.
+    // What the playlist needs: every indexed duration for this (Book, voice), plus the
+    // origin its segment URLs are derived from. One Redis command, not a two-command
+    // pipeline - the origin used to be a global key here and is now configuration, because
+    // reads and writes no longer share a host (see segmentOrigin.js and ticket 04).
+    //
+    // Resolved before the read and outside orMiss, so a missing or slashless SEGMENT_ORIGIN
+    // is not swallowed as a cache miss. Every other failure in this file is: Redis is a
+    // cache and an outage degrades to the Blob scan. A misconfigured origin is not an
+    // outage, and the fallback would hide it - the Blob scan answers from URLs stored at
+    // generation time, so playback would quietly resume paying the per-Chunk read this
+    // index exists to remove, with nothing to say why.
     async readIndex({ bookId, voice }) {
       if (!redis) return undefined;
+      const base = requireSegmentOrigin();
 
       return orMiss('the Chunk index could not be read', async () => {
-        const [durations, base] = await redis
-          .pipeline()
-          .hgetall(durationsKey({ bookId, voice }))
-          .get(ORIGIN_KEY)
-          .exec();
+        const durations = await redis.hgetall(durationsKey({ bookId, voice }));
 
         return { base, durations };
       });
@@ -71,16 +72,14 @@ export function createChunkIndexClient({ redis = redisFromEnv() } = {}) {
     // look-ahead's parallel writers need no read-modify-write and no retry loop - the
     // property that ruled out keeping this index in Blob, which has no compare-and-swap.
     //
-    // The origin is re-SET on every write rather than written once behind an NX. It costs
-    // one command per generation (never per poll), and it means a store whose origin ever
-    // changes self-heals on the next Chunk instead of serving derived URLs into a store
-    // that has moved.
-    async writeChunk({ bookId, chunkIndex, voice }, { durationSeconds, spans, base }) {
+    // Two commands, not three: the third used to re-SET the store origin on every generated
+    // Chunk, and there is no stored origin any more.
+    async writeChunk({ bookId, chunkIndex, voice }, { durationSeconds, spans }) {
       if (!redis) return;
       // A duration the playlist could not use would index the Chunk as playable when it
       // isn't, and nothing ever re-reads the index to find out it was wrong. Same rule as
       // isPlayableChunk, applied before the entry exists rather than after.
-      if (!(durationSeconds > 0) || !base) return;
+      if (!(durationSeconds > 0)) return;
 
       await orMiss('the Chunk index could not be written', () =>
         redis
@@ -89,7 +88,6 @@ export function createChunkIndexClient({ redis = redisFromEnv() } = {}) {
           .hset(cuesKey({ bookId, voice }), {
             [chunkIndex]: JSON.stringify(toStoredSpans(spans)),
           })
-          .set(ORIGIN_KEY, base)
           .exec(),
       );
     },

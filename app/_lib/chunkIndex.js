@@ -15,21 +15,15 @@
 export const audioPathname = ({ bookId, chunkIndex, voice }) =>
   `${bookId}/${chunkIndex}/${voice}.mp3`;
 
-// Segment URLs are never stored in the index: `put` uses addRandomSuffix: false, so a URL is
-// a pure function of the store's origin and the cache key. Storing them instead would put
-// ~110 bytes per Chunk on a path polled continuously - about 220 KB per poll on a
+// Segment URLs are never stored in the index: a key is written to a deterministic pathname,
+// so a URL is a pure function of the store's origin and the cache key. Storing them instead
+// would put ~110 bytes per Chunk on a path polled continuously - about 220 KB per poll on a
 // 2,000-Chunk Book, which is the cost this ticket exists to remove, just moved to Redis.
 //
-// The origin is recovered from a real `put` response rather than parsed out of
-// BLOB_READ_WRITE_TOKEN or configured by hand: the token's internal format is an
-// undocumented implementation detail, and a second env var is a second thing to get wrong.
-// A Chunk stored with no url can't yield an origin, and the index would rather have no
-// origin than a wrong one: writeChunk declines to index a Chunk whose base is unknown, so
-// the Chunk stays a Blob-scan miss rather than becoming a derived URL pointing nowhere.
-export function storeBase({ url, pathname }) {
-  return url?.endsWith(pathname) ? url.slice(0, url.length - pathname.length) : undefined;
-}
-
+// The origin is not stored either. Ticket 08 recovered it from a real `put` response, which
+// held only while reads and writes shared a host; on R2 the app writes to the S3 endpoint and
+// the Listener reads from the Worker, so `base` is configuration - see segmentOrigin.js and
+// ticket 04 of phase 1.11.
 export function deriveSegmentUrl(base, { bookId, chunkIndex, voice }) {
   return `${base}${audioPathname({ bookId, chunkIndex, voice })}`;
 }
@@ -85,6 +79,10 @@ function tryParse(value) {
 // Returns `undefined` for a miss, meaning "ask Blob", which is deliberately not the same as
 // an empty run meaning "nothing is generated". An index that has never been written must not
 // be able to convince a route that a fully-narrated Book is empty.
+//
+// `base` is still guarded even though it now comes from configuration and its reader throws:
+// this half is pure and takes whatever it is handed, and a run of URLs built on `undefined`
+// is exactly the wrong-but-plausible answer the guard exists to refuse.
 export function readIndexedRun({ base, durations }, { bookId, voice, chunkCount, from = 0 }) {
   if (!base || !durations || toDurationSeconds(durations[from]) === undefined) {
     return undefined;

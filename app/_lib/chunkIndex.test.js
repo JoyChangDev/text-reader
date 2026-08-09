@@ -1,32 +1,25 @@
 import { describe, expect, test } from 'vitest';
 
-import { deriveSegmentUrl, readIndexedRun, storeBase } from './chunkIndex';
+import { deriveSegmentUrl, readIndexedRun } from './chunkIndex';
 
-describe('storeBase', () => {
-  test('is the origin a blob URL sits on, recovered by removing its pathname', () => {
-    expect(
-      storeBase({
-        url: 'https://abc123.public.blob.vercel-storage.com/book-1/7/voice-a.mp3',
-        pathname: 'book-1/7/voice-a.mp3',
-      }),
-    ).toBe('https://abc123.public.blob.vercel-storage.com/');
-  });
-});
+// The base is the configured segment origin - the Worker's - rather than one recovered from
+// a write response, which is what storeBase used to do before ticket 04 of phase 1.11.
+const SEGMENT_ORIGIN = 'https://leia.text-reader.workers.dev/';
 
 describe('deriveSegmentUrl', () => {
-  test('rebuilds the segment URL from the store base and the cache key', () => {
+  test('rebuilds the segment URL from the configured origin and the cache key', () => {
     expect(
-      deriveSegmentUrl('https://abc123.public.blob.vercel-storage.com/', {
+      deriveSegmentUrl(SEGMENT_ORIGIN, {
         bookId: 'book-1',
         chunkIndex: 7,
         voice: 'voice-a',
       }),
-    ).toBe('https://abc123.public.blob.vercel-storage.com/book-1/7/voice-a.mp3');
+    ).toBe('https://leia.text-reader.workers.dev/book-1/7/voice-a.mp3');
   });
 });
 
 describe('readIndexedRun', () => {
-  const base = 'https://abc123.public.blob.vercel-storage.com/';
+  const base = SEGMENT_ORIGIN;
   const book = { bookId: 'book-1', voice: 'voice-a', chunkCount: 5 };
 
   test('returns one entry per Chunk index, undefined where not indexed', () => {

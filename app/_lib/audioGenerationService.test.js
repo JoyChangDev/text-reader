@@ -186,9 +186,10 @@ describe('getOrGenerateAudio, indexing what it produced', () => {
     chunkIndexClient = { writeChunk: vi.fn().mockResolvedValue(undefined) };
   });
 
-  // The store origin is recovered from the URL the Blob store actually returned, rather
-  // than parsed out of BLOB_READ_WRITE_TOKEN or configured as a second env var.
-  test('indexes a newly generated Chunk with its duration, spans and store origin', async () => {
+  // No store origin among what is indexed: it left the index in ticket 04 of phase 1.11 and
+  // became configuration, because writes go to R2's S3 endpoint and reads come from the
+  // Worker, so no write response can name the host a Listener plays from.
+  test('indexes a newly generated Chunk with its duration and spans', async () => {
     storageClient.get.mockResolvedValue(undefined);
     ttsClient.synthesize.mockResolvedValue({ audio: new Blob([buildMp3Frames(20)]), boundaries });
     storageClient.put.mockImplementation(async (key, metadata) => ({
@@ -206,7 +207,6 @@ describe('getOrGenerateAudio, indexing what it produced', () => {
           { startSeconds: 0, endSeconds: 1 },
           { startSeconds: 2, endSeconds: 3 },
         ],
-        base: 'https://abc.public.blob.vercel-storage.com/',
       },
     );
   });
@@ -247,10 +247,7 @@ describe('getOrGenerateAudio, indexing what it produced', () => {
     expect(ttsClient.synthesize).not.toHaveBeenCalled();
     expect(chunkIndexClient.writeChunk).toHaveBeenCalledWith(
       { bookId: 'book-1', chunkIndex: 7, voice: 'zh-TW-default' },
-      expect.objectContaining({
-        durationSeconds: 12.5,
-        base: 'https://abc.public.blob.vercel-storage.com/',
-      }),
+      expect.objectContaining({ durationSeconds: 12.5 }),
     );
   });
 

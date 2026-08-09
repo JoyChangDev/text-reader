@@ -1,42 +1,49 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { createChunkIndexClient } from './redisChunkIndex';
 
 const book = { bookId: 'book-1', voice: 'voice-a' };
+const SEGMENT_ORIGIN = 'https://leia.text-reader.workers.dev/';
 
-// A stand-in for @upstash/redis's pipeline: records the commands queued against it and
-// resolves exec() with whatever the test wants them to have returned, in order.
+// A stand-in for @upstash/redis: records the commands issued against it, whether they were
+// queued into a pipeline or called directly, and resolves with whatever the test wants them
+// to have returned. readIndex is a single command now that the index stores no origin, so
+// both shapes have to be here.
 function fakeRedis(results = []) {
   const commands = [];
   const pipeline = {
     hgetall: (...args) => (commands.push(['hgetall', ...args]), pipeline),
     hmget: (...args) => (commands.push(['hmget', ...args]), pipeline),
     hset: (...args) => (commands.push(['hset', ...args]), pipeline),
-    get: (...args) => (commands.push(['get', ...args]), pipeline),
-    set: (...args) => (commands.push(['set', ...args]), pipeline),
     exec: vi.fn(async () => results),
   };
+  const hgetall = vi.fn(async (...args) => (commands.push(['hgetall', ...args]), results[0]));
 
-  return { commands, pipeline: () => pipeline, exec: pipeline.exec };
+  return { commands, hgetall, pipeline: () => pipeline, exec: pipeline.exec };
 }
+
+beforeEach(() => {
+  vi.stubEnv('SEGMENT_ORIGIN', SEGMENT_ORIGIN);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe('createChunkIndexClient', () => {
   describe('readIndex', () => {
-    test('reads the durations hash and the recorded origin in one pipeline', async () => {
-      const redis = fakeRedis([{ 0: '12.5', 1: '11' }, 'https://abc.blob.example/']);
+    // One command, where this used to pipeline HGETALL with a GET of a stored origin. The
+    // origin is configuration now: reads come from the Worker and writes go to the S3
+    // endpoint, so no write response can name the host a Listener plays from.
+    test('reads the durations hash in a single command, taking the origin from configuration', async () => {
+      const redis = fakeRedis([{ 0: '12.5', 1: '11' }]);
       const client = createChunkIndexClient({ redis });
 
       const index = await client.readIndex(book);
 
-      expect(redis.commands).toEqual([
-        ['hgetall', 'book:book-1:voice-a:durations'],
-        ['get', 'blob:origin'],
-      ]);
-      expect(redis.exec).toHaveBeenCalledTimes(1);
-      expect(index).toEqual({
-        base: 'https://abc.blob.example/',
-        durations: { 0: '12.5', 1: '11' },
-      });
+      expect(redis.commands).toEqual([['hgetall', 'book:book-1:voice-a:durations']]);
+      expect(redis.exec).not.toHaveBeenCalled();
+      expect(index).toEqual({ base: SEGMENT_ORIGIN, durations: { 0: '12.5', 1: '11' } });
     });
 
     // The index is a cache, so an unreachable or misbehaving Redis has to look exactly
@@ -44,7 +51,7 @@ describe('createChunkIndexClient', () => {
     // Anything else would let a Redis outage take playback down with it.
     test('is a miss rather than an error when Redis fails', async () => {
       const redis = fakeRedis();
-      redis.exec.mockRejectedValue(new Error('ECONNREFUSED'));
+      redis.hgetall.mockRejectedValue(new Error('ECONNREFUSED'));
       vi.spyOn(console, 'warn').mockImplementation(() => {});
 
       await expect(createChunkIndexClient({ redis }).readIndex(book)).resolves.toBeUndefined();
@@ -52,6 +59,20 @@ describe('createChunkIndexClient', () => {
 
     test('is a miss when no credentials were configured, so a fresh clone still plays', async () => {
       await expect(createChunkIndexClient({}).readIndex(book)).resolves.toBeUndefined();
+    });
+
+    // Deliberately not a miss, unlike everything else that can go wrong here. Falling back
+    // would send the playlist to the Blob scan, which answers from URLs stored at generation
+    // time - so playback would keep working while quietly paying the per-Chunk read this
+    // index exists to remove, and nothing would say why.
+    test('fails loudly when the segment origin is missing, rather than degrading quietly', async () => {
+      vi.stubEnv('SEGMENT_ORIGIN', '');
+      const redis = fakeRedis([{ 0: '12.5' }]);
+
+      await expect(createChunkIndexClient({ redis }).readIndex(book)).rejects.toThrow(
+        /SEGMENT_ORIGIN/,
+      );
+      expect(redis.hgetall).not.toHaveBeenCalled();
     });
   });
 
@@ -141,23 +162,20 @@ describe('createChunkIndexClient', () => {
   });
 
   describe('writeChunk', () => {
-    test('writes the duration, the cues and the origin in one pipeline', async () => {
+    // Two commands, not the three this used to issue: the third re-SET a stored origin on
+    // every generated Chunk, and there is no stored origin any more.
+    test('writes the duration and the cues in one pipeline, and nothing else', async () => {
       const redis = fakeRedis();
       const client = createChunkIndexClient({ redis });
 
       await client.writeChunk(
         { ...book, chunkIndex: 7 },
-        {
-          durationSeconds: 12.5,
-          spans: [{ startSeconds: 0, endSeconds: 1.5 }],
-          base: 'https://abc.blob.example/',
-        },
+        { durationSeconds: 12.5, spans: [{ startSeconds: 0, endSeconds: 1.5 }] },
       );
 
       expect(redis.commands).toEqual([
         ['hset', 'book:book-1:voice-a:durations', { 7: 12.5 }],
         ['hset', 'book:book-1:voice-a:cues', { 7: JSON.stringify([[0, 1.5]]) }],
-        ['set', 'blob:origin', 'https://abc.blob.example/'],
       ]);
       expect(redis.exec).toHaveBeenCalledTimes(1);
     });
@@ -169,7 +187,7 @@ describe('createChunkIndexClient', () => {
 
       await createChunkIndexClient({ redis }).writeChunk(
         { ...book, chunkIndex: 7 },
-        { durationSeconds: 12.5, spans: [], base: 'https://abc.blob.example/' },
+        { durationSeconds: 12.5, spans: [] },
       );
 
       const [, , fields] = redis.commands[0];
@@ -186,7 +204,7 @@ describe('createChunkIndexClient', () => {
       await expect(
         createChunkIndexClient({ redis }).writeChunk(
           { ...book, chunkIndex: 7 },
-          { durationSeconds: 12.5, spans: [], base: 'https://abc.blob.example/' },
+          { durationSeconds: 12.5, spans: [] },
         ),
       ).resolves.toBeUndefined();
     });
@@ -195,7 +213,7 @@ describe('createChunkIndexClient', () => {
       await expect(
         createChunkIndexClient({}).writeChunk(
           { ...book, chunkIndex: 7 },
-          { durationSeconds: 12.5, spans: [], base: 'https://abc.blob.example/' },
+          { durationSeconds: 12.5, spans: [] },
         ),
       ).resolves.toBeUndefined();
     });
@@ -207,18 +225,7 @@ describe('createChunkIndexClient', () => {
 
       await createChunkIndexClient({ redis }).writeChunk(
         { ...book, chunkIndex: 7 },
-        { durationSeconds: 0, spans: [], base: 'https://abc.blob.example/' },
-      );
-
-      expect(redis.exec).not.toHaveBeenCalled();
-    });
-
-    test('indexes nothing when the store origin is not known', async () => {
-      const redis = fakeRedis();
-
-      await createChunkIndexClient({ redis }).writeChunk(
-        { ...book, chunkIndex: 7 },
-        { durationSeconds: 12.5, spans: [], base: undefined },
+        { durationSeconds: 0, spans: [] },
       );
 
       expect(redis.exec).not.toHaveBeenCalled();

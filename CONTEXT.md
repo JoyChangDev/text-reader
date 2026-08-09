@@ -22,6 +22,10 @@ _Avoid_: User, reader (reader is fine in prose/UI copy, but "Listener" is the pr
 The Listener's persisted list of Books, held server-side so a Book uploaded on one device can be seen and resumed from another. The list itself is a JSON object in the object store; each Book's resume position is stored separately (see below).
 _Avoid_: describing it as device-scoped or `localStorage`-backed — it was both before phase 1.6.
 
+**Segment**:
+A Chunk's cached audio as HLS serves it — one `.mp3` object, one `#EXTINF` entry in a playlist. One Segment per (Chunk, voice), so "Chunk" is the unit of text and generation and "Segment" is the same audio seen from the media stack. Its URL is always derived, never stored: the configured **segment origin** (`SEGMENT_ORIGIN`, the Worker that fronts the private bucket) concatenated with the Chunk's pathname.
+_Avoid_: calling the origin the "store origin" or "blob origin" — reads and writes go to different hosts, so the origin a Listener plays from is not the one the app writes to.
+
 **Resume position**:
 Where a Listener stopped in a Book, as an atomic (Chunk, Sentence) pair with the time it was reached. Lives in Redis, with a snapshot in the object store as a backstop — see [ADR 0004](docs/adr/0004-resume-position-store.md).
 _Avoid_: reading position, progress (progress is the derived percentage shown in the Library, not the stored position)

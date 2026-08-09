@@ -3,10 +3,15 @@ import { createObjectStorageClient } from './objectStorageClient';
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const EXCLUDED_PREFIXES = ['library/', 'pronunciation-reports/'];
 
-// Vercel Blob's Hobby plan includes 1 GiB of storage as of writing - override via
-// BLOB_QUOTA_BYTES if that changes. See
-// .scratch/phase-1-6-listening-polish/issues/09-automatic-manual-blob-cleanup.md.
-const DEFAULT_QUOTA_BYTES = 1_073_741_824;
+// R2's free tier includes 10 GB-month of storage as of writing - override via
+// BLOB_QUOTA_BYTES if that changes. Cloudflare bills GB decimally, so this is 10^10 rather
+// than the 1 GiB (2^30) Vercel Blob's Hobby plan allowed; leaving the old value would have
+// the capacity indicator report against a tenth of the real store. The variable keeps its
+// name, which is Vercel's - renaming it belongs to the separate naming ticket, along with
+// the routes, the cron path and the usage component. See
+// .scratch/phase-1-6-listening-polish/issues/09-automatic-manual-blob-cleanup.md and
+// .scratch/phase-1-11-object-storage-migration/issues/04-segment-origin-becomes-configuration.md.
+const DEFAULT_QUOTA_BYTES = 10_000_000_000;
 
 function isChunkAudioPathname(pathname) {
   return !EXCLUDED_PREFIXES.some((prefix) => pathname.startsWith(prefix));
