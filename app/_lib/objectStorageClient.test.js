@@ -27,6 +27,7 @@ function requestAt(callIndex = 0) {
     method: request.method,
     url: request.url,
     contentType: request.headers.get('content-type'),
+    contentLength: request.headers.get('content-length'),
     authorization: request.headers.get('authorization'),
     body: request,
   };
@@ -192,6 +193,33 @@ describe('createObjectStorageClient', () => {
       ).rejects.toThrow(/403/);
       expect(fakeFetch).toHaveBeenCalledTimes(1);
     });
+
+    // Both objects, not just the JSON one - the audio is the larger of the two and is the
+    // write that matters on every generated Chunk. See the putJson case below for why the
+    // header cannot be left to the runtime.
+    test('sets Content-Length on the audio write as well as the metadata write', async () => {
+      fakeFetch.mockResolvedValue(new Response(null, { status: 200 }));
+      const client = createObjectStorageClient(CONFIG);
+
+      await client.put('book-1/0/voice-a', {
+        audio: new Blob(['fake-audio']),
+        boundaries: [],
+        durationSeconds: 1.5,
+      });
+
+      expect(requestAt(0).contentLength).toBe('10');
+      expect(requestAt(1).contentLength).toBe(
+        String(
+          new TextEncoder().encode(
+            JSON.stringify({
+              url: 'https://leia.text-reader.workers.dev/book-1/0/voice-a.mp3',
+              boundaries: [],
+              durationSeconds: 1.5,
+            }),
+          ).byteLength,
+        ),
+      );
+    });
   });
 
   describe('putJson', () => {
@@ -215,6 +243,27 @@ describe('createObjectStorageClient', () => {
       const client = createObjectStorageClient(CONFIG);
 
       await expect(client.putJson('library/index', [])).rejects.toThrow(/403/);
+    });
+
+    // S3 rejects a PUT with no Content-Length (411 MissingContentLength), and the header is
+    // only added automatically by whatever runtime happens to send the request - Node's fetch
+    // adds it at the wire for a string body, Vercel's did not for a ~2 MB one, and neither
+    // puts it on the Headers object where anything could notice. So it is set here rather
+    // than inferred. Found by phase 1.11 ticket 05's first real upload: a Book's chunks blob
+    // 411'd while the smaller index blob written moments earlier had gone through.
+    //
+    // The length is counted in bytes, never in characters. A Book's chunks blob is the
+    // largest thing written and is mostly CJK text at 3 bytes per character, so a length
+    // taken from `String.length` would understate it threefold and truncate the object.
+    test('sets Content-Length from the encoded byte length, not the character count', async () => {
+      fakeFetch.mockResolvedValue(new Response(null, { status: 200 }));
+      const client = createObjectStorageClient(CONFIG);
+
+      await client.putJson('library/book-1/chunks', ['你好世界']);
+
+      // `["你好世界"]` is 8 characters but 16 bytes - the gap this test exists for.
+      expect(JSON.stringify(['你好世界']).length).toBe(8);
+      expect(requestAt().contentLength).toBe('16');
     });
   });
 

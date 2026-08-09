@@ -118,9 +118,30 @@ export function createObjectStorageClient(overrides = {}) {
     if (contentType) headers['content-type'] = contentType;
     if (cacheControl) headers['cache-control'] = cacheControl;
 
+    // S3 answers 411 MissingContentLength to a PUT that arrives without this header, and
+    // nothing on this path guarantees one: it is added by whichever runtime ends up sending
+    // the request, at the wire rather than onto the Headers object, so nothing here can even
+    // see whether it happened. Node's fetch adds it for a string body of any size; Vercel's
+    // did not for a ~2 MB one, which is how a Book's chunks blob 411'd while the smaller
+    // index blob written moments earlier went through. Set explicitly so the framing stops
+    // depending on the runtime at all.
+    //
+    // The string is encoded first and the count taken from the bytes, never from
+    // `String.length`: the largest thing written is a Book's chunks blob, mostly CJK text at
+    // 3 bytes per character, so a character count would understate it threefold and truncate
+    // the object. Sending the same bytes that were counted also removes any second chance to
+    // disagree about the encoding.
+    //
+    // Safe to set by hand because aws4fetch lists content-length in UNSIGNABLE_HEADERS, so
+    // it never reaches the signature - read from the installed source, not assumed.
+    const payload = typeof body === 'string' ? new TextEncoder().encode(body) : body;
+    if (payload !== undefined && payload !== null) {
+      headers['content-length'] = String(payload.byteLength);
+    }
+
     return aws.fetch(`${r2Endpoint(accountId)}/${bucket}/${encodeKey(pathname)}`, {
       method,
-      body,
+      body: payload,
       headers,
     });
   }
