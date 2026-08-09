@@ -47,6 +47,28 @@ That runbook was written for a cold session on 2026-09-06, when the Vercel allow
 
 The one thing it says that is now wrong: it expects the first request to be slow because the Book in the store predates the Chunk index. Here every Book is new, so the index is populated from the first generation and there is no cold-start fallback to observe.
 
+### The clearing script
+
+`npm run clear-abandoned-library` (`scripts/clear-abandoned-library.mjs`) does the second
+criterion's clearing. It is a plain Node script run standalone against whatever R2/Redis
+credentials are on the environment, and duplicates the handful of key names and the R2
+request-signing `objectStorageClient.js` already defines rather than importing it, for the
+same reason `generate-voice-samples.mjs` duplicates `AVAILABLE_VOICES` — Node can't load that
+module's ESM syntax standalone. It touches no audio bytes and never the old Vercel store,
+which the codebase can no longer even address (ticket 02 replaced that client entirely).
+
+**The two halves are cleared from different sources, which is the part worth knowing.** The
+per-Book blobs are enumerated from `library/index.json`, because the index is the only record
+of them. Redis is not: it is swept by `SCAN book:*` plus a `DEL library:resume`. Deriving the
+Redis half from the index instead — the obvious first shape, and what code review caught —
+clears nothing at all at the moment this actually runs. R2's index is empty, because nothing
+has ever written a byte there from the app; Redis meanwhile holds every hash the Vercel-era
+Books wrote. The loop would find no Books, delete nothing, and print success. Between
+`book:*` and `library:resume` the sweep covers every key the app owns.
+
+Not run as part of this work — it deletes real state, so it waits for whoever runs the actual
+cutover, pointed at the real deployment's credentials.
+
 ### If the measurement disagrees
 
 Two writes per Chunk is what `put` does today — the MP3 and its metadata JSON. If the observed number is higher, the likely causes are a retry inside the signing path or a `Content-Type` correction issued as a second write. If it is lower, something is not being persisted, which is worse. Either way the number belongs in this ticket, not in a commit message, because the spec's whole justification points at it.
