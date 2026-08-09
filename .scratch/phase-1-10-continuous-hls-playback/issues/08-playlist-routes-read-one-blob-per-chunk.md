@@ -67,12 +67,12 @@ The failure is **intermittent and looks like something else**. During ticket 06 
 It also means ticket 04's remaining item cannot be honestly checked off: segments do fetch correctly from real Vercel Blob URLs (verified — real MP3 bytes, 200) but only when the store is not busy being rate-limited by our own routes.
 
 - [x] A playlist or manifest request costs a bounded number of Blob reads, independent of how many Chunks the Book has. _Done in stage 1 for the normal case — the cost is now the length of the generated run, not the Book. A fully-narrated Book is still O(Book); that is what the Redis index in stage 2 closes._
-- [ ] Generating a Chunk updates whatever index the routes read, so a growing Book still grows the playlist — the EVENT playlist's whole mechanism depends on it.
-- [ ] The index carries what `isPlayableChunk` needs (`url`, `durationSeconds`) and what the manifest needs (`boundaries`), or the routes stay O(Chunk) for the data they can't get from it.
-- [ ] A Chunk cached before `durationSeconds` existed is still reported ungenerated, so ticket 02's lazy re-measurement still triggers.
-- [ ] The playlist route responds in well under a second on a ~2,000-Chunk Book.
-- [ ] A full listening session's worth of playlist polls does not trip the store's rate limiting — verified against the real store, not a fake.
-- [ ] `readCachedChunks`'s existing behaviour stays covered: one entry per Chunk index, `undefined` where not cached, never synthesizing.
+- [x] Generating a Chunk updates whatever index the routes read, so a growing Book still grows the playlist — the EVENT playlist's whole mechanism depends on it. _Every path through `getOrGenerateAudio` that ends in playable audio writes the index, and the write is awaited so the poll that follows cannot read a short run._
+- [x] The index carries what `isPlayableChunk` needs (`url`, `durationSeconds`) and what the manifest needs (`boundaries`), or the routes stay O(Chunk) for the data they can't get from it. _`url` is derived rather than stored, and the manifest gets pre-derived spans instead of `boundaries` — see the decisions above._
+- [x] A Chunk cached before `durationSeconds` existed is still reported ungenerated, so ticket 02's lazy re-measurement still triggers. _`writeChunk` refuses to index a Chunk whose duration could not back a segment, applying `isPlayableChunk`'s rule before the entry exists rather than after._
+- [ ] The playlist route responds in well under a second on a ~2,000-Chunk Book. _Blocked until 2026-09-06: populating the index needs generation, which needs Blob. Step 6 of the runbook at the bottom of this ticket._
+- [ ] A full listening session's worth of playlist polls does not trip the store's rate limiting — verified against the real store, not a fake. _Same block. The polled path now makes no Blob call at all when the index answers, which is the claim to test. Step 7 of the runbook._
+- [x] `readCachedChunks`'s existing behaviour stays covered: one entry per Chunk index, `undefined` where not cached, never synthesizing. _Untouched by stage 2; it is now the fallback rather than the only path._
 
 ## Comments
 
@@ -124,16 +124,98 @@ Upstash is provisioned (Vercel Dashboard → project → Storage → Create Data
 
 **The client's return types are not consistent between commands.** Probed against the real service: the same hash values come back as strings from `HGETALL` and as numbers from `HMGET`. Coerce with `Number()`; a string reaching the playlist builder renders as `#EXTINF:"12.5"`.
 
+> **Mechanism confirmed 2026-08-09, from the installed client's source** — `node_modules/@upstash/redis/chunk-K7RP6Y36.mjs`, `deserialize4` (HGETALL) and `deserialize5` (HMGET). It is not really HGETALL vs HMGET, it is integer vs float: HGETALL returns the **raw string** for any value that parses as a number but isn't a safe integer, and `JSON.parse`s everything else — so `"12"` arrives as `12` and `"12.5"` arrives as `"12.5"`, from the same call. HMGET `JSON.parse`s unconditionally. The `Number()` coercion in `toDurationSeconds` is therefore load-bearing on the common case, not defensive padding.
+>
+> **`HMGET` resolves to an object keyed by field name, not an array in request order** — and to `null`, not an object of nulls, when every field is missing. Reading the result by position appears to work and silently breaks the moment the Chunks asked for don't start at 0, which is exactly the ticket-07 jump. This bug was written and caught in review; the test fake had been returning an array, which hid it. `redisChunkIndex.test.js`'s fakes now mirror the real shape, and there is a regression test named for it.
+
 **Where the segment URL's origin comes from — decided.** The design above settles that URLs are derivable and so are never stored, but not where the store origin comes from. It is recovered from a real `put` response and recorded once, rather than parsed out of `BLOB_READ_WRITE_TOKEN` (undocumented token format) or configured as a second env var. Storing URLs in the index instead would put ~220 KB on a continuously polled path at 2,000 Chunks — this ticket's own cost, moved to Redis.
 
 Done so far: [chunkIndex.js](../../../app/_lib/chunkIndex.js), the pure half — `readIndexedRun` turns an index read into the same shape `readCachedChunks` returns, scanning from `from` to the first gap. A miss is `undefined` meaning "ask Blob", deliberately distinct from an empty run meaning "nothing is generated", because the index is a cache and must never be able to convince a route that a fully-narrated Book is empty.
 
-Still to do:
+**The free tier fits, and the index shape does not have to change — settled 2026-08-09, don't re-derive it.** This was item 5, and it gated the other four. Upstash's free tier is **500K commands/month** and **10 GB/month bandwidth** (256 MB data, 10 MB max request). Against a continuously polled playlist:
 
-1. The Redis I/O — `HGETALL` durations plus the recorded origin in one pipeline; `HMGET` cues for placed Chunks only.
-2. Generation writes the index, deriving Sentence spans at generation time.
-3. `readBookAudio` reads the index and falls back to the stage 1 Blob scan on a miss.
-4. `bookManifest` takes pre-derived spans, taking `deriveSentenceSpans` off the request path.
-5. **Check Upstash's own free-tier command allowance first.** Playback polls the playlist continuously, one `HGETALL` each. If that doesn't fit, the shape has to change (longer client poll interval, or cache headers on the playlist response) — which affects everything above, so it is worth settling before writing more.
+| cost                                                  | per poll | ceiling on the free tier            |
+| ----------------------------------------------------- | -------- | ----------------------------------- |
+| commands — pipelined `HGETALL` + origin `GET`         | 2        | ~400 h/month of continuous playback |
+| bandwidth — durations hash as REST JSON, 2,000 fields | ~36 KB   | ~460 h/month                        |
 
-The two live-store criteria cannot be verified before **2026-09-06**; see the correction at the top.
+Both computed against the largest Book in the store (1,983 Chunks) and a 12s target duration, reloading every half target duration — the fastest RFC 8216 §6.3.4 asks for. `chunkText` caps a Chunk at 200 chars / 4 sentences, so real Chunks run longer and are polled less often than that. Neither ceiling is reachable by one Listener.
+
+The table prices **the polled path only**, which is the one that can run away. The other two paths are bounded by generation rather than by time: `writeChunk` pipelines **3** commands per Chunk (two `HSET`s and the origin `SET`), so indexing a whole 2,000-Chunk Book costs ~6K; and the manifest adds a third command plus a slice of the cues hash, but it is fetched when Chunks generate, not on a timer. Both are noise against 500K.
+
+**The two worst cases cannot happen at once, which is what makes `HGETALL` the right command rather than a windowed `HMGET`.** Bandwidth per poll grows with the generated run — but the playlist stops being polled at the exact moment that run covers the rest of the Book, because that is when `buildEventPlaylist` emits `#EXT-X-ENDLIST`. The full-hash read and the continuous poll exclude each other. Reading a window instead would also have to guess the run's length before reading it, which is the thing the read is for.
+
+So: index as designed, client poll interval untouched, playlist stays `no-store`.
+
+All four remaining items landed on 2026-08-09:
+
+1. **The Redis I/O** — [redisChunkIndex.js](../../../app/_lib/redisChunkIndex.js). `HGETALL` durations plus the origin `GET` in one pipeline; `HMGET` cues for placed Chunks only.
+2. **Generation writes the index** — `indexChunk` in [audioGenerationService.js](../../../app/_lib/audioGenerationService.js), deriving Sentence spans at generation time.
+3. **`readBookAudio` reads the index** — [bookAudio.js](../../../app/_lib/bookAudio.js), falling back to the stage 1 Blob scan on a miss.
+4. **`bookManifest` takes pre-derived spans** — `deriveSentenceSpans` is gone from [bookManifest.js](../../../app/_lib/bookManifest.js) entirely.
+
+### Stage 2 — decisions made while building it
+
+Six things were settled in code that the design above did not cover. They are cheap to get wrong and expensive to rediscover.
+
+**A cache hit is indexed too, not just a generation.** Nothing else ever writes the index, so a Book narrated before the index existed — or one whose index was evicted — is re-indexed only by the Listener reading through it again. Without this, "an unavailable Redis degrades to a rebuild" would have been aspirational: a fully-narrated Book with an empty index would fall back to the Blob scan forever, which on a complete Book is the O(Book) fan-out this whole ticket exists to remove.
+
+**The index write is awaited, not left in flight.** The client generates a Chunk and then the playlist is polled for it. An index that is one Chunk short reads as a **hit**, not a miss — so nothing falls back to Blob to correct it, and the Chunk is simply absent from the playlist until the next poll. Awaiting is safe because the write swallows its own failures.
+
+**Cues are stored as bare `[start, end]` pairs.** `deriveSentenceSpans` also returns each Sentence's text; nothing downstream reads it and the text is already in the Book's chunks blob, so storing it would roughly quadruple the hash the manifest pulls over the network. `deriveCueSpans` in [sentenceSpans.js](../../../app/_lib/sentenceSpans.js) is the one place that shape is decided, so the index path and the Blob fallback cannot disagree about it.
+
+**A placed Chunk with no stored cues sends the whole manifest lookup back to Blob**, rather than reporting that Chunk as having no Sentences. Its audio is on the timeline either way, so the alternative is a stretch of Book that plays with no highlighting and nothing to indicate why. Durations and cues are written in the same pipeline, so the two disagreeing means the index is damaged.
+
+**The origin is re-`SET` on every write rather than written once behind an `NX`.** It costs one command per generation and never per poll, and a store whose origin ever changed would otherwise serve derived URLs into a store that has moved, permanently.
+
+**`needsCues` is a parameter of `readBookAudio`, not something it works out.** It is a property of what the caller will do with the answer — the manifest route passes it, the playlist route does not, and that is the whole reason the polled path never touches the cues hash.
+
+### Stage 2 — what is verified and what is not
+
+Verified by unit test: the index answers with zero Blob reads; a miss, an eviction and an unreachable Redis are one code path; cues are read for placed Chunks only and never for the playlist; the Blob fallback derives the spans the index would have stored; generation indexes on all three of its success paths and on none of its failure ones; a Chunk with no usable duration is still refused an index entry, so ticket 02's lazy re-measurement still triggers.
+
+**Not exercised against a live index, and cannot be before 2026-09-06.** Populating the index requires generating a Chunk, which requires Blob, which is over its Simple Operations allowance. The two live-store criteria therefore stay open.
+
+What _was_ closed without the network: the client's deserializers were read from the installed source rather than assumed, which is what turned up the `HMGET`-keyed-by-field-name bug — see the correction under the credentials notes above. `toCueSpans` still accepts both a JSON string and an already-parsed array; that is a deliberate tolerance rather than an unresolved question, since `HGETALL` and `HMGET` genuinely disagree about when they parse. Don't "simplify" it away.
+
+### Stage 2 — the runbook for 2026-09-06
+
+Written on 2026-08-09, for whoever picks this up on or after the day the Blob allowance resets. It closes the two open checklist items and the handful of things no unit test can reach. Work through it in order; several steps exist to stop you spending the fresh allowance on the wrong thing.
+
+**Read this first: every step below is a single request, deliberately.** The whole ticket exists because a burst of reads exhausted a monthly quota in about five requests. Do not loop, do not "confirm" a result by repeating it, and do not open the app and click around until step 5. If a step's number looks wrong, read the next step before re-running the last one.
+
+**0 — Check the allowance actually reset, before touching anything.** Vercel Dashboard → project → Storage → the Blob store → Usage. Read **all four** metrics; the one that matters is **Simple Operations**, which was 11.3k against a 10k allowance. Storage (~5 MB / 1 GB) and Data Transfer (~127 MB / 10 GB) were never under pressure and tell you nothing. If Simple Operations has not reset to near zero, stop — nothing below will work and every attempt spends the next month's allowance. Note the starting figures for all four; steps 4 and 5 are deltas against them.
+
+**1 — Get the credentials.** `.env.local` is gitignored and `.vercel/project.json` with it, so a fresh clone has neither:
+
+```bash
+npx vercel link && npx vercel env pull
+```
+
+Answer **yes** to "Link to existing project?" — answering no silently creates a new empty one. `env pull` overwrites `.env.local` rather than merging. Confirm it brought down `BLOB_READ_WRITE_TOKEN` **and** `KV_REST_API_URL` / `KV_REST_API_TOKEN`; without the second pair the index is silently disabled and every measurement below just re-measures stage 1.
+
+**2 — Start the dev server.** `.claude/launch.json` is committed and wires `npm run dev` to port 3100.
+
+**3 — Establish how you will tell the index from the fallback.** There is no runtime signal that says which source answered — that is by design, both return the same shape. So the only honest instrument is the two counters, read either side of one request:
+
+- **Vercel Blob → Simple Operations**: the claim is that a playlist poll served from the index adds **zero**.
+- **Upstash → the database's command count**: the same poll should add **2** (`HGETALL` + origin `GET`).
+
+Response time is a proxy, not proof — a warm Blob scan over a short generated run is also fast.
+
+**4 — Cold start: the fallback still works, and re-indexes.** The Book in the store was narrated before the index existed, so its index is empty and the first request must fall back. Request the playlist once for a Book and voice you know is generated. Expect: it succeeds, Blob Simple Operations goes up by roughly the length of the generated run, Upstash's count goes up by 2 (one miss). This is stage 1's cost and is the correct answer here — a fast response would mean the index was somehow already populated and you are not testing what you think.
+
+**5 — Generate a few Chunks, so there is an index to read.** Open the Book in the app and let it narrate ~10 Chunks, or POST `/api/audio-chunks` for a handful of indexes directly. Each generated Chunk should add **3** Upstash commands. Then re-request the playlist: Blob Simple Operations should now add **zero**, and Upstash **2**. That is the ticket's central claim, and it is the first point at which it has ever been observed.
+
+**6 — Close "the playlist route responds in well under a second on a ~2,000-Chunk Book."** The number to beat is **5.4s** (4.7s of it in application code). Time one request against the ~1,983-Chunk Book. Note that this only means anything once that Book's index covers a decent run — on a cold index you are timing step 4, not this.
+
+**7 — Close "a full listening session's worth of playlist polls does not trip the store's rate limiting."** Listen for a stretch on a real device, long enough to cross several Chunk boundaries with the app backgrounded (this is also ticket 06's shape). Then read the counters: **Blob Simple Operations should be flat except for the Chunks that were newly generated**, and no read should 403. A rising Blob count during steady playback means the index is missing on every poll — go to step 8 rather than concluding the ticket failed.
+
+**8 — The four things no test could reach.** All of these are cheap to check once you are here, and all of them were guessed at from the installed client's source rather than observed:
+
+- **Durations survive the round trip as numbers.** `HGETALL` returns the raw string for a non-safe-integer and `JSON.parse`s everything else, so a Book with both integer and fractional Chunk durations exercises both. A failure here shows up as `#EXTINF:"12.5"` in the playlist body — read the response text, don't just check the status.
+- **`HMGET` is keyed by field name.** Request the **manifest** with `?from=` set to a Chunk part-way in, and confirm the Sentence cues come back rather than an empty `sentences` array. This is the bug review caught; the unit test pins it against a fake, this pins it against the service.
+- **Derived segment URLs actually resolve.** Take one URL out of the playlist body and fetch it once. Expect 200 and real MP3 bytes. This is what proves the origin recovered from a `put` response is the right origin.
+- **The manifest's cue times still line up with playback.** Play a little and watch the Sentence highlighting; the spans are now derived at generation time rather than per request, so a systematic offset would be new.
+
+**9 — Update this ticket.** Tick the two checklist items with the measured numbers, or record what actually happened if they did not hold. Ticket 09's note that `/api/library` is requested three times per home page load is also unblocked once the store is readable, and wants its own ticket.
