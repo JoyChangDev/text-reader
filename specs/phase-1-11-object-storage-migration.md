@@ -93,7 +93,7 @@ Two things unit tests cannot answer, covered on a physical device in the same sh
 - **Changing the retention rule**, and **renaming anything beyond the storage client module** — both have their own tickets, for the reasons above.
 - **Moving the app off Vercel.** Next.js on Workers is a far larger question, and `AGENTS.md` warns this Next version differs from what is widely documented.
 - **Moving Redis off Upstash.** Cloudflare KV fits neither existing use: its free plan allows 1,000 writes a day, which one Book exceeds during generation, and it has no atomic compare of the kind [ADR 0004](../docs/adr/0004-resume-position-store.md) depends on.
-- **Paginating the cleanup service's listing.** Its recorded blocker — that listing was too expensive to do more of — is removed here, since listing is no longer the scarce quota. The fix is its own ticket.
+- **The retention rule itself**, as above — though note that listing's _pagination_ is not deferred with it. Ticket 09 left the listing un-paginated for a stated reason: another page meant another Advanced Operation against a 2,000 allowance. On R2 a listing is a Class A operation against a million, so that objection is gone, and since this phase rewrites the listing from scratch, omitting the continuation loop would mean knowingly writing a bug whose only justification has just been removed.
 - **Changing the cache key or pathname scheme.** Segment URLs are derived from it and the Worker maps against it.
 - **Upgrading to Vercel Pro.** It clears the same ceiling for $20/month with no migration, and a 14-day trial restores access immediately. It is declined, and remains the documented fallback if the serving path proves worse than expected.
 
