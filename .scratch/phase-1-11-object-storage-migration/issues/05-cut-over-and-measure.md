@@ -26,14 +26,14 @@ While in the dashboards, take Upstash's command count over the same window: [tic
 
 ## Acceptance criteria
 
-- [ ] The deployed app reads and writes R2, with the segment origin, R2 credentials and Redis credentials all set in the deployment environment.
-- [ ] The Library index blob and the Redis Chunk index are cleared of the abandoned Books; the Library shows no Book whose audio is unreachable. _The clearing itself ran clean on 2026-08-10 — both halves turned out to be already empty rather than merely cleared, see "What the clearing actually found". Un-ticked because the failed upload below then put a Book back into the index with no chunks blob behind it, which is precisely the state this criterion forbids. Re-run the script after deploying the Content-Length fix._
+- [x] The deployed app reads and writes R2, with the segment origin, R2 credentials and Redis credentials all set in the deployment environment. _Proven by the writes themselves on 2026-08-10: 42 Chunks stored as audio + metadata pairs, `SEGMENT_ORIGIN` necessarily set because `put` resolves it before writing either object, and the Redis index populated to match._
+- [x] The Library index blob and the Redis Chunk index are cleared of the abandoned Books; the Library shows no Book whose audio is unreachable. _Cleared 2026-08-10; both halves turned out to be already empty rather than merely cleared, see "What the clearing actually found". Briefly false again when the 411 below left a half-written Book in the index — re-run after that fix deployed, and the index now names exactly one Book, whose chunks blob and audio both resolve. Note that this says nothing about audio no Book claims: see the orphans in "The first measurements"._
 - [ ] A Book uploads, narrates, and plays from the new store, on a physical iPhone.
 - [ ] **Playback crosses at least two segment boundaries with the app backgrounded**, which is the property phases 1.8 to 1.10 exist for and the one a new serving path could quietly break.
 - [ ] Seeking to a Sentence inside the currently-playing Chunk works, exercising the Worker's range handling against a real media element rather than against a hand-made request.
 - [ ] The resume position survives closing and reopening the Book, and survives on a second device.
-- [ ] **Measured: Class A operations per generated Chunk**, recorded here with the Chunk count it was measured over. Expected 2.
-- [ ] **Measured: Upstash commands per generated Chunk**, recorded here. Expected 2 after ticket 04.
+- [x] **Measured: Class A operations per generated Chunk**, recorded here with the Chunk count it was measured over. Expected 2. **Measured 2.0, over 20 Chunks** — 40 objects written, counted directly rather than read off the dashboard, which had not caught up. See "The first measurements".
+- [ ] **Measured: Upstash commands per generated Chunk**, recorded here. Expected 2 after ticket 04. _**47 commands over 20 Chunks = ≤ 2.35**, an upper bound rather than the figure, because the window carried instrumentation traffic that cannot be separated after the fact. It rules out 3 decisively and is consistent with 2. Left open for one clean run — see "The first measurements" for what that needs._
 - [ ] The capacity indicator reports a plausible percentage against 10 GB.
 - [ ] Deleting a Book removes its audio from R2, verified by listing the prefix afterwards — this is the path ticket 03's pagination fix exists for.
 - [ ] Phase 1.10's [ticket 08](../../phase-1-10-continuous-hls-playback/issues/08-playlist-routes-read-one-blob-per-chunk.md) runbook is run against R2, and its two open criteria are closed or their real numbers recorded.
@@ -187,6 +187,79 @@ transcript appearing is the proof.
 an absence: the client's `addBook` does not check `response.ok`, `addBook` on the server writes
 the index before the chunks blob with no rollback, and `getBook` reads a missing chunks blob as
 `?? []`. Opened as [ticket 06](06-a-failed-write-reads-as-an-empty-book.md).
+
+### The first measurements — 2026-08-10
+
+**Generation was driven directly, not by listening.** `POST /api/audio-chunks` for an exact
+range of Chunk indexes — the same route the look-ahead calls — so the divisor is chosen rather
+than counted. Listening cannot give a clean divisor: `LOOKAHEAD = 10` in
+[useBookPlayer.js](../../../app/_lib/useBookPlayer.js) keeps generating ahead of the playback
+position and carries on after playback stops, so "narrate about ten Chunks" is a number nobody
+knows. The range must also start past anything already stored — an existing Chunk returns as a
+cache hit, which still writes the index (Upstash) but writes nothing to R2 (no Class A), and
+that pulls the two ratios in opposite directions.
+
+Chunks 100–119 of a 3,379-Chunk Book, on a Book whose Chunks 0–21 had already been generated.
+
+**Class A: 2.0 per Chunk, over 20 Chunks.** The measured range wrote exactly **40 objects** —
+20 MP3s and 20 metadata JSONs — which is the `put` pair and nothing else.
+
+The three populations separate cleanly by write time, which is what makes the 20 attributable:
+
+| range                | objects | written                   |
+| -------------------- | ------- | ------------------------- |
+| Chunks 100–119       | **40**  | 17:40:50Z – 17:42:29Z     |
+| Chunks 0–21          | 44      | 17:25:11Z – **17:39:17Z** |
+| `demo-book/` orphans | 6       | 06:38Z                    |
+
+The look-ahead's run finished 93 seconds before the measured one began, so nothing overlaps.
+
+**The dashboard counter did not move — 78 before, 78 after — and the objects are the better
+instrument anyway.** R2's metrics are an aggregate that lags; the objects carry their own write
+timestamps and are a direct count of what the run actually stored. Where the two disagree this
+soon after a run, the objects are right. Worth re-reading the dashboard later as a cross-check;
+it should settle at 118.
+
+**A hazard this ticket warned about did not occur.** "If the measurement disagrees" below notes
+that a Chunk stored but refused an index entry would push Class A per _indexed_ Chunk above 2.
+It did not happen: the Book has 42 MP3s and 42 fields in its durations hash, one to one.
+
+**Upstash: 47 commands over 20 Chunks, which is an upper bound of 2.35 rather than a
+measurement.** Generation's own cost cannot be separated from the window after the fact — the
+counting script alone spends 2 commands per run (`SCAN` + `HLEN`), and the app was reachable
+throughout. What the number does settle is the direction: 3 per Chunk would have cost 60, so
+[ticket 04](04-segment-origin-becomes-configuration.md)'s claim that dropping the origin `SET`
+took generation from 3 commands to 2 holds. Closing this properly needs one run against a
+database nothing else is touching: baseline, generate a known range, read again, and run no
+counting script inside the window.
+
+**Two of ticket 08's step 8 checks closed in passing.** Both were on its list of things no unit
+test could reach:
+
+- _Derived segment URLs actually resolve._ The `url` stored with Chunk 0 is
+  `https://leia.text-reader.workers.dev/<bookId>/0/zh-TW-HsiaoChenNeural.mp3`; fetching it gives
+  200, `audio/mpeg`, 229,536 bytes matching R2 exactly, `accept-ranges: bytes`,
+  `access-control-allow-origin: *`, and a body beginning `FF F3 64` — an MP3 frame sync, so real
+  audio rather than an error page. This is what proves `SEGMENT_ORIGIN` names the right host.
+- _Durations survive the round trip as numbers._ The playlist body carries `#EXTINF:38.256,`,
+  unquoted, for a Chunk whose stored duration is `38.25600000000056`. That is the non-safe-integer
+  case `HGETALL` returns as a raw string, so the `Number()` coercion in `toDurationSeconds` is
+  doing its job against the real service. The playlist is served as
+  `application/vnd.apple.mpegurl`.
+
+**Orphaned audio found: `demo-book/`, 6 MP3s, written 06:38Z.** No such Book is in
+`library/index.json`, so the Library cannot see it and `deleteBook`'s cascade will never reach
+it — and `clear-abandoned-library` will not either, since that touches only `library/` blobs.
+Almost certainly left by `app/dev-preview` or a test run. Harmless at 6 objects, but it is a
+ready-made subject for the deletion criterion and for whether
+[blobCleanupService.js](../../../app/_lib/blobCleanupService.js) actually sweeps what the index
+does not account for.
+
+**Everything requiring the device is still outstanding**, deliberately deferred to a later
+session: narration and playback on a physical iPhone, the two backgrounded segment boundaries,
+in-Chunk seeking, resume across devices, the capacity indicator, and the deletion check. Note
+that the desktop browser cannot stand in for any of them — see the player note in
+[ticket 06](06-a-failed-write-reads-as-an-empty-book.md).
 
 ### If the measurement disagrees
 
