@@ -63,6 +63,9 @@ chunks were supposed to have been written.
       with a way back to the Library, not a dead play button.
 - [ ] Covered by tests at the seam that failed — a store whose second write rejects, asserted
       from `addBook` through to what `getBook` then reports.
+- [ ] A browser that cannot play the source says so. On a browser without native HLS the play
+      button currently does nothing at all, with no message — see "The same shape, in the
+      player" below.
 
 ## Comments
 
@@ -83,6 +86,33 @@ or only audio before assuming the orphan is collected.
 The tempting small change is to have the reader show a friendly message when `chunks` is empty.
 That treats the symptom and keeps the corrupt index entry, which will then be re-encountered on
 every launch and on every device. The Book should stop existing, or stop being incomplete.
+
+### The same shape, in the player
+
+Found on 2026-08-10 while verifying the R2 cutover from a desktop browser: playback produced no
+sound and no message. The whole serving path was healthy — segments 200'd from the Worker with
+real MP3 bytes, and the playlist was well-formed and served as
+`application/vnd.apple.mpegurl` — but the media element had:
+
+```
+code: 4                                       // MEDIA_ERR_SRC_NOT_SUPPORTED
+message: "PipelineStatus::DEMUXER_ERROR_COULD_NOT_PARSE"
+```
+
+That is Chromium refusing the playlist because it has no HLS demuxer. Nothing is broken:
+[ADR 0003](../../../docs/adr/0003-hls-continuous-playback.md) sets the `.m3u8` as the element's
+`src` and depends on native HLS, having explicitly rejected MSE, and its own spike section says
+it covered iOS only. Safari and iOS play this; Chrome, Edge and Firefox on the desktop cannot,
+and there is no hls.js in the dependency tree by design.
+
+**The defect is the silence, not the lack of support.** `audio.error` is populated and nothing
+reads it, so an unsupported browser is indistinguishable from a dead button. This belongs here
+rather than in a "desktop support" ticket, which is a different and much larger question: the
+fix is to surface the error the element already reports, not to add a playback path.
+
+Low priority against the criteria above — the target device is iPhone and this app currently
+has one Listener — but it cost an investigation once already, and it will cost one again the
+first time somebody opens the app on a laptop.
 
 ### Why this was worth its own ticket rather than a line in ticket 05
 
