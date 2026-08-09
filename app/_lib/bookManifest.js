@@ -1,16 +1,20 @@
 import { isPlayableChunk } from './chunkAudio';
 import { splitIntoSentences } from './chunkText';
-import { deriveSentenceSpans } from './sentenceSpans';
 
 // Builds what the client needs to turn a Book into metadata cues on the continuous HLS
 // timeline — see .scratch/phase-1-10-continuous-hls-playback/issues/03-playlist-and-manifest-routes.md.
 // Pure: the route supplies the Chunk text and the stored per-Chunk metadata.
 
-// deriveSentenceSpans works in Chunk-relative time and knows nothing about the Book it
-// sits in; this is the only place its output is shifted onto the Book timeline and given
-// Book-global ordinals, so a cue identifies a Sentence without reference to any Chunk.
-function toSentenceCues({ text, boundaries }, { startSeconds, firstSentenceId }) {
-  return deriveSentenceSpans({ text, boundaries }).map((span, index) => ({
+// Spans arrive already derived — from the Chunk index, which stored them at generation
+// time, or from bookAudio deriving them on the Blob fallback. Deriving them here instead
+// meant walking every word boundary of every placed Chunk on every request, which was most
+// of the 4.7s the manifest route spent in application code on a 2,000-Chunk Book (ticket 08).
+//
+// Spans are Chunk-relative; this is the only place they are shifted onto the Book timeline
+// and given Book-global ordinals, so a cue identifies a Sentence without reference to any
+// Chunk.
+function toSentenceCues(spans, { startSeconds, firstSentenceId }) {
+  return spans.map((span, index) => ({
     id: firstSentenceId + index,
     startSeconds: startSeconds + span.startSeconds,
     endSeconds: startSeconds + span.endSeconds,
@@ -47,10 +51,7 @@ export function buildBookManifest({ chunks, chunkAudio }, { from = 0 } = {}) {
       isGenerated,
       startSeconds: placeable ? startSeconds : null,
       sentences: placeable
-        ? toSentenceCues(
-            { text, boundaries: metadata.boundaries ?? [] },
-            { startSeconds, firstSentenceId },
-          )
+        ? toSentenceCues(metadata.spans ?? [], { startSeconds, firstSentenceId })
         : [],
     };
 

@@ -164,6 +164,153 @@ describe('getOrGenerateAudio', () => {
   });
 });
 
+// The index is what takes the polled playlist path to zero Blob reads, and generation is
+// the only thing that writes it - see ticket 08's stage 2.
+describe('getOrGenerateAudio, indexing what it produced', () => {
+  const SECOND = 10_000_000;
+  // Two sentences of one word each, so the derived spans are exactly these boundaries.
+  const text = '你好。世界。';
+  const boundaries = [
+    { text: '你好', offset: 0, duration: SECOND },
+    { text: '世界', offset: 2 * SECOND, duration: SECOND },
+  ];
+  const chunk = { bookId: 'book-1', chunkIndex: 7, voice: 'zh-TW-default', text };
+
+  let storageClient;
+  let ttsClient;
+  let chunkIndexClient;
+
+  beforeEach(() => {
+    storageClient = { get: vi.fn(), put: vi.fn(), getAudioBytes: vi.fn(), putJson: vi.fn() };
+    ttsClient = { synthesize: vi.fn() };
+    chunkIndexClient = { writeChunk: vi.fn().mockResolvedValue(undefined) };
+  });
+
+  // The store origin is recovered from the URL the Blob store actually returned, rather
+  // than parsed out of BLOB_READ_WRITE_TOKEN or configured as a second env var.
+  test('indexes a newly generated Chunk with its duration, spans and store origin', async () => {
+    storageClient.get.mockResolvedValue(undefined);
+    ttsClient.synthesize.mockResolvedValue({ audio: new Blob([buildMp3Frames(20)]), boundaries });
+    storageClient.put.mockImplementation(async (key, metadata) => ({
+      url: `https://abc.public.blob.vercel-storage.com/${key}.mp3`,
+      ...metadata,
+    }));
+
+    await getOrGenerateAudio({ storageClient, ttsClient, chunkIndexClient }, chunk);
+
+    expect(chunkIndexClient.writeChunk).toHaveBeenCalledWith(
+      { bookId: 'book-1', chunkIndex: 7, voice: 'zh-TW-default' },
+      {
+        durationSeconds: expect.closeTo(20 * MP3_FRAME_DURATION_SECONDS, 10),
+        spans: [
+          { startSeconds: 0, endSeconds: 1 },
+          { startSeconds: 2, endSeconds: 3 },
+        ],
+        base: 'https://abc.public.blob.vercel-storage.com/',
+      },
+    );
+  });
+
+  // Deriving here is what takes deriveSentenceSpans off the manifest's request path, which
+  // is most of the 4.7s that route spends in application code on a 2,000-Chunk Book.
+  test('derives Sentence spans once at generation time rather than storing raw boundaries', async () => {
+    storageClient.get.mockResolvedValue(undefined);
+    ttsClient.synthesize.mockResolvedValue({ audio: new Blob([buildMp3Frames(20)]), boundaries });
+    storageClient.put.mockResolvedValue({
+      url: 'https://abc.public.blob.vercel-storage.com/book-1/7/zh-TW-default.mp3',
+      boundaries,
+      durationSeconds: 5,
+    });
+
+    await getOrGenerateAudio({ storageClient, ttsClient, chunkIndexClient }, chunk);
+
+    const [, indexed] = chunkIndexClient.writeChunk.mock.calls[0];
+    expect(indexed.spans).toEqual([
+      { startSeconds: 0, endSeconds: 1 },
+      { startSeconds: 2, endSeconds: 3 },
+    ]);
+    expect(indexed).not.toHaveProperty('boundaries');
+  });
+
+  // Redis is a cache, so nothing ever rewrites the index on its own. A Book generated
+  // before the index existed - or one whose index was evicted - is only ever re-indexed by
+  // the Listener reading through it again, which is what makes "degrades to a rebuild" true.
+  test('indexes a Chunk that came back from the cache, so an evicted index rebuilds', async () => {
+    storageClient.get.mockResolvedValue({
+      url: 'https://abc.public.blob.vercel-storage.com/book-1/7/zh-TW-default.mp3',
+      boundaries,
+      durationSeconds: 12.5,
+    });
+
+    await getOrGenerateAudio({ storageClient, ttsClient, chunkIndexClient }, chunk);
+
+    expect(ttsClient.synthesize).not.toHaveBeenCalled();
+    expect(chunkIndexClient.writeChunk).toHaveBeenCalledWith(
+      { bookId: 'book-1', chunkIndex: 7, voice: 'zh-TW-default' },
+      expect.objectContaining({
+        durationSeconds: 12.5,
+        base: 'https://abc.public.blob.vercel-storage.com/',
+      }),
+    );
+  });
+
+  test('indexes a repaired Chunk under its re-measured duration, not its missing one', async () => {
+    storageClient.get.mockResolvedValue({
+      url: 'https://abc.public.blob.vercel-storage.com/book-1/7/zh-TW-default.mp3',
+      boundaries,
+    });
+    storageClient.getAudioBytes.mockResolvedValue(buildMp3Frames(20));
+
+    await getOrGenerateAudio({ storageClient, ttsClient, chunkIndexClient }, chunk);
+
+    expect(chunkIndexClient.writeChunk).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        durationSeconds: expect.closeTo(20 * MP3_FRAME_DURATION_SECONDS, 10),
+      }),
+    );
+  });
+
+  test('indexes nothing when generation failed', async () => {
+    storageClient.get.mockResolvedValue(undefined);
+    ttsClient.synthesize.mockRejectedValue(new Error('edge-tts request failed'));
+
+    await expect(
+      getOrGenerateAudio({ storageClient, ttsClient, chunkIndexClient }, chunk),
+    ).rejects.toThrow('edge-tts request failed');
+    expect(chunkIndexClient.writeChunk).not.toHaveBeenCalled();
+  });
+
+  // The client generates a Chunk and then the playlist is polled for it. If the write were
+  // left in flight, that poll would read an index that still stops one Chunk short - and
+  // because a short run is a hit rather than a miss, nothing would fall back to Blob to
+  // correct it. The Chunk would simply be missing from the playlist until the next poll.
+  test('waits for the index write, so the poll that follows cannot miss the Chunk', async () => {
+    const order = [];
+    storageClient.get.mockResolvedValue({
+      url: 'https://abc.public.blob.vercel-storage.com/book-1/7/zh-TW-default.mp3',
+      boundaries,
+      durationSeconds: 12.5,
+    });
+    chunkIndexClient.writeChunk.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      order.push('indexed');
+    });
+
+    await getOrGenerateAudio({ storageClient, ttsClient, chunkIndexClient }, chunk);
+    order.push('returned');
+
+    expect(order).toEqual(['indexed', 'returned']);
+  });
+
+  test('still returns the audio when the caller supplied no index client at all', async () => {
+    const cached = { url: 'https://abc.example/x.mp3', boundaries, durationSeconds: 12.5 };
+    storageClient.get.mockResolvedValue(cached);
+
+    await expect(getOrGenerateAudio({ storageClient, ttsClient }, chunk)).resolves.toEqual(cached);
+  });
+});
+
 describe('readCachedChunks', () => {
   test('returns one entry per Chunk index, undefined where the Chunk is not cached', async () => {
     const cached = { url: 'https://blob.example/0.mp3', boundaries: [], durationSeconds: 5 };

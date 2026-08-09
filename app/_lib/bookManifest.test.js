@@ -2,19 +2,25 @@ import { describe, expect, test } from 'vitest';
 
 import { buildBookManifest } from './bookManifest';
 
-const SECOND = 10_000_000;
-
-// Two sentences of one word each, so the derived spans are exactly the boundaries below.
 const TWO_SENTENCE_TEXT = '你好。世界。';
-const twoSentenceBoundaries = [
-  { text: '你好', offset: 0, duration: SECOND },
-  { text: '世界', offset: 2 * SECOND, duration: SECOND },
+
+// Already derived: the manifest takes Chunk-relative spans, not raw word boundaries. They
+// are derived once at generation time and stored in the Chunk index, or by bookAudio on the
+// Blob fallback - see ticket 08's stage 2.
+const twoSentenceSpans = [
+  { startSeconds: 0, endSeconds: 1 },
+  { startSeconds: 2, endSeconds: 3 },
 ];
+
+// One span per Sentence, all at zero: enough to pin how many cues a Chunk contributes and
+// what they are numbered, for the tests that are about ordinals rather than times.
+const emptySpans = (count) =>
+  Array.from({ length: count }, () => ({ startSeconds: 0, endSeconds: 0 }));
 
 function generated(durationSeconds, { index = 0 } = {}) {
   return {
     url: `https://blob.example/book-1/${index}/voice.mp3`,
-    boundaries: twoSentenceBoundaries,
+    spans: twoSentenceSpans,
     durationSeconds,
   };
 }
@@ -67,9 +73,9 @@ describe('buildBookManifest', () => {
     const manifest = buildBookManifest({
       chunks: ['一。二。三。', '四。', '五。六。'],
       chunkAudio: [
-        { url: 'a', durationSeconds: 3, boundaries: [] },
-        { url: 'b', durationSeconds: 1, boundaries: [] },
-        { url: 'c', durationSeconds: 2, boundaries: [] },
+        { url: 'a', durationSeconds: 3, spans: emptySpans(3) },
+        { url: 'b', durationSeconds: 1, spans: emptySpans(1) },
+        { url: 'c', durationSeconds: 2, spans: emptySpans(2) },
       ],
     });
 
@@ -84,7 +90,7 @@ describe('buildBookManifest', () => {
   // a Sentence keeps the same id however much of the Book around it is narrated yet.
   test('keeps ordinals stable as the Chunks around a Sentence generate', () => {
     const chunks = ['一。二。', '三。四。', '五。六。'];
-    const audio = (index) => ({ url: `${index}`, durationSeconds: 2, boundaries: [] });
+    const audio = (index) => ({ url: `${index}`, durationSeconds: 2, spans: emptySpans(2) });
 
     const complete = buildBookManifest({ chunks, chunkAudio: [audio(0), audio(1), audio(2)] });
     const partial = buildBookManifest({ chunks, chunkAudio: [audio(0), audio(1), undefined] });
@@ -129,7 +135,7 @@ describe('buildBookManifest', () => {
   test('reports a Chunk with no usable duration as not generated', () => {
     const manifest = buildBookManifest({
       chunks: [TWO_SENTENCE_TEXT, TWO_SENTENCE_TEXT],
-      chunkAudio: [{ url: 'a', boundaries: twoSentenceBoundaries }, generated(4, { index: 1 })],
+      chunkAudio: [{ url: 'a', spans: twoSentenceSpans }, generated(4, { index: 1 })],
     });
 
     expect(manifest.chunks[0]).toEqual({

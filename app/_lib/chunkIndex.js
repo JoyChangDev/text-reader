@@ -12,7 +12,8 @@
 // which degrades to the Blob scan and re-indexes on the next generation rather than losing
 // anything.
 
-const audioPathname = ({ bookId, chunkIndex, voice }) => `${bookId}/${chunkIndex}/${voice}.mp3`;
+export const audioPathname = ({ bookId, chunkIndex, voice }) =>
+  `${bookId}/${chunkIndex}/${voice}.mp3`;
 
 // Segment URLs are never stored in the index: `put` uses addRandomSuffix: false, so a URL is
 // a pure function of the store's origin and the cache key. Storing them instead would put
@@ -22,8 +23,11 @@ const audioPathname = ({ bookId, chunkIndex, voice }) => `${bookId}/${chunkIndex
 // The origin is recovered from a real `put` response rather than parsed out of
 // BLOB_READ_WRITE_TOKEN or configured by hand: the token's internal format is an
 // undocumented implementation detail, and a second env var is a second thing to get wrong.
+// A Chunk stored with no url can't yield an origin, and the index would rather have no
+// origin than a wrong one: writeChunk declines to index a Chunk whose base is unknown, so
+// the Chunk stays a Blob-scan miss rather than becoming a derived URL pointing nowhere.
 export function storeBase({ url, pathname }) {
-  return url.slice(0, url.length - pathname.length);
+  return url?.endsWith(pathname) ? url.slice(0, url.length - pathname.length) : undefined;
 }
 
 export function deriveSegmentUrl(base, { bookId, chunkIndex, voice }) {
@@ -38,6 +42,36 @@ export function deriveSegmentUrl(base, { bookId, chunkIndex, voice }) {
 function toDurationSeconds(value) {
   const durationSeconds = Number(value);
   return Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : undefined;
+}
+
+// Cues are stored as bare [start, end] pairs rather than as deriveSentenceSpans' own output,
+// which also carries each Sentence's text. The text is already in the Book's chunks blob and
+// the manifest never returns it, so storing it would roughly quadruple a hash that the
+// manifest reads over the network. A Sentence's identity comes from its ordinal, which
+// bookManifest counts from the Chunk text - never from anything stored here.
+export function toStoredSpans(spans) {
+  return spans.map(({ startSeconds, endSeconds }) => [startSeconds, endSeconds]);
+}
+
+// The client parses JSON-looking values on some paths and hands them back as strings on
+// others, so both shapes have to be accepted rather than one of them trusted. A value that
+// is neither is treated as absent: the Chunk falls back to deriving from its Blob
+// boundaries, which is the same path a Chunk indexed before cues existed takes.
+export function toCueSpans(value) {
+  const pairs = typeof value === 'string' ? tryParse(value) : value;
+  if (!Array.isArray(pairs)) {
+    return undefined;
+  }
+
+  return pairs.map(([startSeconds, endSeconds]) => ({ startSeconds, endSeconds }));
+}
+
+function tryParse(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return undefined;
+  }
 }
 
 // One entry per Chunk index, `undefined` where the index doesn't place it - the same shape

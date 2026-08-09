@@ -57,3 +57,15 @@ export function deriveSentenceSpans({ text, boundaries }) {
 
   return spans;
 }
+
+// What both the Chunk index and the manifest actually want: the times, without each
+// Sentence's text. The text is already in the Book's chunks blob and no consumer of a cue
+// reads it, so carrying it would roughly quadruple the hash the manifest pulls over the
+// network (see ticket 08). It owns the missing-boundaries default too, so the index path
+// and the Blob fallback cannot disagree about the shape of a cue or about what a Chunk with
+// no stored boundaries yields.
+export function deriveCueSpans({ text, boundaries }) {
+  return deriveSentenceSpans({ text, boundaries: boundaries ?? [] }).map(
+    ({ startSeconds, endSeconds }) => ({ startSeconds, endSeconds }),
+  );
+}

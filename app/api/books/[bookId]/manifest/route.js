@@ -17,7 +17,14 @@ export async function GET(request, { params }) {
   }
 
   try {
-    const book = await readBookAudio({ bookId, voice, from: searchParams.get('from') });
+    // The only route that needs Sentence cues, and so the only one that pays for them —
+    // the playlist reads durations alone (see ticket 08's stage 2).
+    const book = await readBookAudio({
+      bookId,
+      voice,
+      from: searchParams.get('from'),
+      needsCues: true,
+    });
     if (!book) {
       return NextResponse.json({ error: 'book not found' }, { status: 404 });
     }

@@ -93,19 +93,15 @@ describe('sentenceOrdinals', () => {
   // id only names the same Sentence on both sides because both count with
   // splitIntoSentences. This is the guard against the two drifting apart.
   test('agrees with the ids buildBookManifest stamps on cues', () => {
-    const second = 10_000_000;
-    // One word boundary per Sentence, so every derived span resolves cleanly.
+    // One span per Sentence, which is what the Chunk index stores and what the manifest
+    // stamps ids onto - the count is what this test is about, not the times.
     const chunkAudio = chunks.map((text) => ({
       url: 'https://blob.test/chunk',
       durationSeconds: 10,
-      boundaries: text
+      spans: text
         .split('。')
         .filter(Boolean)
-        .map((sentence, index) => ({
-          text: sentence,
-          offset: index * second,
-          duration: second,
-        })),
+        .map((unused, index) => ({ startSeconds: index, endSeconds: index + 1 })),
     }));
 
     const { toOrdinal } = sentenceOrdinals(chunks);

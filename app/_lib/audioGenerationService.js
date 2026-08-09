@@ -1,7 +1,10 @@
 import { createBlobStorageClient } from './blobStorageClient';
 import { isPlayableChunk } from './chunkAudio';
+import { audioPathname, storeBase } from './chunkIndex';
 import { createEdgeTtsClient } from './edgeTtsClient';
 import { measureMp3Duration } from './mp3Frames';
+import { createChunkIndexClient } from './redisChunkIndex';
+import { deriveCueSpans } from './sentenceSpans';
 
 function cacheKey({ bookId, chunkIndex, voice }) {
   return `${bookId}/${chunkIndex}/${voice}`;
@@ -24,28 +27,58 @@ async function repairCachedDuration(storageClient, key, cached) {
   return repaired;
 }
 
+// Records a Chunk in the index the HLS routes read, so their cost stops being one Blob read
+// per Chunk (see ticket 08's stage 2). Every path that ends with playable audio goes through
+// this, including a plain cache hit: nothing else ever writes the index, so a Book generated
+// before it existed - or one whose index was evicted - is re-indexed only by the Listener
+// reading through it again. That is what makes "an unavailable Redis degrades to a rebuild"
+// true rather than aspirational.
+//
+// Awaited rather than left in flight. The client generates a Chunk and then the playlist is
+// polled for it; an index still one Chunk short reads as a hit, not a miss, so nothing would
+// fall back to Blob to correct it and the Chunk would simply be absent until the next poll.
+// The write is swallow-on-failure inside the client, so awaiting it cannot fail generation.
+async function indexChunk(chunkIndexClient, { bookId, chunkIndex, voice, text }, metadata) {
+  await chunkIndexClient.writeChunk(
+    { bookId, chunkIndex, voice },
+    {
+      durationSeconds: metadata.durationSeconds,
+      // Derived here, once, instead of on every manifest request over every placed Chunk.
+      spans: deriveCueSpans({ text, boundaries: metadata.boundaries ?? [] }),
+      base: storeBase({
+        url: metadata.url,
+        pathname: audioPathname({ bookId, chunkIndex, voice }),
+      }),
+    },
+  );
+
+  return metadata;
+}
+
 // The one seam between the app and its two external dependencies (edge-tts, object
 // storage) — see .scratch/phase-1-audiobook-reader/issues/04-audio-generation-service.md.
 // storageClient and ttsClient are passed in rather than imported, so tests can substitute
-// fakes here instead of hitting the network or a real storage bucket.
+// fakes here instead of hitting the network or a real storage bucket. chunkIndexClient
+// defaults to a disabled one so a caller that predates the index still generates audio.
 export async function getOrGenerateAudio(
-  { storageClient, ttsClient },
+  { storageClient, ttsClient, chunkIndexClient = defaultChunkIndexClient },
   { bookId, chunkIndex, voice, text },
 ) {
   const key = cacheKey({ bookId, chunkIndex, voice });
+  const chunk = { bookId, chunkIndex, voice, text };
 
   const cached = await storageClient.get(key);
   // Playable rather than merely present, so a Chunk cached before durationSeconds existed
   // and one whose stored duration is unusable take the same repair path instead of the
   // second kind reaching playlist generation.
   if (isPlayableChunk(cached)) {
-    return cached;
+    return indexChunk(chunkIndexClient, chunk, cached);
   }
 
   if (cached) {
     const repaired = await repairCachedDuration(storageClient, key, cached);
     if (repaired) {
-      return repaired;
+      return indexChunk(chunkIndexClient, chunk, repaired);
     }
     // Falls through: the cached audio is missing or unmeasurable, so the entry can't back a
     // playlist entry and regenerating overwrites both blobs.
@@ -53,7 +86,9 @@ export async function getOrGenerateAudio(
 
   const generated = await ttsClient.synthesize(text, voice);
   const durationSeconds = measureMp3Duration(await generated.audio.arrayBuffer());
-  return storageClient.put(key, { ...generated, durationSeconds });
+  const persisted = await storageClient.put(key, { ...generated, durationSeconds });
+
+  return indexChunk(chunkIndexClient, chunk, persisted);
 }
 
 // How many Chunks are read per round trip. Wide enough that the look-ahead window
@@ -100,9 +135,15 @@ export async function readCachedChunks({ storageClient }, { bookId, voice, chunk
   return chunks;
 }
 
+// With no credentials configured this is a client whose reads miss and whose writes drop,
+// which is what a fresh clone and the test suite both want: the app still plays, at the
+// stage 1 Blob-scan cost.
+const defaultChunkIndexClient = createChunkIndexClient();
+
 const defaultClients = {
   storageClient: createBlobStorageClient(),
   ttsClient: createEdgeTtsClient(),
+  chunkIndexClient: defaultChunkIndexClient,
 };
 
 // The public entry point for the rest of the app (API routes, future UI code): callers
