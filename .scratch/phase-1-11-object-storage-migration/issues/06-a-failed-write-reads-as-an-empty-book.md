@@ -6,7 +6,10 @@ openable, and silently unreadable.
 
 **Blocked by:** —
 
-**Status:** ready-for-agent
+**Status:** ready-for-human — built and green. One thing is worth a look before this is closed:
+the two HLS routes now answer 502 for an incomplete Book (written up below). The reader's new
+error screen was verified by test rather than by eye; the player half was verified in the
+running app.
 
 Found while diagnosing [ticket 05](05-cut-over-and-measure.md)'s first real upload. That
 ticket's bug — a `411 MissingContentLength` on the chunks blob — is fixed. This one is what
@@ -46,28 +49,94 @@ chunks were supposed to have been written.
 
 ## Acceptance criteria
 
-- [ ] A failed `POST /api/library` surfaces as a visible error in the uploader, rather than
+- [x] A failed `POST /api/library` surfaces as a visible error in the uploader, rather than
       navigating into the new Book. The existing error string is already there; it needs to be
       reachable.
-- [ ] `bookLibrary.js` stops treating a non-2xx response as data. Whatever shape this takes, it
+- [x] `bookLibrary.js` stops treating a non-2xx response as data. Whatever shape this takes, it
       applies to every call in that module, not only `addBook` — `getBook` and `deleteBook`
       already check `response.ok`; `addBook`, `listBooks` and `updateResumeIndex` do not, and
       that inconsistency is itself the bug's hiding place. `listBooks` is worth a look on its
       own: it destructures `books` off the parsed body, so a 502 there yields `undefined`
       rather than a list.
-- [ ] A Book is not left in the index when its chunks blob was not written. Either the chunks
+- [x] A Book is not left in the index when its chunks blob was not written. Either the chunks
       blob is written first, or the index entry is removed when the second write fails.
-- [ ] A chunks blob that is missing when the index says it should exist is distinguishable from
+- [x] A chunks blob that is missing when the index says it should exist is distinguishable from
       a Book with no chunks — it must not silently render as an empty reader.
-- [ ] Whatever the reader does in that case, it is something a Listener can act on: an error
+- [x] Whatever the reader does in that case, it is something a Listener can act on: an error
       with a way back to the Library, not a dead play button.
-- [ ] Covered by tests at the seam that failed — a store whose second write rejects, asserted
+- [x] Covered by tests at the seam that failed — a store whose second write rejects, asserted
       from `addBook` through to what `getBook` then reports.
-- [ ] A browser that cannot play the source says so. On a browser without native HLS the play
+- [x] A browser that cannot play the source says so. On a browser without native HLS the play
       button currently does nothing at all, with no message — see "The same shape, in the
       player" below.
 
 ## Comments
+
+### What was built
+
+Three layers, three changes, in the order the ticket names them.
+
+**The client.** `bookLibrary.js` reads the status before the body — one `readJson` helper that
+throws with the status on it, used by all five calls. `getBook` and `deleteBook` keep 404 →
+`null`, because "there is no such Book" is an answer the reader route acts on rather than a
+failure. The uploader needed no change at all once `addBook` rejected: `BookUploader`'s
+existing `catch` already wraps its `await onReady(...)`, so the string that was there is now
+reachable, and `router.push` no longer runs. `BookLibrary` gained a `.catch` — it is one
+section of the Library route rather than the whole of it, so a failure leaves it empty rather
+than taking the page down.
+
+**The server.** `addBook` writes the chunks blob first and the index last, making the index
+the commit point. When the index write fails it deletes the chunks blob it just wrote, best
+effort, and rethrows either way — the ordering's own leak, closed, because
+`blobCleanupService` excludes the `library/` prefix and nothing else would ever collect it.
+
+**The reader.** `getBook` no longer defaults a missing chunks blob to `[]`; it throws an error
+carrying `code: BOOK_INCOMPLETE`, the route answers `409`, and the reader route shows a message
+naming what happened, a 刪除這本書 button, and a 返回書庫 button. Deliberately not a redirect:
+an automatic bounce back to the Library would hide a permanently corrupt Book exactly as the
+empty reader did.
+
+The delete button is what answers "the Book should stop existing" below. Offering it here
+rather than telling the Listener to go and find the entry in the Library is the difference
+between the ticket being closed and being described — and there is nothing to weigh up, since
+the entry advertises text that exists nowhere. It runs the Library's ordinary cascade delete,
+and a delete that itself fails leaves the message on screen rather than pretending it worked.
+
+The last-open pointer is dropped only for the permanent failure. A corrupt Book fails
+identically on every launch, so auto-restoring into it would put the Listener on this error
+screen every time they open the app; a store that could not be reached is not that, and
+forgetting the Book would make a blip cost them their place.
+
+### The 409 is written out twice, on purpose
+
+`libraryService.js` names the condition `BOOK_INCOMPLETE`, the route answers a literal `409`,
+and `bookLibrary.js` names that status `INCOMPLETE_BOOK_STATUS` for the reader to compare
+against. One concept, three spellings — but the two modules cannot share a constant in either
+direction: importing `libraryService.js` into the client module would pull the object storage
+client and `aws4fetch` into the browser bundle, and importing the client wrapper into the route
+inverts the dependency. Each side carries a comment pointing at the other.
+
+### The playlist routes now answer 502 for an incomplete Book
+
+`bookAudio.readBookAudio` calls the same `libraryService.getBook`, so the throw reaches
+`/api/books/[bookId]/playlist.m3u8` and `/manifest` too. Both already wrap their lookup, so
+each returns its own 502 rather than crashing — but 502 is the "the store is down, try again"
+answer, and for this Book it will never come true. It is unreachable in practice, because
+opening the Book now fails first and the reader never mounts a player. Left as it is rather
+than threaded through two more routes for a state a Listener cannot get to; noted here because
+the next person to read those routes' logs deserves to know why a 502 might be permanent.
+
+### Verified against the real store, for the player half
+
+The media-element half was confirmed in the running app rather than only in jsdom: opening the
+Book from ticket 05's cutover in Chromium at `localhost:3100` gave `audio.error.code === 4` and
+the new message on screen. That is the exact failure the ticket describes, reproduced and then
+made visible.
+
+The reader's incomplete-Book screen was not eyeballed the same way — producing one would have
+meant deleting a real Book's chunks object out of R2. It is covered by tests at the route, the
+client and the page, and it is built from the same Box/VStack/Button primitives the route's
+existing loading state uses.
 
 ### Writing chunks first is the obvious ordering, and it has its own cost
 

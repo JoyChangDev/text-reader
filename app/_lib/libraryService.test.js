@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { addBook, deleteBook, getBook, listBooks, updateResumeIndex } from './libraryService';
+import {
+  addBook,
+  BOOK_INCOMPLETE,
+  deleteBook,
+  getBook,
+  listBooks,
+  updateResumeIndex,
+} from './libraryService';
 
 describe('libraryService', () => {
   let storageClient;
@@ -17,6 +24,12 @@ describe('libraryService', () => {
       get: async (key) => blobs.get(key),
       putJson: async (key, data) => {
         blobs.set(key, data);
+      },
+      // Pathnames are literal here (already suffixed), unlike get/putJson's cache keys -
+      // the real client's own convention. addBook's rollback needs this, not just
+      // deleteBook's cascade, so it lives on the shared fake.
+      del: async (pathname) => {
+        blobs.delete(pathname.replace(/\.json$/, ''));
       },
     };
     // Mirrors redisReadingPosition's newer-wins contract, because libraryService's own
@@ -157,6 +170,66 @@ describe('libraryService', () => {
       expect(blobs.get('library/index').map(({ bookId }) => bookId)).toEqual(['book-1', 'book-2']);
     });
 
+    // The index is the commit point: it is what the Library lists and what getBook proves a
+    // Book by, so writing it before the text it advertises is what made a failed second
+    // write readable as an empty Book (see ticket 06).
+    test('stores the chunks before it advertises the Book in the index', async () => {
+      await addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }, clients);
+
+      expect(putSpy.mock.calls.map(([key]) => key)).toEqual([
+        'library/book-1/chunks',
+        'library/index',
+      ]);
+    });
+
+    test('leaves no index entry when the chunks could not be stored', async () => {
+      putSpy.mockImplementation(async (key, data) => {
+        if (key === 'library/book-1/chunks') throw new Error('object storage write failed');
+        blobs.set(key, data);
+      });
+
+      await expect(
+        addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }, clients),
+      ).rejects.toThrow('object storage write failed');
+      expect(await listBooks(clients)).toEqual([]);
+      expect(await getBook('book-1', clients)).toBeNull();
+    });
+
+    // The mirror-image leak the ordering above creates. blobCleanupService excludes the
+    // library/ prefix, so nothing else would ever collect this object.
+    test('takes the chunks back out of the store when the index write fails', async () => {
+      // Everything but the index still lands in `blobs`, so the chunks blob is genuinely
+      // written and genuinely has to be removed again - a fake that swallowed the write
+      // would let this pass whether or not the rollback ran.
+      putSpy.mockImplementation(async (key, data) => {
+        if (key === 'library/index') throw new Error('object storage write failed');
+        blobs.set(key, data);
+      });
+
+      await expect(
+        addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }, clients),
+      ).rejects.toThrow('object storage write failed');
+      expect(blobs.has('library/book-1/chunks')).toBe(false);
+      // The whole point of the ordering: a second write that fails leaves a Book that does
+      // not exist, rather than one that exists and cannot be read.
+      expect(await getBook('book-1', clients)).toBeNull();
+    });
+
+    // Failing to undo the write is not a reason to report the Book as added: the index is
+    // still what says whether it exists, and it does not.
+    test('still fails when the chunks it wrote cannot be taken back out', async () => {
+      putSpy.mockImplementation(async (key) => {
+        if (key === 'library/index') throw new Error('object storage write failed');
+      });
+      storageClient.del = async () => {
+        throw new Error('object storage delete failed');
+      };
+
+      await expect(
+        addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }, clients),
+      ).rejects.toThrow('object storage write failed');
+    });
+
     // bookId is a freshly generated uuid, so looking its position up could only ever miss.
     test('does not look up a position for a Book that cannot have one yet', async () => {
       const readSpy = vi.spyOn(positionClient, 'read');
@@ -185,6 +258,26 @@ describe('libraryService', () => {
         sentenceCountsByChunk: [1, 1],
         chunks: ['一。', '二。'],
       });
+    });
+
+    // An index entry exists precisely because the chunks were supposed to have been
+    // written, so their absence is corruption rather than a Book that simply has none -
+    // and `?? []` used to render it as a reader with no text (see ticket 06).
+    // Walked from addBook rather than hand-seeded, because that is the state observed on
+    // 2026-08-10: an index entry with a real title and a real totalChunks, and no chunks
+    // blob behind it. Reachable now only for Books added before the ordering was fixed.
+    test('refuses to report a Book whose chunks blob is missing as an empty one', async () => {
+      await addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。', '二。'] }, clients);
+      blobs.delete('library/book-1/chunks');
+
+      await expect(getBook('book-1', clients)).rejects.toMatchObject({ code: BOOK_INCOMPLETE });
+    });
+
+    // The distinction the criterion is about: zero chunks is a value, absence is not.
+    test('still returns a Book that genuinely has no chunks', async () => {
+      await addBook({ bookId: 'book-1', title: 'First Book', chunks: [] }, clients);
+
+      expect(await getBook('book-1', clients)).toMatchObject({ chunks: [] });
     });
 
     // This is the read that decides where playback resumes, so unlike listBooks it pays
@@ -364,9 +457,6 @@ describe('libraryService', () => {
     let delSpy;
 
     beforeEach(() => {
-      storageClient.del = async (pathname) => {
-        blobs.delete(pathname);
-      };
       storageClient.list = async () => [];
       delSpy = vi.spyOn(storageClient, 'del');
     });

@@ -13,6 +13,17 @@ async function readIndex(storageClient) {
   return (await storageClient.get(INDEX_KEY)) ?? [];
 }
 
+// A Book the index advertises whose chunks blob is not there. Its own code because the
+// caller has to tell it from every other read failure: the store is fine, this one Book is
+// corrupt, and no amount of retrying will produce its text (see ticket 06).
+export const BOOK_INCOMPLETE = 'BOOK_INCOMPLETE';
+
+function incompleteBookError(bookId) {
+  const error = new Error(`The Book ${bookId} is in the index but its chunks were never stored.`);
+  error.code = BOOK_INCOMPLETE;
+  return error;
+}
+
 const NO_POSITION = { resumeIndex: 0, resumeSentenceIndex: 0 };
 
 // Where a Book is resumed from, in order of authority. Redis holds the live value; the
@@ -84,8 +95,26 @@ export async function addBook(
     sentenceCountsByChunk,
   };
 
-  await storageClient.putJson(INDEX_KEY, [...index, summary]);
+  // The index goes last, so that it is the commit point: nothing is advertised until the
+  // text behind it exists. Written first (as it was until ticket 06), a failure of the
+  // second write left a Book listed with a real title and a real totalChunks whose text was
+  // never stored - observed on 2026-08-10 - and nothing downstream could tell that from a
+  // Book that simply had no chunks.
   await storageClient.putJson(chunksKey(bookId), chunks);
+
+  // The mirror-image leak this ordering creates: a chunks blob with no index entry, which
+  // the Library never lists and deleteBook's cascade never reaches - and blobCleanupService
+  // excludes the library/ prefix, so nothing sweeps it up either. Undone here, best effort:
+  // failing to undo it costs the bytes, which is still the better failure of the two, and
+  // is not a reason to report the Book as added when the index does not have it.
+  try {
+    await storageClient.putJson(INDEX_KEY, [...index, summary]);
+  } catch (error) {
+    await storageClient.del(`${chunksKey(bookId)}.json`).catch((cleanupError) => {
+      console.error('Removing the chunks of a book that was never added failed', cleanupError);
+    });
+    throw error;
+  }
 
   // No position lookup: bookId is a freshly generated uuid, so a read could only miss.
   return withPosition(summary, undefined);
@@ -96,7 +125,14 @@ export async function getBook(bookId, { storageClient, positionClient } = defaul
   const summary = index.find((book) => book.bookId === bookId);
   if (!summary) return null;
 
-  const chunks = (await storageClient.get(chunksKey(bookId))) ?? [];
+  // No `?? []` here, unlike the blobs where absence is genuinely a valid state (a Book with
+  // no stored resume position has not been started). A summary exists precisely because the
+  // chunks were supposed to have been written alongside it, so their absence is corruption,
+  // and defaulting it away is what turned a failed write into an openable Book with no text
+  // and a play button that did nothing. An empty array is still a value and still passes.
+  const chunks = await storageClient.get(chunksKey(bookId));
+  if (!chunks) throw incompleteBookError(bookId);
+
   // This is the read that decides where playback resumes, so unlike listBooks it pays for
   // the snapshot when Redis has nothing - one extra Blob read when a Book is opened,
   // against silently restarting a Book the Listener was halfway through.

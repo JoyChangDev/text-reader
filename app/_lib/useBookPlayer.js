@@ -25,6 +25,9 @@ const LOOKAHEAD = 10;
 // coalesces those persistence writes into one trailing call instead of a network
 // request on every single sentence boundary (see phase 1.5 ticket 05).
 const RESUME_PERSIST_DEBOUNCE_MS = 400;
+// Stands in for a MediaError code the element did not give us. Zero is not one of the four
+// the spec defines, so it reads as "failed, cause unknown" everywhere a code is compared.
+const MEDIA_ERR_UNKNOWN = 0;
 
 // Both HLS routes (see ticket 03) are addressed the same way: a Book, a voice, and which
 // Chunk to start at. `from` is normally 0 and moves only when the Listener seeks somewhere
@@ -69,6 +72,13 @@ export function useBookPlayer({
 }) {
   const [chunkAudio, setChunkAudio] = useState({});
   const [wantsToPlay, setWantsToPlay] = useState(false);
+  // What the element itself reported about the source it was given, as opposed to what
+  // /api/audio-chunks reported about generating a Chunk. Nothing read `audio.error` before
+  // ticket 06, which is why a browser with no HLS demuxer - every desktop one but Safari,
+  // by ADR 0003's design - was indistinguishable from a dead play button. A MediaError code
+  // or null, never an object: a shape that could hold an absent code would put this state
+  // back into "something failed and there is nothing to show for it".
+  const [mediaErrorCode, setMediaErrorCode] = useState(null);
   // Which Chunk the playlist currently being played starts at. Only seekToSentence moves
   // it, and only when the Listener asks for somewhere this playlist can't reach.
   const [playlistStart, setPlaylistStart] = useState(0);
@@ -296,6 +306,9 @@ export function useBookPlayer({
     loadedSrcRef.current = src;
     audio.src = src;
     audio.playbackRate = speed;
+    // A different source is a fresh attempt: keeping the previous failure on screen would
+    // report this one as having failed before it had even loaded.
+    setMediaErrorCode(null);
 
     // A different voice, or a playlist starting somewhere else, is a different timeline -
     // every cue on the old one is now wrong rather than merely stale. Drop them; the new
@@ -390,6 +403,22 @@ export function useBookPlayer({
   // The end of the Book, not the end of a Chunk: with one continuous source, `ended`
   // only fires once the playlist has an #EXT-X-ENDLIST and playback reaches it.
   const handleEnded = useCallback(() => setWantsToPlay(false), []);
+
+  // The element has given up on this source; it will not start on its own, so the intent to
+  // play is dropped too rather than leaving a Pause button over silence. `code` is what
+  // separates "this browser cannot play HLS at all" from a decode or network failure, and
+  // both the code and the element's own message are logged: the message
+  // ("PipelineStatus::DEMUXER_ERROR_COULD_NOT_PARSE") is what named the cause the one time
+  // this was diagnosed by hand.
+  const handleMediaError = useCallback(() => {
+    const error = audioRef.current?.error;
+    console.error('The media element could not play this source', error?.code, error?.message);
+    // An error event with no MediaError behind it is still a failure that has to say
+    // something - falling back to an absent code would show nothing at all, which is the
+    // silence this exists to remove.
+    setMediaErrorCode(error?.code ?? MEDIA_ERR_UNKNOWN);
+    setWantsToPlay(false);
+  }, []);
 
   // A backgrounded tab can suspend or throttle media events without telling the page in
   // an orderly way, so React's `isPlaying` can drift from what the element actually did.
@@ -555,6 +584,8 @@ export function useBookPlayer({
     play,
     pause,
     handleEnded,
+    handleMediaError,
+    mediaErrorCode,
     seekToSentence,
     retryChunk: fetchChunk,
   };

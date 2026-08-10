@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { addBook, deleteBook, getBook, listBooks, updateResumeIndex } from './bookLibrary';
+import {
+  addBook,
+  deleteBook,
+  getBook,
+  INCOMPLETE_BOOK_STATUS,
+  listBooks,
+  updateResumeIndex,
+} from './bookLibrary';
 
 describe('bookLibrary', () => {
   beforeEach(() => {
@@ -21,6 +28,21 @@ describe('bookLibrary', () => {
         body: JSON.stringify({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }),
       });
     });
+
+    // The route answers a failure with `{ error: ... }`, which is valid JSON, so parsing it
+    // without looking at the status handed the caller an object that simply was not a Book
+    // - and the upload reported success and navigated into it (see ticket 06).
+    test('rejects rather than returning the error body as if it were a book', async () => {
+      global.fetch.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'Adding the book to the library failed' }), {
+          status: 502,
+        }),
+      );
+
+      await expect(
+        addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }),
+      ).rejects.toThrow();
+    });
   });
 
   describe('listBooks', () => {
@@ -35,6 +57,16 @@ describe('bookLibrary', () => {
 
       expect(result).toEqual(books);
       expect(global.fetch).toHaveBeenCalledWith('/api/library');
+    });
+
+    // It destructures `books` off the parsed body, so a failure used to come back as
+    // `undefined` - not a list, not an error, just nothing.
+    test('rejects rather than resolving undefined when listing fails', async () => {
+      global.fetch.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'Listing the library failed' }), { status: 502 }),
+      );
+
+      await expect(listBooks()).rejects.toThrow();
     });
   });
 
@@ -62,6 +94,17 @@ describe('bookLibrary', () => {
       );
 
       expect(await getBook('missing')).toBeNull();
+    });
+
+    // 404 is the one status that is an answer rather than a failure - "there is no such
+    // Book" is information the reader route acts on. Everything else has to reach the
+    // caller as a failure, carrying the status that says which one.
+    test('rejects with the status when the book cannot be fetched', async () => {
+      global.fetch.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'book is incomplete' }), { status: 409 }),
+      );
+
+      await expect(getBook('book-1')).rejects.toMatchObject({ status: INCOMPLETE_BOOK_STATUS });
     });
   });
 
@@ -94,6 +137,18 @@ describe('bookLibrary', () => {
       const [, { body }] = global.fetch.mock.calls[0];
       expect(JSON.parse(body).snapshot).toBe(false);
     });
+
+    test('rejects when the position could not be saved', async () => {
+      global.fetch.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'Updating the resume position failed' }), {
+          status: 502,
+        }),
+      );
+
+      await expect(
+        updateResumeIndex('book-1', { resumeIndex: 5, resumeSentenceIndex: 2, updatedAt: 1_000 }),
+      ).rejects.toThrow();
+    });
   });
 
   describe('deleteBook', () => {
@@ -114,6 +169,14 @@ describe('bookLibrary', () => {
       );
 
       expect(await deleteBook('missing')).toBeNull();
+    });
+
+    test('rejects when the delete fails for any other reason', async () => {
+      global.fetch.mockResolvedValue(
+        new Response(JSON.stringify({ error: 'Deleting the book failed' }), { status: 502 }),
+      );
+
+      await expect(deleteBook('book-1')).rejects.toThrow();
     });
   });
 });

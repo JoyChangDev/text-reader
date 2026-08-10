@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useParams, useRouter } from 'next/navigation';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { getBook } from '@/app/_lib/bookLibrary';
+import { deleteBook, getBook } from '@/app/_lib/bookLibrary';
 import { getLastOpenBook, setLastOpenBook } from '@/app/_lib/lastOpenBook';
 
 import ChakraProvider from '../../_providers/chakra';
@@ -15,6 +15,8 @@ vi.mock('next/navigation', () => ({
 
 vi.mock('@/app/_lib/bookLibrary', () => ({
   getBook: vi.fn(),
+  deleteBook: vi.fn(),
+  INCOMPLETE_BOOK_STATUS: 409,
 }));
 
 describe('BookPage', () => {
@@ -110,6 +112,151 @@ describe('BookPage', () => {
 
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/'));
     expect(screen.queryByRole('button', { name: /^播放$/i })).not.toBeInTheDocument();
+  });
+
+  // The whole of ticket 06 seen from the Listener's side: a Book whose text was never
+  // stored used to open onto a reader with no words and a play button that did nothing.
+  describe('when the book cannot be opened', () => {
+    let consoleError;
+
+    beforeEach(() => {
+      consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    function rejectWith(status) {
+      const error = new Error(`The library request failed with ${status}`);
+      error.status = status;
+      getBook.mockRejectedValue(error);
+    }
+
+    test('says the book was never stored, rather than rendering an empty reader', async () => {
+      rejectWith(409);
+
+      render(
+        <ChakraProvider>
+          <BookPage />
+        </ChakraProvider>,
+      );
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/沒有儲存成功/);
+      expect(screen.queryByRole('button', { name: /^播放$/i })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('載入書籍中')).not.toBeInTheDocument();
+      expect(consoleError).toHaveBeenCalled();
+    });
+
+    // A corrupt Book is permanent, so an automatic bounce back to the Library would hide it
+    // again - the Listener has to be told, and then choose to leave.
+    test('offers a way back to the library instead of redirecting on its own', async () => {
+      rejectWith(409);
+
+      render(
+        <ChakraProvider>
+          <BookPage />
+        </ChakraProvider>,
+      );
+
+      fireEvent.click(await screen.findByText(/返回書庫/i));
+
+      expect(push).toHaveBeenCalledWith('/');
+      expect(replace).not.toHaveBeenCalled();
+    });
+
+    test('says something else when the library itself could not be reached', async () => {
+      rejectWith(502);
+
+      render(
+        <ChakraProvider>
+          <BookPage />
+        </ChakraProvider>,
+      );
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/無法載入/);
+    });
+
+    // Otherwise every launch auto-restores straight back into the error - the same dead end
+    // a stale pointer to a deleted Book creates.
+    test('clears its own last-open pointer so the next launch does not come back here', async () => {
+      setLastOpenBook('book-1');
+      rejectWith(409);
+
+      render(
+        <ChakraProvider>
+          <BookPage />
+        </ChakraProvider>,
+      );
+
+      await screen.findByRole('alert');
+      expect(getLastOpenBook()).toBeNull();
+    });
+
+    // A store that could not be reached will very likely answer next time, and forgetting
+    // the Book would make a blip cost the Listener their place.
+    test('keeps the pointer when the failure is one that might not repeat', async () => {
+      setLastOpenBook('book-1');
+      rejectWith(502);
+
+      render(
+        <ChakraProvider>
+          <BookPage />
+        </ChakraProvider>,
+      );
+
+      await screen.findByRole('alert');
+      expect(getLastOpenBook()).toBe('book-1');
+    });
+
+    // "The Book should stop existing, or stop being incomplete" - offered here, where the
+    // Listener already is, rather than as an instruction to go and find it in the Library.
+    test('lets the Listener delete the book that cannot be read, and returns to the library', async () => {
+      rejectWith(409);
+      deleteBook.mockResolvedValue({ bookId: 'book-1' });
+      setLastOpenBook('book-1');
+
+      render(
+        <ChakraProvider>
+          <BookPage />
+        </ChakraProvider>,
+      );
+
+      fireEvent.click(await screen.findByRole('button', { name: /刪除這本書/ }));
+
+      await waitFor(() => expect(push).toHaveBeenCalledWith('/'));
+      expect(deleteBook).toHaveBeenCalledWith('book-1');
+      expect(getLastOpenBook()).toBeNull();
+    });
+
+    // Deleting is itself a call that can fail, and saying nothing about that is the shape
+    // of the whole ticket.
+    test('stays put when the delete fails, rather than reporting a book that is still there', async () => {
+      rejectWith(409);
+      deleteBook.mockRejectedValue(new Error('The library request failed with 502'));
+
+      render(
+        <ChakraProvider>
+          <BookPage />
+        </ChakraProvider>,
+      );
+
+      fireEvent.click(await screen.findByRole('button', { name: /刪除這本書/ }));
+
+      await waitFor(() => expect(deleteBook).toHaveBeenCalled());
+      expect(push).not.toHaveBeenCalled();
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+    });
+
+    // Nothing to delete: the Book may be perfectly fine and simply unreachable right now.
+    test('does not offer to delete a book that merely could not be reached', async () => {
+      rejectWith(502);
+
+      render(
+        <ChakraProvider>
+          <BookPage />
+        </ChakraProvider>,
+      );
+
+      await screen.findByRole('alert');
+      expect(screen.queryByRole('button', { name: /刪除這本書/ })).not.toBeInTheDocument();
+    });
   });
 
   test('pressing 返回書庫 navigates to the library route', async () => {

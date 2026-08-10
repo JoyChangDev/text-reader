@@ -36,6 +36,8 @@ export default function AudioPlayer({
     play,
     pause,
     handleEnded,
+    handleMediaError,
+    mediaErrorCode,
     seekToSentence,
     retryChunk,
   } = useBookPlayer({ bookId, chunks, initialIndex, initialSentenceIndex, voice, speed });
@@ -143,13 +145,20 @@ export default function AudioPlayer({
         onSpeedChange={handleSpeedChange}
         reportMode={reportMode}
         onToggleReportMode={handleToggleReportMode}
+        mediaErrorCode={mediaErrorCode}
       />
       <BackgroundDiagnosticsPanel />
       {/* One element for the whole Book, pointed at its EVENT playlist by useBookPlayer.
           Deliberately without `crossorigin`: nothing here reads the audio data or loads a
           <track src>, so requiring CORS on segment responses would be a constraint the
           design doesn't otherwise have (see ticket 04). */}
-      <audio ref={audioRef} preload="auto" onEnded={handleEnded} data-testid="audio-element" />
+      <audio
+        ref={audioRef}
+        preload="auto"
+        onEnded={handleEnded}
+        onError={handleMediaError}
+        data-testid="audio-element"
+      />
     </Box>
   );
 }

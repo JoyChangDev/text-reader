@@ -30,6 +30,24 @@ describe('BookLibrary', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  // listBooks used to resolve `undefined` when the route failed (see ticket 06); it now
+  // rejects, and a rejection nobody catches is an unhandled one - the failure has to stop
+  // here, at the component that asked for the list.
+  test('renders nothing, and does not reject, when the library cannot be listed', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    listBooks.mockRejectedValue(new Error('The library request failed with 502'));
+
+    const { container } = render(
+      <ChakraProvider>
+        <BookLibrary onSelect={vi.fn()} />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(consoleError).toHaveBeenCalled());
+    expect(container).toBeEmptyDOMElement();
+    consoleError.mockRestore();
+  });
+
   test('lists every previously uploaded book', async () => {
     listBooks.mockResolvedValue([
       { bookId: 'book-1', title: 'First Book', resumeIndex: 0 },

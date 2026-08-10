@@ -220,6 +220,88 @@ describe('AudioPlayer', () => {
     expect(await screen.findByRole('button', { name: /^播放$/i })).toBeEnabled();
   });
 
+  // The element populates `error` and stops, silently: on a browser with no HLS demuxer
+  // (every desktop one but Safari - see ADR 0003) the playlist is refused with
+  // MEDIA_ERR_SRC_NOT_SUPPORTED and the play button simply did nothing. The defect is the
+  // silence, not the lack of support (see ticket 06).
+  describe('when the element itself refuses the source', () => {
+    function failWith(code, message) {
+      const audioEl = screen.getByTestId('audio-element');
+      Object.defineProperty(audioEl, 'error', { value: { code, message }, configurable: true });
+      fireEvent.error(audioEl);
+      return audioEl;
+    }
+
+    test('says the browser cannot play the source instead of leaving a dead play button', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(
+        <ChakraProvider>
+          <AudioPlayer bookId="book-unsupported" chunks={chunks} />
+        </ChakraProvider>,
+      );
+      await screen.findByRole('button', { name: /^播放$/i });
+
+      failWith(4, 'PipelineStatus::DEMUXER_ERROR_COULD_NOT_PARSE');
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/無法播放/);
+      expect(console.error).toHaveBeenCalled();
+    });
+
+    test('stops showing Pause once the element has given up', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(
+        <ChakraProvider>
+          <AudioPlayer bookId="book-unsupported" chunks={chunks} />
+        </ChakraProvider>,
+      );
+      fireEvent.click(await screen.findByRole('button', { name: /^播放$/i }));
+      await screen.findByRole('button', { name: /暫停/i });
+
+      failWith(4, 'PipelineStatus::DEMUXER_ERROR_COULD_NOT_PARSE');
+
+      expect(await screen.findByRole('button', { name: /^播放$/i })).toBeInTheDocument();
+    });
+
+    // A decode or network failure is not a browser that can never play this Book, so it
+    // must not be reported as one.
+    test('reports a failure that is not about support in its own words', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(
+        <ChakraProvider>
+          <AudioPlayer bookId="book-decode" chunks={chunks} />
+        </ChakraProvider>,
+      );
+      await screen.findByRole('button', { name: /^播放$/i });
+
+      failWith(3, 'decode error');
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/播放時發生錯誤/);
+    });
+
+    // Re-pointing the element is a fresh attempt at a different source - keeping the old
+    // failure on screen would say the new one had failed too, before it had loaded.
+    test('clears the failure when the Book is re-pointed at another source', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      render(
+        <ChakraProvider>
+          <AudioPlayer bookId="book-voice-change" chunks={chunks} />
+        </ChakraProvider>,
+      );
+      await screen.findByRole('button', { name: /^播放$/i });
+      failWith(4, 'PipelineStatus::DEMUXER_ERROR_COULD_NOT_PARSE');
+      await screen.findByRole('alert');
+
+      openSettings();
+      fireEvent.click(
+        within(screen.getByRole('radiogroup', { name: /朗讀聲音/i })).getByRole('radio', {
+          name: 'Yun-Jhe',
+        }),
+      );
+
+      await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    });
+  });
+
   test('a failed chunk does not block unrelated cached chunks, and moving onto it regenerates it without a second play()', async () => {
     const threeChunks = ['第一段。', '第二段。', '第三段。'];
     let chunk1Attempts = 0;

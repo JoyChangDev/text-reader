@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { deleteBook, getBook, updateResumeIndex } from '@/app/_lib/libraryService';
+import { BOOK_INCOMPLETE, deleteBook, getBook, updateResumeIndex } from '@/app/_lib/libraryService';
 
 export async function GET(request, { params }) {
   const { bookId } = await params;
@@ -13,6 +13,20 @@ export async function GET(request, { params }) {
 
     return NextResponse.json(book);
   } catch (error) {
+    // A Book whose text was never stored is a conflict between the index and the store, not
+    // a transport failure: the Book is listed, so 404 would be a lie, and the store answered
+    // perfectly well, so the retry a 502 invites can only fail again. The reader needs to
+    // tell it apart to say something a Listener can act on (see ticket 06).
+    //
+    // bookLibrary.js names this same 409 INCOMPLETE_BOOK_STATUS on the client side. The two
+    // are written out separately rather than sharing a constant because importing either
+    // module into the other is wrong in both directions - this one would pull the object
+    // storage client and aws4fetch into the browser bundle.
+    if (error.code === BOOK_INCOMPLETE) {
+      console.error('The book is in the library index but its text was never stored', error);
+      return NextResponse.json({ error: 'book is incomplete' }, { status: 409 });
+    }
+
     console.error('Fetching the book failed', error);
     return NextResponse.json({ error: 'Fetching the book failed' }, { status: 502 });
   }

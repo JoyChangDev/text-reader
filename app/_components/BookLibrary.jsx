@@ -18,9 +18,17 @@ export default function BookLibrary({ onSelect }) {
     // client render matches the server-rendered empty state before hydration,
     // then picks up the server-backed library once mounted.
     let cancelled = false;
-    listBooks().then((fetchedBooks) => {
-      if (!cancelled) setBooks(fetchedBooks);
-    });
+    listBooks()
+      .then((fetchedBooks) => {
+        if (!cancelled) setBooks(fetchedBooks);
+      })
+      // The Library is one section of the route rather than the whole of it, and the
+      // uploader above it still works without a list, so a failure leaves this empty rather
+      // than taking the page down. Caught here all the same: listBooks rejects now instead
+      // of resolving undefined (see ticket 06), and nothing else is downstream of it.
+      .catch((error) => {
+        console.error('Failed to list the library', error);
+      });
     return () => {
       cancelled = true;
     };

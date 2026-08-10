@@ -22,8 +22,13 @@ vi.mock('next/navigation', () => ({
 // a rendered player (see app/book/[bookId]/page.test.jsx for that).
 let libraryBooks;
 
-function fetchMock(handleOther) {
+function fetchMock(handleOther, { failLibraryPost = false } = {}) {
   return vi.fn(async (url, options = {}) => {
+    if (failLibraryPost && url === '/api/library' && options.method === 'POST') {
+      return new Response(JSON.stringify({ error: 'Adding the book to the library failed' }), {
+        status: 502,
+      });
+    }
     if (url === '/api/library' && (!options.method || options.method === 'GET')) {
       return new Response(
         JSON.stringify({ books: libraryBooks.map(({ chunks: _chunks, ...summary }) => summary) }),
@@ -94,6 +99,33 @@ describe('Home', () => {
     await waitFor(() => expect(push).toHaveBeenCalledTimes(1));
     const books = await listBooks();
     expect(push).toHaveBeenCalledWith(`/book/${books[0].bookId}`);
+  });
+
+  // The route already answers 502 with a message; nothing between it and the Listener used
+  // to look at the status, so a Book that was never stored was navigated into as if it had
+  // been (see ticket 06).
+  test('a book that could not be saved reports the failure instead of navigating into it', async () => {
+    global.fetch = fetchMock(
+      async (url) => {
+        if (url === '/api/chunks') {
+          return new Response(JSON.stringify({ chunks: ['第一段。'] }), { status: 200 });
+        }
+        return new Response('{}', { status: 200 });
+      },
+      { failLibraryPost: true },
+    );
+
+    render(
+      <ChakraProvider>
+        <Home />
+      </ChakraProvider>,
+    );
+
+    const file = new File(['第一段。'], 'book.txt', { type: 'text/plain' });
+    fireEvent.change(screen.getByLabelText(/上傳/), { target: { files: [file] } });
+
+    expect(await screen.findByText(/無法處理/)).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
   });
 
   test('uploading a new book does not remove existing library entries', async () => {

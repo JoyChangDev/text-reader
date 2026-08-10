@@ -1,8 +1,9 @@
 import { describe, expect, test, vi } from 'vitest';
 
-import { deleteBook, getBook, updateResumeIndex } from '@/app/_lib/libraryService';
+import { BOOK_INCOMPLETE, deleteBook, getBook, updateResumeIndex } from '@/app/_lib/libraryService';
 
 vi.mock('@/app/_lib/libraryService', () => ({
+  BOOK_INCOMPLETE: 'BOOK_INCOMPLETE',
   getBook: vi.fn(),
   updateResumeIndex: vi.fn(),
   deleteBook: vi.fn(),
@@ -50,6 +51,20 @@ describe('GET /api/library/[bookId]', () => {
     const response = await GET(jsonRequest({}), paramsFor('book-1'));
 
     expect(response.status).toBe(502);
+  });
+
+  // Its own status because it is neither of the two it would otherwise be mistaken for: the
+  // Book is in the index, so it is not a 404, and the store answered, so retrying it the way
+  // a 502 invites will never help (see ticket 06).
+  test('returns 409 for a Book the index advertises but the store has no chunks for', async () => {
+    const incomplete = new Error('chunks were never stored');
+    incomplete.code = BOOK_INCOMPLETE;
+    getBook.mockRejectedValueOnce(incomplete);
+
+    const response = await GET(jsonRequest({}), paramsFor('book-1'));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'book is incomplete' });
   });
 });
 
