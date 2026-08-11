@@ -37,6 +37,9 @@ export default function BookPage() {
   const [notFound, setNotFound] = useState(false);
   const [loadError, setLoadError] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  // Bumping this re-runs the fetch below. The Book being read never changes without the
+  // route changing, so nothing else would ever make that effect run twice.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -82,7 +85,7 @@ export default function BookPage() {
     return () => {
       cancelled = true;
     };
-  }, [bookId]);
+  }, [bookId, attempt]);
 
   // A deleted book (or a bad/stale link) has nowhere sensible to render - fall back to
   // the library rather than showing a broken player.
@@ -103,6 +106,15 @@ export default function BookPage() {
   // longer exists anywhere, so the Library's ordinary cascade delete is exactly right. A
   // failure to delete leaves the message on screen rather than pretending it worked; the
   // Listener still has 返回書庫.
+  // Offered only for a failure that might not repeat — a store that could not be reached
+  // will very likely answer next time. Clearing the error first puts the loading state back
+  // on screen, so the retry looks like what it is rather than like a button that did
+  // nothing; if it fails again, the message comes back.
+  const handleRetry = useCallback(() => {
+    setLoadError(null);
+    setAttempt((current) => current + 1);
+  }, []);
+
   const handleDeleteIncompleteBook = useCallback(async () => {
     setIsDeleting(true);
     try {
@@ -133,7 +145,7 @@ export default function BookPage() {
               ? '這本書的內容沒有儲存成功，無法閱讀。刪除後重新上傳即可。'
               : '無法載入這本書，請稍後再試。'}
           </Text>
-          {isIncomplete && (
+          {isIncomplete ? (
             <Button
               size="sm"
               borderRadius="full"
@@ -143,6 +155,19 @@ export default function BookPage() {
               onClick={handleDeleteIncompleteBook}
             >
               刪除這本書
+            </Button>
+          ) : (
+            // The message above tells the Listener to try again later; this is what lets
+            // them. Deliberately not offered for an incomplete Book, whose read fails
+            // identically every time - there the way out is 刪除這本書.
+            <Button
+              size="sm"
+              borderRadius="full"
+              variant="outline"
+              borderColor="hairlineStrong"
+              onClick={handleRetry}
+            >
+              重新載入
             </Button>
           )}
           <Button

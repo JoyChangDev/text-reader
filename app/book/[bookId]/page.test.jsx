@@ -257,6 +257,78 @@ describe('BookPage', () => {
       await screen.findByRole('alert');
       expect(screen.queryByRole('button', { name: /刪除這本書/ })).not.toBeInTheDocument();
     });
+
+    // The message says to try again later, so there has to be something that tries again.
+    // Without this the only way out is 返回書庫 and back in, which is the same request with
+    // extra steps.
+    test('lets the Listener try again when the failure is one that might not repeat', async () => {
+      rejectWith(502);
+
+      render(
+        <ChakraProvider>
+          <BookPage />
+        </ChakraProvider>,
+      );
+
+      // Counted as a delta rather than an absolute: this suite does not clear mocks
+      // between tests, so getBook carries every earlier test's calls with it.
+      const before = getBook.mock.calls.length;
+      fireEvent.click(await screen.findByRole('button', { name: /重新載入/ }));
+
+      await waitFor(() => expect(getBook.mock.calls.length).toBe(before + 1));
+    });
+
+    test('goes back to loading while the retry is in flight, rather than leaving the error up', async () => {
+      rejectWith(502);
+
+      render(
+        <ChakraProvider>
+          <BookPage />
+        </ChakraProvider>,
+      );
+
+      fireEvent.click(await screen.findByRole('button', { name: /重新載入/ }));
+
+      expect(screen.getByLabelText('載入書籍中')).toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    test('opens the book when the retry succeeds', async () => {
+      const error = new Error('The library request failed with 502');
+      error.status = 502;
+      getBook.mockRejectedValueOnce(error).mockResolvedValue({
+        bookId: 'book-1',
+        title: 'First Book',
+        chunks: ['第一段。'],
+        resumeIndex: 0,
+        resumeSentenceIndex: 0,
+      });
+
+      render(
+        <ChakraProvider>
+          <BookPage />
+        </ChakraProvider>,
+      );
+
+      fireEvent.click(await screen.findByRole('button', { name: /重新載入/ }));
+
+      expect(await screen.findByRole('button', { name: /^播放$/i })).toBeInTheDocument();
+    });
+
+    // A Book whose text was never stored fails identically on every attempt, so a retry
+    // would be a button that is guaranteed not to work. 刪除這本書 is the way out of that one.
+    test('does not offer to retry a failure that is certain to repeat', async () => {
+      rejectWith(409);
+
+      render(
+        <ChakraProvider>
+          <BookPage />
+        </ChakraProvider>,
+      );
+
+      await screen.findByRole('alert');
+      expect(screen.queryByRole('button', { name: /重新載入/ })).not.toBeInTheDocument();
+    });
   });
 
   test('pressing 返回書庫 navigates to the library route', async () => {

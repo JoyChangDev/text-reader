@@ -138,6 +138,28 @@ meant deleting a real Book's chunks object out of R2. It is covered by tests at 
 client and the page, and it is built from the same Box/VStack/Button primitives the route's
 existing loading state uses.
 
+> **The other error screen was eyeballed, 2026-08-11**, when 重新載入 was added to it. The Book
+> read was made to fail with a 502 by replacing `window.fetch` in the running app — no real data
+> touched — and the screen rendered its message, 重新載入 and 返回書庫. Restoring `fetch` and
+> pressing 重新載入 opened the Book. The incomplete-Book screen is the same component with one
+> button swapped, so this covers its layout too; what stays untested by eye is the 409 branch's
+> own wording and its delete.
+
+### The Listener could be told to try again, but not actually try — fixed 2026-08-11
+
+The generic branch said 「無法載入這本書，請稍後再試。」 and then offered only 返回書庫. Trying again
+meant leaving and coming back, which is the same request with extra steps — and on the device
+this cost a real session: a reopen after a network blip landed here with nowhere to go.
+
+`重新載入` clears the error and re-runs the read, which puts the loading spinner back so the
+retry looks like something happened. **It is deliberately not offered on the 409 branch**: a
+Book whose text was never stored fails identically every time, so a retry there would be a
+button guaranteed not to work. That branch already has the remedy that fits it, which is
+刪除這本書 — the same distinction the pointer-clearing rule draws, for the same reason.
+
+This is the last of the criterion "something a Listener can act on" that was answered only for
+the permanent failure when this ticket was closed.
+
 ### Writing chunks first is the obvious ordering, and it has its own cost
 
 Swapping the two writes makes the index the commit point, which is the right shape: nothing is
