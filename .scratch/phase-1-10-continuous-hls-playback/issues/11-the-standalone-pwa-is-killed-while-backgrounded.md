@@ -1,10 +1,10 @@
 # 11 — The standalone PWA is killed while backgrounded, and audio dies with it
 
-**What to build:** Nothing yet. Find out why iOS reclaims the home-screen PWA's process ~101 seconds into backgrounded playback when the same app in a Safari tab survives 691 seconds, and when the ADR 0003 spike's inert PWA survived 340. Only then decide what to change.
+**What to build:** Nothing yet. Establish first that iOS really does reclaim the home-screen PWA's process ~101 seconds into backgrounded playback — it has been seen once — and only then find out why it happens there when the same app in a Safari tab survives 691 seconds and the ADR 0003 spike's inert PWA survived 340.
 
 **Blocked by:** —
 
-**Status:** needs-info — the next step is a measurement, not a change. See "The one experiment that separates them".
+**Status:** needs-info — **this rests on a single observation.** The next step is to repeat it unchanged, not to explain it. See "Step 1".
 
 Opened by [ticket 06](06-verify-growing-playlist-in-background.md), whose last criterion says a
 failing run gets its mitigation re-planned as its own ticket rather than papered over with a
@@ -76,21 +76,53 @@ at once (context, and whether the page does anything), so these three runs **can
 "standalone is stricter" from "network I/O while hidden is what gets you reclaimed". Do not
 write the conclusion into a fix before separating them.
 
-## The one experiment that separates them
+## Step 1 — find out whether it reproduces at all
 
-Hold the context fixed at **standalone PWA** and change only what the page does while hidden.
+**One process kill is not a phenomenon.** iOS reclaims backgrounded processes against memory
+pressure, battery level, Low Power Mode and whatever else is resident, none of which were
+controlled or recorded. 101 seconds could be a property of this app or a property of that
+minute. Nothing below is worth doing until that is settled.
 
-Play a stretch of a Book that is **already fully generated**, far enough from the end of the
-generated region that the look-ahead has nothing to fetch — so the two loudest background
-callers, `POST /api/audio-chunks` and the per-Sentence `PATCH /api/library`, are quiet or nearly
-so. Everything else is unchanged: same playlist, same Worker, same element, same lock.
+Repeat Run B **unchanged** two or three times: standalone PWA, same Book, play, lock, wait past
+ten minutes or until the audio stops. Record the survival time each run, plus battery percentage
+and whether Low Power Mode is on — the two confounders that are free to note and impossible to
+recover afterwards.
 
-- If it survives well past 101s, background network I/O is what gets the process reclaimed, and
-  the fix is about what the app does while hidden.
-- If it dies at about the same time, standalone is simply stricter than a tab, and the fix is
+- Consistently ~100s → a phenomenon, and step 2 is worth its cost.
+- One run past ~600s → the observed kill was situational. Downgrade this ticket and say so;
+  the Listener's real complaint would then be intermittent rather than systematic, which is a
+  different ticket with a different shape.
+
+## Step 2 — only then, separate the two variables
+
+**This needs a code change and a deployment, which is why it is second.** The obvious no-code
+version of it does not work, and the reason is worth writing down because it looks like it
+should:
+
+> _Play a stretch that is already generated, so the look-ahead has nothing to fetch._
+
+It does not quiet anything. [`chunkFetchPlan`](../../../app/_lib/chunkFetchPlan.js) skips a
+Chunk based on `statuses`, which is the client's own `chunkAudio` state — empty on every mount —
+not on whether the object exists in R2. So the look-ahead issues a `POST /api/audio-chunks` for
+every Chunk it advances into regardless, and an already-generated Chunk merely makes that
+request a cache hit. The per-Sentence `PATCH /api/library` is louder still and is driven by
+playback position alone ([useBookPlayer.js](../../../app/_lib/useBookPlayer.js)), so it is
+entirely unaffected. Request _count_ is what would have to change, and pre-generating changes
+only request _cost_.
+
+So the experiment is: suspend the position saves and the look-ahead while
+`document.visibilityState === 'hidden'`, deploy that, and re-run. Everything else identical —
+same playlist, same Worker, same element, same lock.
+
+- Survives well past the step 1 figure → background network I/O is what gets the process
+  reclaimed, and the fix is about what this app does while hidden.
+- Dies at about the same time → standalone is simply stricter than a tab, and the fix is
   somewhere else entirely — possibly nowhere in this codebase.
 
-Either way the answer is one run, and it costs no new code.
+Note that suspending the position saves while hidden is not obviously safe to keep: a process
+killed while hidden then loses everything since the last save, and the flush that was supposed
+to cover that is exactly what does not fire here. Treat it as instrumentation to be reverted,
+not as a candidate fix that happens to double as a probe.
 
 ## What not to do first
 
@@ -107,7 +139,9 @@ which the wrapper decision should be informed by.
 
 ## Acceptance criteria
 
-- [ ] The experiment above is run and recorded in [the spike log](../../hls-background-spike/spike-log.md), with the same shape as runs 1–4.
+- [ ] **Step 1: Run B is repeated at least twice unchanged**, and each run's survival time is recorded in [the spike log](../../hls-background-spike/spike-log.md) with the same shape as runs 1–4, along with battery level and Low Power Mode.
+- [ ] The kill is established as reproducible or as situational, **and this ticket's status follows that answer** rather than staying open on one observation.
+- [ ] Step 2 is run only if step 1 says there is something to separate, and its instrumentation is reverted afterwards rather than shipped.
 - [ ] The result names which of the two variables is responsible, or says explicitly that it could not separate them and why.
 - [ ] If background network I/O is implicated, the specific callers are quantified — one `PATCH` per Sentence is the loudest, and its cadence is a deliberate choice made in ticket 10 that would be re-opened rather than assumed.
 - [ ] Whatever is concluded, ADR 0003 gains a follow-up section: it is the document that claims a single continuous element solves background playback, and standalone mode is the production condition.
