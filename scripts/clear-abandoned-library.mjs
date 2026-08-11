@@ -1,5 +1,6 @@
 import { Redis } from '@upstash/redis';
-import { AwsClient } from 'aws4fetch';
+
+import { createR2Signer, requireEnv } from './r2-client.mjs';
 
 // One-time cutover script — see
 // .scratch/phase-1-11-object-storage-migration/issues/05-cut-over-and-measure.md ("The data
@@ -9,39 +10,20 @@ import { AwsClient } from 'aws4fetch';
 // yet, and the old Vercel store is left intact per that ticket, which this cannot address
 // anyway since ticket 02 replaced that client entirely.
 //
-// Duplicates the handful of key names and the R2 request-signing app/_lib/objectStorageClient.js
-// already defines, rather than importing that module: it uses ESM `export`/`import` syntax
-// that only Next's bundler can load, and this is a plain Node script run standalone — the
-// same tradeoff scripts/generate-voice-samples.mjs made for AVAILABLE_VOICES. Only get/put/
-// delete on known keys are needed here, so unlike the real client this has no reason to sign
-// a list request.
+// Duplicates the handful of key names app/_lib/objectStorageClient.js already defines, rather
+// than importing that module: it uses ESM `export`/`import` syntax that only Next's bundler
+// can load, and this is a plain Node script run standalone — the same tradeoff
+// scripts/generate-voice-samples.mjs made for AVAILABLE_VOICES. The signing is shared with the
+// other scripts here, in r2-client.mjs. Only get/put/delete on known keys are needed, so
+// unlike the real client this has no reason to sign a list request.
 //
 // Run with real credentials on the environment:
 //   npm run clear-abandoned-library
 
-const R2_REGION = 'auto';
-const r2Endpoint = (accountId) => `https://${accountId}.r2.cloudflarestorage.com`;
 const encodeKey = (pathname) => pathname.split('/').map(encodeURIComponent).join('/');
 
-// Same cap objectStorageClient.js sets, for the same reason: aws4fetch otherwise retries a
-// 5xx ten times, backing off to about half a minute held open per call.
-const RETRIES = 2;
-
-function requireEnv(name) {
-  const value = process.env[name];
-  if (!value) throw new Error(`Missing ${name}. Set it in the environment this runs with.`);
-  return value;
-}
-
 function r2Client() {
-  const base = `${r2Endpoint(requireEnv('R2_ACCOUNT_ID'))}/${requireEnv('R2_BUCKET')}`;
-  const aws = new AwsClient({
-    accessKeyId: requireEnv('R2_ACCESS_KEY_ID'),
-    secretAccessKey: requireEnv('R2_SECRET_ACCESS_KEY'),
-    service: 's3',
-    region: R2_REGION,
-    retries: RETRIES,
-  });
+  const { aws, base } = createR2Signer();
 
   return {
     async get(pathname) {

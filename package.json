@@ -15,6 +15,7 @@
     "check": "npm run lint && npm run format:check && npm run test",
     "generate-voice-samples": "node scripts/generate-voice-samples.mjs",
     "clear-abandoned-library": "node --env-file=.env.local scripts/clear-abandoned-library.mjs",
+    "inspect-r2": "node --env-file=.env.local scripts/inspect-r2.mjs",
     "prepare": "git rev-parse --git-dir > /dev/null 2>&1 && git config core.hooksPath .githooks || exit 0"
   },
   "dependencies": {
