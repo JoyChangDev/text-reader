@@ -4,7 +4,7 @@
 
 **Blocked by:** 05, 08
 
-**Status:** ready-for-human — **measured on 2026-08-11. Run A passed (691s), Run B failed (killed at 101s).** Both are recorded below and as runs 3 and 4 in [the spike log](../../hls-background-spike/spike-log.md). What this ticket set out to measure — whether a growing EVENT playlist keeps playing while backgrounded — **is answered yes**, in both runs. Run B's failure is the process being terminated underneath it, which is a different thing and is now [ticket 11](11-the-standalone-pwa-is-killed-while-backgrounded.md). This stays open only for the highlighting criterion, which Run B could not answer.
+**Status:** ready-for-human — **measured on 2026-08-11. Run A passed (691s, Safari tab); Run B was killed at 101s on its first attempt and then passed at 650s on a repeat** (standalone PWA). Runs 3 to 5 in [the spike log](../../hls-background-spike/spike-log.md). What this ticket set out to measure — whether a growing EVENT playlist keeps playing while backgrounded — **is answered yes**, in every window where anything was playing at all, including the one that ended in a process kill. That kill is a different thing, did not reproduce, and is parked as [ticket 11](11-the-standalone-pwa-is-killed-while-backgrounded.md). This stays open only for the highlighting criterion in the standalone case, which nobody has yet watched.
 
 > ~~**Do not run this until [ticket 08](08-playlist-routes-read-one-blob-per-chunk.md) lands.**~~ **Unblocked 2026-08-09** — ticket 08's stage 2 shipped and the polled path no longer reads storage at all when the Chunk index answers. The warning below is kept because it describes a failure mode that is still worth recognising, not because it still applies.
 >
@@ -16,7 +16,7 @@ Test the real app, not a static harness: upload a Book long enough that generati
 
 - [x] A Book is uploaded that is long enough for playback to reach the end of the generated region at least twice during the test (verify beforehand that the look-ahead value chosen in ticket 04 does not simply outrun it). _4,962 Chunks against `LOOKAHEAD = 10`. It did not outrun it: 11 Chunks were generated before the run and 55 by the end, so playback stayed inside a region the look-ahead was still extending._
 - [x] Run A — Safari tab: play, background the app for five minutes, return. Record wall-clock elapsed against `audio.currentTime`, the same ratio the spike used. _**691s backgrounded, still playing on return**, `audioCurrentTime: 999.09` and advancing between reads. See below._
-- [x] Run B — standalone PWA, launched from the home screen: same procedure. This is the production condition and must be recorded separately; run A passing is not sufficient. _**Failed: the process was terminated 101s into backgrounding**, taking audio with it. Run A passing was indeed not sufficient, exactly as this criterion anticipated. See "Run B, measured" below._
+- [x] Run B — standalone PWA, launched from the home screen: same procedure. This is the production condition and must be recorded separately; run A passing is not sufficient. _**Passed on repeat: 650s backgrounded, still playing, 30 Chunks generated while hidden.** The first attempt was killed at 101s — a real event that did not reproduce and is parked as [ticket 11](11-the-standalone-pwa-is-killed-while-backgrounded.md). Recording the two separately, rather than reporting whichever came last, is the whole point of this criterion. See "Run B, measured" below._
 - [x] Both runs cross at least one playlist-growth boundary while backgrounded, confirmed by checking that generation was still in progress at the time (not merely that the Book was long). _Run A: **31 Chunks generated after the screen was locked** (62 R2 objects after `12:43:03Z`). Run B: **5 Chunks after the lock** (10 objects), plus playlist polls ~42s apart, right up until the process died — so the boundary was crossed in both, and Run B's failure is not at one._
 - [ ] Sentence highlighting is correct on return in both runs, with no visible correction or jump — the ADR's claim that `activeCues` is browser-maintained ground truth, verified in the real app rather than the spike harness. _Run A: correct throughout, Listener-reported, and independently corroborated — see "The look-ahead is a second witness". **Run B cannot answer this**: there is no "on return" when the page that would have been returned to no longer exists._
 - [x] Results are appended to [.scratch/hls-background-spike/spike-log.md](../../hls-background-spike/spike-log.md) alongside the original spike runs, so the VOD and EVENT measurements sit together. _Runs 3 and 4, plus the 2026-08-09 failure as their contrast._
@@ -70,6 +70,13 @@ stack consumed it, and the process was then reclaimed out from under all of it.
 
 So the answer to the question in this ticket's title is **yes, in both runs**. The EVENT
 playlist is not what fails.
+
+**Repeated 21 minutes later, unchanged, it survived 650s** with 30 Chunks generated while hidden
+— run 5 in the spike log. Same device, same Book, same standalone context, same request cadence.
+The 101s kill is therefore situational rather than a property of standalone mode, which is why
+[ticket 11](11-the-standalone-pwa-is-killed-while-backgrounded.md) parks instead of proceeding
+to a code change. Both attempts are recorded because reporting only the later one would turn a
+real event into a rounding error.
 
 ### What separates the failing run from the two passing ones
 

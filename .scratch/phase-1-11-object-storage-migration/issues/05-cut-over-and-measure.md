@@ -29,7 +29,7 @@ While in the dashboards, take Upstash's command count over the same window: [tic
 - [x] The deployed app reads and writes R2, with the segment origin, R2 credentials and Redis credentials all set in the deployment environment. _Proven by the writes themselves on 2026-08-10: 42 Chunks stored as audio + metadata pairs, `SEGMENT_ORIGIN` necessarily set because `put` resolves it before writing either object, and the Redis index populated to match._
 - [x] The Library index blob and the Redis Chunk index are cleared of the abandoned Books; the Library shows no Book whose audio is unreachable. _Cleared 2026-08-10; both halves turned out to be already empty rather than merely cleared, see "What the clearing actually found". Briefly false again when the 411 below left a half-written Book in the index — re-run after that fix deployed, and the index now names exactly one Book, whose chunks blob and audio both resolve. Note that this says nothing about audio no Book claims: see the orphans in "The first measurements"._
 - [x] A Book uploads, narrates, and plays from the new store, on a physical iPhone. _2026-08-11: a 4,962-Chunk Book uploaded, narrated to 55 Chunks, and played from R2 via the Worker. The transcript rendering is also the 411 fix's proof — see "The device session" below._
-- [x] **Playback crosses at least two segment boundaries with the app backgrounded**, which is the property phases 1.8 to 1.10 exist for and the one a new serving path could quietly break. _**~40 boundaries, 691s backgrounded, still playing on return** — in a Safari tab. The standalone PWA crossed its boundaries too, generating 5 Chunks while hidden, but its process was killed at 101s; that is not a failure of the serving path and is now phase 1.10 [ticket 11](../../phase-1-10-continuous-hls-playback/issues/11-the-standalone-pwa-is-killed-while-backgrounded.md). Both runs in phase 1.10 [ticket 06](../../phase-1-10-continuous-hls-playback/issues/06-verify-growing-playlist-in-background.md)._
+- [x] **Playback crosses at least two segment boundaries with the app backgrounded**, which is the property phases 1.8 to 1.10 exist for and the one a new serving path could quietly break. _**~30 boundaries, 691s backgrounded, still playing on return** in a Safari tab, and **650s in the standalone PWA** with 30 Chunks generated while hidden. One earlier PWA attempt had its process killed at 101s; it did not reproduce and is parked as phase 1.10 [ticket 11](../../phase-1-10-continuous-hls-playback/issues/11-the-standalone-pwa-is-killed-while-backgrounded.md). All runs in phase 1.10 [ticket 06](../../phase-1-10-continuous-hls-playback/issues/06-verify-growing-playlist-in-background.md)._
 - [ ] Seeking to a Sentence inside the currently-playing Chunk works, exercising the Worker's range handling against a real media element rather than against a hand-made request.
 - [ ] The resume position survives closing and reopening the Book, and survives on a second device.
 - [x] **Measured: Class A operations per generated Chunk**, recorded here with the Chunk count it was measured over. Expected 2. **Measured 2.0, over 20 Chunks** — 40 objects written, counted directly rather than read off the dashboard, which had not caught up. See "The first measurements".
@@ -429,30 +429,29 @@ rendered, which is the 411 fix holding in the deployed runtime — the `library/
 chunks.json` object it used to fail to write is present at 1.6 MB. **Three** listening sessions
 followed, and they did not all fail the same way — which is the part worth being careful about:
 
-|                               | 12:00, PWA           | 12:40, Safari tab       | 13:04, PWA                            |
-| ----------------------------- | -------------------- | ----------------------- | ------------------------------------- |
-| backgrounded                  | stopped on lock      | 691s, **still playing** | **101s, then the process was killed** |
-| Sentence highlighting         | stuck, wrong         | correct throughout      | n/a — nothing survived to return to   |
-| Chunks generated while hidden | **none**             | 31                      | 5, right up to the kill               |
-| position saved while hidden   | **none** — 0/0 after | per Sentence            | per Sentence, until the kill          |
+|                               | 12:00, PWA           | 12:40, Safari tab       | 13:04, PWA                            | 13:28, PWA              |
+| ----------------------------- | -------------------- | ----------------------- | ------------------------------------- | ----------------------- |
+| backgrounded                  | stopped on lock      | 691s, **still playing** | **101s, then the process was killed** | 650s, **still playing** |
+| Sentence highlighting         | stuck, wrong         | correct throughout      | n/a — nothing survived to return to   | not observed            |
+| Chunks generated while hidden | **none**             | 31                      | 5, right up to the kill               | 30                      |
+| position saved while hidden   | **none** — 0/0 after | per Sentence            | per Sentence, until the kill          | per Sentence            |
 
-The last two columns are phase 1.10 ticket 06's Run A and Run B, and they are the ones with
-complete instrumentation. **The first column is not explained by either**, and is left open
-here rather than folded into them: in the 12:00 session the position never left Chunk 0 and the
-look-ahead never went past its initial 11 Chunks, whereas the 13:04 PWA run advanced normally
-until it was killed. Whatever happened at 12:00, it was not a process reclaimed 101 seconds
-in. There is no diagnostic log for it — see "Two instrument lessons" below for why — so it may
-simply have to be reproduced before it can be diagnosed.
+The last three columns are phase 1.10 ticket 06's Run A and its two Run B attempts, and they are
+the ones with complete instrumentation. **The first column is not explained by any of them**, and
+is left open here rather than folded into them: in the 12:00 session the position never left
+Chunk 0 and the look-ahead never went past its initial 11 Chunks, whereas both PWA runs advanced
+normally. Whatever happened at 12:00, it was not a process reclaimed 101 seconds in. There is no
+diagnostic log for it — see "Two instrument lessons" below for why — so it may simply have to be
+reproduced before it can be diagnosed.
 
 The full numbers are in phase 1.10 [ticket 06](../../phase-1-10-continuous-hls-playback/issues/06-verify-growing-playlist-in-background.md)
 and [the spike log](../../hls-background-spike/spike-log.md); this ticket only needs the
-conclusion, which is that **the serving path this phase built is not what fails**. In the PWA
-run the playlist was being polled on schedule, generation was ahead of the playhead, and R2 was
-still being written to seconds before the process stopped existing. That failure is now phase
-1.10 [ticket 11](../../phase-1-10-continuous-hls-playback/issues/11-the-standalone-pwa-is-killed-while-backgrounded.md),
-and it is a `needs-info` measurement rather than a fix, because three runs varying two things at
-once cannot say whether standalone is stricter or whether background network I/O is what gets a
-process reclaimed.
+conclusion, which is that **the serving path this phase built is not what fails**. In the run
+that was killed, the playlist was being polled on schedule, generation was ahead of the playhead,
+and R2 was still being written to seconds before the process stopped existing — and a repeat 21
+minutes later, making identical requests, ran 650s without incident. That leaves the kill
+unexplained but unreproduced, parked as phase
+1.10 [ticket 11](../../phase-1-10-continuous-hls-playback/issues/11-the-standalone-pwa-is-killed-while-backgrounded.md).
 
 **The serving path was checked end to end and is healthy**, which is what made the split
 above readable rather than mysterious. Every one of these was measured against the live

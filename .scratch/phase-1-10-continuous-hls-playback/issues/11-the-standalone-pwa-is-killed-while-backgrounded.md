@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** needs-info — **this rests on a single observation.** The next step is to repeat it unchanged, not to explain it. See "Step 1".
+**Status:** needs-info, parked — **step 1 was run on 2026-08-11 and the kill did not reproduce.** A repeat in the same context 21 minutes later survived 650s, and a third window survived 1214s. One sighting, two non-reproductions: this is situational, not systematic, and step 2 is not worth a deployment on that basis. Reopen if it is seen again; what to record is under "If it happens again".
 
 Opened by [ticket 06](06-verify-growing-playlist-in-background.md), whose last criterion says a
 failing run gets its mitigation re-planned as its own ticket rather than papered over with a
@@ -76,22 +76,49 @@ at once (context, and whether the page does anything), so these three runs **can
 "standalone is stricter" from "network I/O while hidden is what gets you reclaimed". Do not
 write the conclusion into a fix before separating them.
 
-## Step 1 — find out whether it reproduces at all
+> **Overtaken by run 5.** A fourth row belongs in that table — standalone PWA, growing EVENT,
+> ~1 request every 2–6s, **650s, passed** — sitting in the same cell as run B with the opposite
+> outcome. Two runs identical in every variable this ticket was trying to separate, disagreeing,
+> is not a variable problem. It means the effect is not stable enough to attribute to anything
+> yet, and it retires the background-I/O hypothesis directly: the run that survived made exactly
+> the same requests at the same cadence as the one that died.
+
+## Step 1 — did it reproduce? No. Answered 2026-08-11
 
 **One process kill is not a phenomenon.** iOS reclaims backgrounded processes against memory
 pressure, battery level, Low Power Mode and whatever else is resident, none of which were
-controlled or recorded. 101 seconds could be a property of this app or a property of that
-minute. Nothing below is worth doing until that is settled.
+controlled or recorded when run 4 died. So run B was repeated unchanged — standalone PWA, same
+Book, same device, same afternoon, battery 34%, Low Power Mode off.
 
-Repeat Run B **unchanged** two or three times: standalone PWA, same Book, play, lock, wait past
-ten minutes or until the audio stops. Record the survival time each run, plus battery percentage
-and whether Low Power Mode is on — the two confounders that are free to note and impossible to
-recover afterwards.
+| window              | backgrounded | outcome                                                       |
+| ------------------- | ------------ | ------------------------------------------------------------- |
+| 13:05:43 → 13:07:35 | 101s         | **killed**                                                    |
+| 13:07:43 → 13:27:57 | 1214s        | alive, playback stopped (not a run — nothing generated)       |
+| 13:28:18 → 13:39:08 | **650s**     | **alive and still playing**, 30 Chunks generated while hidden |
 
-- Consistently ~100s → a phenomenon, and step 2 is worth its cost.
-- One run past ~600s → the observed kill was situational. Downgrade this ticket and say so;
-  the Listener's real complaint would then be intermittent rather than systematic, which is a
-  different ticket with a different shape.
+**It did not reproduce.** Full numbers as run 5 in [the spike log](../../hls-background-spike/spike-log.md).
+
+So the kill is **situational, not systematic**, and the table below no longer describes a
+standing property of the standalone context — it describes one minute in which a process was
+reclaimed. Step 2 is not worth a code change and a deployment on that basis, and this ticket
+parks rather than proceeding.
+
+**What this does and does not say.** It does not say the kill was imaginary: the log's 111-second
+silence, the absent `pagehide`, and the fresh document load are all real, and audio really did
+stop while the screen was locked. It says only that whatever caused it was not present 21
+minutes later under conditions we know of no difference in.
+
+### If it happens again
+
+The evidence that would turn this back into a phenomenon is a second sighting with enough
+context to correlate. Record, at the time: battery percentage, Low Power Mode, how long the app
+had been running, what else was open, and whether anything heavy had just happened on the device.
+Two sightings sharing a condition is worth more than ten more clean runs.
+
+Worth noting for whoever picks this up: **the app cannot tell this happened.** A killed process
+leaves no trace in its own log beyond the gap, and the Listener experiences it as silence. If
+sightings accumulate, "make a process kill visible and recoverable" is a better-shaped ticket
+than "stop iOS reclaiming us", and it does not require winning an argument with the platform.
 
 ## Step 2 — only then, separate the two variables
 
@@ -139,9 +166,9 @@ which the wrapper decision should be informed by.
 
 ## Acceptance criteria
 
-- [ ] **Step 1: Run B is repeated at least twice unchanged**, and each run's survival time is recorded in [the spike log](../../hls-background-spike/spike-log.md) with the same shape as runs 1–4, along with battery level and Low Power Mode.
-- [ ] The kill is established as reproducible or as situational, **and this ticket's status follows that answer** rather than staying open on one observation.
-- [ ] Step 2 is run only if step 1 says there is something to separate, and its instrumentation is reverted afterwards rather than shipped.
-- [ ] The result names which of the two variables is responsible, or says explicitly that it could not separate them and why.
-- [ ] If background network I/O is implicated, the specific callers are quantified — one `PATCH` per Sentence is the loudest, and its cadence is a deliberate choice made in ticket 10 that would be re-opened rather than assumed.
+- [x] **Step 1: Run B is repeated at least twice unchanged**, and each run's survival time is recorded in [the spike log](../../hls-background-spike/spike-log.md) with the same shape as runs 1–4, along with battery level and Low Power Mode. _Run 5, plus the non-run window between them; battery 34%, Low Power Mode off._
+- [x] The kill is established as reproducible or as situational, **and this ticket's status follows that answer** rather than staying open on one observation. _Situational — 650s and 1214s against one 101s. Status is now parked._
+- [ ] Step 2 is run only if step 1 says there is something to separate, and its instrumentation is reverted afterwards rather than shipped. _Not run, and correctly so: step 1 says there is nothing yet to separate._
+- [ ] The result names which of the two variables is responsible, or says explicitly that it could not separate them and why. _Neither. The failing observation is unreproduced, so there is no stable effect to attribute to either variable._
+- [ ] If background network I/O is implicated, the specific callers are quantified — one `PATCH` per Sentence is the loudest, and its cadence is a deliberate choice made in ticket 10 that would be re-opened rather than assumed. _Not implicated; the run that survived 650s made exactly the same requests as the one that died._
 - [ ] Whatever is concluded, ADR 0003 gains a follow-up section: it is the document that claims a single continuous element solves background playback, and standalone mode is the production condition.

@@ -79,9 +79,13 @@ Hidden 12:43:03 → visible 12:54:34: **691s backgrounded, still playing on retu
 999.1117, so the element was progressing at the moment it was read rather than merely
 holding a number.
 
-Playback started ~12:42 at a Listener-set speed of ~1.3×, which is what reconciles 754s of
-wall clock against 999s of media time. Segment durations average 21.6s over the run, so
-`t=999s` is around Chunk 46 — **roughly forty segment boundaries crossed unattended.**
+**The ratio is not recoverable for this run**, because `reconcile` fires only on foregrounding
+and nothing captured `currentTime` at the moment of locking. `t=999s` is the position in the
+playlist, not the distance travelled. An earlier draft of this entry inferred a ~1.3× playback
+speed from it by assuming playback began at `t=0`; run 5 measures the speed directly at **1.0×**,
+so that inference was wrong and is withdrawn. Taking 1.0×, the 691s backgrounded is ~691s of
+media at 21.6s average segment duration — **roughly thirty segment boundaries crossed
+unattended.**
 
 **Generation was still in progress throughout, which is the part the spike could not
 test.** R2 gained **62 objects (31 Chunks) after the screen was locked** — the Book went
@@ -163,6 +167,42 @@ run 2's page was inert while runs 3 and 4 make continuous network requests.
 So the hypothesis the next run should attack: **a standalone PWA that keeps doing network I/O
 while backgrounded is reclaimed far sooner than an inert one, and a Safari tab is more
 tolerant of the same behaviour.** See phase 1.10 ticket 11.
+
+## Run 5 — standalone PWA again, and run 4 does not reproduce — 2026-08-11
+
+Ticket 11 step 1: repeat run 4 unchanged and find out whether the 101s kill is a property of
+the app or of that minute. Battery 34%, Low Power Mode off.
+
+```
+13:28:18.805Z  visibilitychange {"visibilityState":"hidden"}
+13:39:08.918Z  focus / reconcile {"audioPaused":false,"audioCurrentTime":1897.000872622962}
+13:39:08.922Z  focus / reconcile {"audioPaused":false,"audioCurrentTime":1897.0033665814167}
+13:39:08.924Z  visibilitychange visible / reconcile {"audioPaused":false,"audioCurrentTime":1897.0058601111223}
+```
+
+Hidden 13:28:18 → visible 13:39:08: **650s backgrounded, still playing**, `audioPaused: false`
+and advancing across the three reads. **R2 gained 60 objects (30 Chunks) in that window**, so
+generation ran the whole time and the playlist grew throughout.
+
+**Run 4 did not reproduce.** Same device, same Book, same standalone PWA, same afternoon, 21
+minutes later: 650s instead of 101s.
+
+**This run also fixes the playback speed for runs 3–5.** `currentTime` was 1239.725 at 13:27:57
+and 1897.006 at 13:39:08 — 657s of media against ~668s of wall clock, so **1.0×**, not the 1.3×
+run 3's entry inferred. That inference assumed playback began at `t=0`; it did not, because the
+session resumed from a stored position.
+
+### A third window, which is not a run
+
+Between runs 4 and 5 the log shows `hidden 13:07:43` → `visible 13:27:57` with
+`audioPaused: true` and `audioCurrentTime: 1239.725`. That is 1214s backgrounded **with the page
+still alive** — `reconcile` fired, and there is no intervening `mediaSessionRegistration`, so no
+new mount and no kill.
+
+It is not a playback run: R2 gained **zero** objects between 13:07:43 and 13:28:18 (the `--since`
+counts for both moments are identical at 60), so nothing was generating and nothing was playing.
+Playback was stopped for the whole window. It is recorded only because it is a third consecutive
+20 minutes in which the standalone PWA was **not** reclaimed.
 
 ## Reading notes
 
