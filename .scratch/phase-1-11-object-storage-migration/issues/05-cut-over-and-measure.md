@@ -34,7 +34,7 @@ While in the dashboards, take Upstash's command count over the same window: [tic
 - [ ] The resume position survives closing and reopening the Book, and survives on a second device.
 - [x] **Measured: Class A operations per generated Chunk**, recorded here with the Chunk count it was measured over. Expected 2. **Measured 2.0, over 20 Chunks** — 40 objects written, counted directly rather than read off the dashboard, which had not caught up. See "The first measurements".
 - [ ] **Measured: Upstash commands per generated Chunk**, recorded here. Expected 2 after ticket 04. _**47 commands over 20 Chunks = ≤ 2.35**, an upper bound rather than the figure, because the window carried instrumentation traffic that cannot be separated after the fact. It rules out 3 decisively and is consistent with 2. Left open for one clean run — see "The first measurements" for what that needs._
-- [ ] The capacity indicator reports a plausible percentage against 10 GB.
+- [x] The capacity indicator reports a plausible percentage against 10 GB. _2026-08-11: `/api/blob-usage` answers `usedBytes: 15663760, quotaBytes: 10000000000, percent: 0.1566376`, and `inspect-r2` independently sums the same bucket to 15.66 MB. The indicator displays **0%**, which is `Math.round(0.157)` and is correct. **`quotaBytes` also confirms ticket 04's change is live in production** — the pre-migration value was Vercel Blob's 1 GiB, against which these same bytes would have read 1.5% rather than 0.16%._
 - [x] Deleting a Book removes its audio from R2, verified by listing the prefix afterwards — this is the path ticket 03's pagination fix exists for. _2026-08-11, deleting the 42-Chunk `84ee9c96…`: the prefix lists **0 objects**, its `chunks.json` is gone, `library/index.json` was rewritten 17,001 → 10,073 B, and `library:resume` dropped it. The bucket went 277 → 192 objects, exactly the 85 that Book owned. **Pagination is still untested** — 84 objects is a twelfth of a page; see the note under step 10 of the runbook. **And the Redis Chunk index was not cleaned**, which is [ticket 13](../../phase-1-10-continuous-hls-playback/issues/13-deleting-a-book-leaves-its-chunk-index-in-redis.md)._
 - [x] Phase 1.10's [ticket 08](../../phase-1-10-continuous-hls-playback/issues/08-playlist-routes-read-one-blob-per-chunk.md) runbook is run against R2, and its two open criteria are closed or their real numbers recorded. _Run 2026-08-11. Rate limiting: **closed** — the two device runs are a listening session, 691s and 650s with the playlist polled throughout and no 403. Response time: **recorded, not closed** — 1.32s warm, 2.4s cold, which beats the 5.4s it set out to fix but is not "well under a second"; ~0.6s of it is a 1.6 MB read the route does not need, now [ticket 12](../../phase-1-10-continuous-hls-playback/issues/12-the-playlist-route-reads-the-whole-book-per-poll.md). All four of its step-8 items are closed._
 - [ ] Phase 1.10 tickets 04 and 06 are re-triaged now that a live store is available to them.
@@ -379,10 +379,18 @@ now says so out loud (ticket 06).
    doing — it is the flush point — but a pass here does not tell you the snapshot was written,
    and only a Redis outage would.
 
-9. **The capacity indicator.** Home page → 查看用量. At 9.62 MB it will round to **0%**, so the
-   percentage on its own cannot be judged plausible or otherwise — read `usedBytes` and
-   `quotaBytes` out of `/api/blob-usage` instead and check them against `npm run inspect-r2`'s
-   byte total and its `10.00 GB`. Those two agreeing is the criterion; the rendered bar is not.
+9. **The capacity indicator.** Home page → 查看用量. It will round to **0%**, so the percentage on
+   its own cannot be judged plausible or otherwise — read `usedBytes` and `quotaBytes` out of
+   `/api/blob-usage` instead and check them against `npm run inspect-r2`'s byte total and its
+   `10.00 GB`. Those two agreeing is the criterion; the rendered bar is not. Note that **0% is
+   what this will read until roughly 50 MB**, since anything under 0.5% rounds down — the
+   indicator is a quota warning, and there is nothing yet to warn about.
+
+   **Do not press 立即清理 while testing.** It replaces 查看用量 once usage has been read, and runs
+   the retention sweep — Chunk audio older than 7 days, `library/` and `pronunciation-reports/`
+   excluded. On a Book narrated this week it is a no-op, which is exactly why it is easy to
+   press without noticing what it would do to an older one.
+
 10. **Delete a Book from the Library**, then `npm run inspect-r2 -- <bookId>/` — expect
     `0 object(s)` — and `npm run inspect-r2 -- library/`, where that Book's `chunks.json` should
     be gone too.
