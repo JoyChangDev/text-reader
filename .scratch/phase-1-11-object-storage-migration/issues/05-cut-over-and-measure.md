@@ -30,7 +30,7 @@ While in the dashboards, take Upstash's command count over the same window: [tic
 - [x] The Library index blob and the Redis Chunk index are cleared of the abandoned Books; the Library shows no Book whose audio is unreachable. _Cleared 2026-08-10; both halves turned out to be already empty rather than merely cleared, see "What the clearing actually found". Briefly false again when the 411 below left a half-written Book in the index — re-run after that fix deployed, and the index now names exactly one Book, whose chunks blob and audio both resolve. Note that this says nothing about audio no Book claims: see the orphans in "The first measurements"._
 - [x] A Book uploads, narrates, and plays from the new store, on a physical iPhone. _2026-08-11: a 4,962-Chunk Book uploaded, narrated to 55 Chunks, and played from R2 via the Worker. The transcript rendering is also the 411 fix's proof — see "The device session" below._
 - [x] **Playback crosses at least two segment boundaries with the app backgrounded**, which is the property phases 1.8 to 1.10 exist for and the one a new serving path could quietly break. _**~30 boundaries, 691s backgrounded, still playing on return** in a Safari tab, and **650s in the standalone PWA** with 30 Chunks generated while hidden. One earlier PWA attempt had its process killed at 101s; it did not reproduce and is parked as phase 1.10 [ticket 11](../../phase-1-10-continuous-hls-playback/issues/11-the-standalone-pwa-is-killed-while-backgrounded.md). All runs in phase 1.10 [ticket 06](../../phase-1-10-continuous-hls-playback/issues/06-verify-growing-playlist-in-background.md)._
-- [ ] Seeking to a Sentence inside the currently-playing Chunk works, exercising the Worker's range handling against a real media element rather than against a hand-made request.
+- [ ] Seeking to a Sentence inside the Chunk the playhead is in works — ~~exercising the Worker's range handling against a real media element rather than against a hand-made request~~. _The stated rationale is wrong and is replaced: **what this exercises is whether a cue's `startTime` matches the audio**, not the Worker. See "What in-Chunk seeking actually tests" below._
 - [ ] The resume position survives closing and reopening the Book, and survives on a second device.
 - [x] **Measured: Class A operations per generated Chunk**, recorded here with the Chunk count it was measured over. Expected 2. **Measured 2.0, over 20 Chunks** — 40 objects written, counted directly rather than read off the dashboard, which had not caught up. See "The first measurements".
 - [ ] **Measured: Upstash commands per generated Chunk**, recorded here. Expected 2 after ticket 04. _**47 commands over 20 Chunks = ≤ 2.35**, an upper bound rather than the figure, because the window carried instrumentation traffic that cannot be separated after the fact. It rules out 3 decisively and is consistent with 2. Left open for one clean run — see "The first measurements" for what that needs._
@@ -355,11 +355,14 @@ now says so out loud (ticket 06).
    generated during the listen, and nothing should have 403'd. A count rising with the polls
    instead means the Chunk index is missing on every one of them.
 
-7. **Seek inside the current Chunk.** Tap a Sentence further down the Chunk that is playing;
-   audio should jump there and the highlighting follow. This is the Worker's range handling
-   against a real media element — and the highlighting following correctly is ticket 08's last
-   step-8 item, since those Sentence spans are now derived at generation time rather than per
-   request, so a systematic offset would be new.
+7. **Seek inside the current Chunk.** **Pause first** — Sentence clicks are disabled while
+   playing. The Chunk the playhead is in is the paragraph containing the highlighted Sentence,
+   since one paragraph is one Chunk. Tap a later Sentence in that same paragraph, then play: the
+   very first word you hear should be that Sentence's first word. Half a Sentence out means the
+   cue times are offset, which is a new ticket. This is also ticket 08's last step-8 item —
+   those Sentence spans are now derived at generation time rather than per request, so a
+   systematic offset would be new. It does **not** test the Worker's range handling; see "What
+   in-Chunk seeking actually tests" below for why.
 8. **Resume, then resume on a second device.** Note the Chunk and Sentence, close the app fully,
    reopen: same place. Then open the same Book on a second device — another iOS device plays it,
    and a desktop browser is still enough to check the _position_, since it will land on the
@@ -490,6 +493,34 @@ the failure legible; the entries are timestamped, so there is nothing to gain by
 indicator, and the deletion check. The standalone-PWA question has moved out of this ticket
 into phase 1.10 [ticket 11](../../phase-1-10-continuous-hls-playback/issues/11-the-standalone-pwa-is-killed-while-backgrounded.md),
 which owns both the 13:04 kill and the unexplained 12:00 session.
+
+### What in-Chunk seeking actually tests
+
+The criterion above was written expecting a Sentence-level seek to make the media element ask
+the Worker for a byte range, and to be the first time anything did so for real. **It does not.**
+HLS fetches a segment whole, so the Chunk the playhead is inside is already fully buffered;
+seeking within it touches no network at all. The Worker's range handling was settled separately
+and by hand — `Range: bytes=0-1023` answers `206` with `Content-Range: bytes 0-1023/219744`,
+recorded under "The device session".
+
+What the seek does exercise is the only thing in this system that **no server-side check can
+reach**: whether a cue's `startTime` is where that Sentence actually begins in the audio. Those
+spans are derived from edge-tts word boundaries at generation time and stored in Redis, and
+every check available from outside agrees they are self-consistent — durations exact to 0.000s,
+cue ordinals aligned with the transcript's. None of that would notice a systematic offset. Only
+a Listener tapping a Sentence and hearing where the voice starts can.
+
+It also covers two smaller things worth having: that the highlight re-syncs after a manual seek
+rather than being dragged back by the `pendingSeekRef` guard, and that an explicit tap persists
+the position immediately rather than through the debounce ([useBookPlayer.js](../../../app/_lib/useBookPlayer.js)).
+
+**Sentence clicks are disabled during playback** — `clickDisabled = isPlaying || reportMode` in
+[TranscriptView.jsx](../../../app/_components/TranscriptView.jsx) — so the test is pause, tap,
+play, not tap-while-playing. Worth knowing before trying it and concluding the tap is broken.
+
+**One paragraph on screen is one Chunk.** `TranscriptView` renders `chunks.map` as one `<p>`
+each, so Chunk boundaries are already visible without any marker; the Chunk the playhead is in
+is the paragraph containing the highlighted Sentence.
 
 ### If the measurement disagrees
 
