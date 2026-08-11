@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02, 03, 04
 
-**Status:** ready-for-human — needs the deployment, a physical device, and someone watching two dashboards.
+**Status:** ready-for-human — needs the deployment, a physical device, and someone watching two dashboards. The remaining criteria are written up step by step in "The runbook for the device session" below, and the bucket-side checks have an instrument (`npm run inspect-r2`) rather than a dashboard that lags. A first device session on 2026-08-11 closed two criteria and produced both runs phase 1.10 [ticket 06](../../phase-1-10-continuous-hls-playback/issues/06-verify-growing-playlist-in-background.md) was waiting for, one of which opened [ticket 11](../../phase-1-10-continuous-hls-playback/issues/11-the-standalone-pwa-is-killed-while-backgrounded.md); see "The device session" below, including what it got wrong.
 
 This is the ticket that turns the phase's central claim from arithmetic into an observation. Everything before it was written against mocked `fetch`; nothing has yet stored a byte in R2 from the app.
 
@@ -28,8 +28,8 @@ While in the dashboards, take Upstash's command count over the same window: [tic
 
 - [x] The deployed app reads and writes R2, with the segment origin, R2 credentials and Redis credentials all set in the deployment environment. _Proven by the writes themselves on 2026-08-10: 42 Chunks stored as audio + metadata pairs, `SEGMENT_ORIGIN` necessarily set because `put` resolves it before writing either object, and the Redis index populated to match._
 - [x] The Library index blob and the Redis Chunk index are cleared of the abandoned Books; the Library shows no Book whose audio is unreachable. _Cleared 2026-08-10; both halves turned out to be already empty rather than merely cleared, see "What the clearing actually found". Briefly false again when the 411 below left a half-written Book in the index — re-run after that fix deployed, and the index now names exactly one Book, whose chunks blob and audio both resolve. Note that this says nothing about audio no Book claims: see the orphans in "The first measurements"._
-- [ ] A Book uploads, narrates, and plays from the new store, on a physical iPhone.
-- [ ] **Playback crosses at least two segment boundaries with the app backgrounded**, which is the property phases 1.8 to 1.10 exist for and the one a new serving path could quietly break.
+- [x] A Book uploads, narrates, and plays from the new store, on a physical iPhone. _2026-08-11: a 4,962-Chunk Book uploaded, narrated to 55 Chunks, and played from R2 via the Worker. The transcript rendering is also the 411 fix's proof — see "The device session" below._
+- [x] **Playback crosses at least two segment boundaries with the app backgrounded**, which is the property phases 1.8 to 1.10 exist for and the one a new serving path could quietly break. _**~40 boundaries, 691s backgrounded, still playing on return** — in a Safari tab. The standalone PWA crossed its boundaries too, generating 5 Chunks while hidden, but its process was killed at 101s; that is not a failure of the serving path and is now phase 1.10 [ticket 11](../../phase-1-10-continuous-hls-playback/issues/11-the-standalone-pwa-is-killed-while-backgrounded.md). Both runs in phase 1.10 [ticket 06](../../phase-1-10-continuous-hls-playback/issues/06-verify-growing-playlist-in-background.md)._
 - [ ] Seeking to a Sentence inside the currently-playing Chunk works, exercising the Worker's range handling against a real media element rather than against a hand-made request.
 - [ ] The resume position survives closing and reopening the Book, and survives on a second device.
 - [x] **Measured: Class A operations per generated Chunk**, recorded here with the Chunk count it was measured over. Expected 2. **Measured 2.0, over 20 Chunks** — 40 objects written, counted directly rather than read off the dashboard, which had not caught up. See "The first measurements".
@@ -260,6 +260,237 @@ session: narration and playback on a physical iPhone, the two backgrounded segme
 in-Chunk seeking, resume across devices, the capacity indicator, and the deletion check. Note
 that the desktop browser cannot stand in for any of them — see the player note in
 [ticket 06](06-a-failed-write-reads-as-an-empty-book.md).
+
+### An instrument for the bucket — `npm run inspect-r2`
+
+Everything left on the checklist is checked by looking at what is actually in R2, and the
+dashboard is the wrong place to look: it is an aggregate that lags, which is how the first
+measurement read 78 Class A before a run and 78 after while the bucket had demonstrably gained
+40 objects. [`scripts/inspect-r2.mjs`](../../../scripts/inspect-r2.mjs) lists the bucket and
+summarises it by top-level prefix — one group per Book — with each group's byte total and the
+window it was written in. It writes nothing.
+
+```bash
+npm run inspect-r2                                  # the whole bucket, by prefix
+npm run inspect-r2 -- <bookId>/                     # one Book — 0 objects is a clean delete
+npm run inspect-r2 -- --since 2026-08-11T09:00:00Z  # what a measured run wrote
+npm run inspect-r2 -- library/ --keys                # every key, with size and write time
+```
+
+It pages to the end of the listing rather than stopping at S3's 1,000-key cap (a 2,000-Chunk
+Book stores nearly 4,000 objects), and refuses a body that is not a listing at all rather than
+reporting it as an empty bucket — which is the answer that would otherwise make an HTML error
+page look exactly like a successful delete. The summarising half is
+[`scripts/r2-summary.mjs`](../../../scripts/r2-summary.mjs) and has tests; the cut-down XML
+parse is duplicated from the app for the reason `clear-abandoned-library.mjs` gives, and the
+signing that script already had moved to [`scripts/r2-client.mjs`](../../../scripts/r2-client.mjs)
+rather than being copied a second time.
+
+**A page of the listing is itself a Class A operation.** Take the baseline with this _before_
+reading the dashboard figure, not after.
+
+**The bucket as it stands, 2026-08-11** — one run of the script:
+
+```
+Bucket text-reader, prefix: (everything)
+92 object(s), 9.62 MB — 0.10% of 10.00 GB
+  84ee9c96-c866-43df-bc98-0516b67def77/    84    7.82 MB   17:25:11Z .. 17:42:29Z
+  library/                                  2    1.36 MB   17:25:03Z .. 17:25:04Z
+  demo-book/                                6  435.02 KB   06:38:33Z .. 06:38:46Z
+```
+
+Three things worth reading off it before the device session. The Book's 84 objects are the 42
+Chunks of "The first measurements" as an audio+metadata pair each, so nothing has been written
+since. `library/` carries the index _and_ a 1.35 MB `chunks.json`, which is the 411 fix
+holding in the deployed runtime — the object that never got written before. And the write
+timestamps are 2026-08-09, not the 08-10 recorded above; the clock times match exactly, so it
+is the dates in this ticket that drifted, not the objects.
+
+### The runbook for the device session
+
+Every remaining criterion, in an order that closes as many as possible in one sitting. The two
+measurements are last on purpose: they need a quiet database, and the device work is what makes
+it noisy.
+
+**At the laptop, before picking up the phone.**
+
+1. **Confirm the deployment's environment**, Production specifically. `SEGMENT_ORIGIN` is now
+   present in the local `.env.local` (it was absent when the section above was written), but
+   local presence says nothing about Production, and `vercel env pull` defaults to Development.
+   It is the one variable whose misconfiguration the app cannot detect —
+   [segmentOrigin.js](../../../app/_lib/segmentOrigin.js) validates presence and the trailing
+   slash, never whether the origin points anywhere real.
+2. **Take the baseline.** `npm run inspect-r2`, and write down the moment you ran it. Then read
+   R2's Class A figure and Upstash's command count, in that order.
+3. **Know which Book is which subject.** `demo-book/` is _not_ in the Library index, so
+   `deleteBook`'s cascade can never reach it — it is the subject for
+   [blobCleanupService.js](../../../app/_lib/blobCleanupService.js), not for the deletion
+   criterion. That criterion needs a Book the Library actually lists.
+
+**On the phone.** Safari on a physical iPhone; the desktop cannot stand in for any of this, and
+now says so out loud (ticket 06).
+
+4. **Upload a Book and confirm the transcript renders.** That is the 411 fix's real proof: a
+   failed chunks write can no longer look like a Book, so an empty reader would now be an error
+   screen instead.
+5. **Play from the start and let it cross one Chunk boundary in the foreground.** Cheap, and it
+   separates "the serving path is broken" from "backgrounding breaks it" before you spend three
+   minutes finding out.
+6. **The two backgrounded boundaries** — the property phases 1.8 to 1.10 exist for, and the one
+   step here that cannot be rushed. **Decide first whether this is the Safari tab or the
+   standalone PWA, and do not switch during the run** — they have separate `localStorage`, so
+   a log copied from the wrong one is a different log that will look empty. **Do not press
+   清除記錄**; entries are timestamped and clearing only destroys the history that makes a
+   failure legible. Note the Chunk number, start playback and lock the screen. Segments average
+   ~21.6 seconds, so two boundaries is under a minute; give it five and cross a dozen. Unlock,
+   and read the log: `visibilitychange hidden` on locking, then
+   `visibilitychange visible` and a `reconcile` on return. **`isPlayingCorrectedTo: null` is the
+   pass** — it means the element and the UI already agreed and nothing had to be corrected.
+   `false` means playback had stopped and the UI had not noticed, which is the original bug.
+   Sound stopping at a boundary is the same failure heard rather than read.
+
+   **Read both counters straight afterwards, before doing anything else.** This is also ticket
+   08's step 7, its second open criterion: a steady listen must not make the playlist poll cost
+   storage reads. Class A should have risen only by twice the number of Chunks that were newly
+   generated during the listen, and nothing should have 403'd. A count rising with the polls
+   instead means the Chunk index is missing on every one of them.
+
+7. **Seek inside the current Chunk.** Tap a Sentence further down the Chunk that is playing;
+   audio should jump there and the highlighting follow. This is the Worker's range handling
+   against a real media element — and the highlighting following correctly is ticket 08's last
+   step-8 item, since those Sentence spans are now derived at generation time rather than per
+   request, so a systematic offset would be new.
+8. **Resume, then resume on a second device.** Note the Chunk and Sentence, close the app fully,
+   reopen: same place. Then open the same Book on a second device — another iOS device plays it,
+   and a desktop browser is still enough to check the _position_, since it will land on the
+   right Sentence and then tell you it cannot play the source, which is ticket 06's message
+   doing its job.
+
+   **What this actually exercises is Redis, not the snapshot.** `getBook` reads
+   `positionClient.read(bookId)` first and only falls back to the `library/<bookId>/resume`
+   blob, so a position saved by the ordinary debounced per-Sentence write is what comes back.
+   The durable snapshot is a different path: `snapshot: true` is set only by the flush on
+   `visibilitychange hidden` and `pagehide` (see
+   [useBookPlayer.js](../../../app/_lib/useBookPlayer.js)), and even then it is skipped when the
+   debounce has already stored the same pair. Backgrounding before you close is still worth
+   doing — it is the flush point — but a pass here does not tell you the snapshot was written,
+   and only a Redis outage would.
+
+9. **The capacity indicator.** Home page → 查看用量. At 9.62 MB it will round to **0%**, so the
+   percentage on its own cannot be judged plausible or otherwise — read `usedBytes` and
+   `quotaBytes` out of `/api/blob-usage` instead and check them against `npm run inspect-r2`'s
+   byte total and its `10.00 GB`. Those two agreeing is the criterion; the rendered bar is not.
+10. **Delete a Book from the Library**, then `npm run inspect-r2 -- <bookId>/` — expect
+    `0 object(s)` — and `npm run inspect-r2 -- library/`, where that Book's `chunks.json` should
+    be gone too.
+
+    **This does not exercise ticket 03's pagination**, and pretending otherwise is how that fix
+    would go untested. A page holds 1,000 keys; the largest Book in the bucket has 84, and the
+    whole bucket has 92. Only a Book past ~500 Chunks would take the cascade over a page
+    boundary, and narrating one costs the Class A budget this phase exists to protect. Either
+    upload and narrate one deliberately and say so, or record the criterion as closed for the
+    cascade and still open for pagination.
+
+**Back at the laptop, for the two measurements.** One window, nothing else touching either
+store, and **no counting script inside it** — the counting is what made the last Upstash figure
+an upper bound rather than a number.
+
+11. Read Upstash's command count. Note the moment. `POST /api/audio-chunks` for an exact range
+    of 20 indexes starting past anything already generated — an existing Chunk returns as a
+    cache hit, which still writes the index but writes nothing to R2, and that pulls the two
+    ratios in opposite directions. Read Upstash again: **expect 40**, which is the 2/Chunk
+    ticket 04 claims.
+12. `npm run inspect-r2 -- --since <the moment from step 11>` — **expect exactly 40 objects**,
+    20 MP3s and 20 JSONs. Only now re-read the dashboard's Class A figure, as a cross-check on
+    a counter that lags rather than as the instrument.
+
+    **Both numbers go in this ticket, next to the Chunk count they were measured over**, which
+    is what the two criteria ask for and what the last Upstash figure could not supply.
+
+13. **What is left of phase 1.10 [ticket 08](../../phase-1-10-continuous-hls-playback/issues/08-playlist-routes-read-one-blob-per-chunk.md).**
+    Its step 7 is step 6 above and its last step-8 item is step 7 above; two more of step 8
+    closed in "The first measurements". That leaves its **step 6**: time one playlist request
+    against the largest Book, where the number to beat is 5.4s — and note its own caveat, that
+    this measures nothing until that Book's index covers a decent run, because on a cold index
+    you are timing the Blob fallback instead. Plus the one item never yet touched: request the
+    **manifest** with `?from=` set part-way in, and confirm cues come back rather than an empty
+    `sentences` array. That is `HMGET` being keyed by field name, against the real service.
+14. **Re-triage phase 1.10 tickets 04 and 06** now that a live store exists to test them
+    against.
+
+### The device session — 2026-08-11
+
+The first time this ticket's device half was actually attempted. It closed two criteria,
+produced the phase 1.10 evidence that was blocking a whole ticket, and cost one wrong
+diagnosis on the way.
+
+**What ran.** A 4,962-Chunk Book uploaded and opened on a physical iPhone. The transcript
+rendered, which is the 411 fix holding in the deployed runtime — the `library/<bookId>/
+chunks.json` object it used to fail to write is present at 1.6 MB. **Three** listening sessions
+followed, and they did not all fail the same way — which is the part worth being careful about:
+
+|                               | 12:00, PWA           | 12:40, Safari tab       | 13:04, PWA                            |
+| ----------------------------- | -------------------- | ----------------------- | ------------------------------------- |
+| backgrounded                  | stopped on lock      | 691s, **still playing** | **101s, then the process was killed** |
+| Sentence highlighting         | stuck, wrong         | correct throughout      | n/a — nothing survived to return to   |
+| Chunks generated while hidden | **none**             | 31                      | 5, right up to the kill               |
+| position saved while hidden   | **none** — 0/0 after | per Sentence            | per Sentence, until the kill          |
+
+The last two columns are phase 1.10 ticket 06's Run A and Run B, and they are the ones with
+complete instrumentation. **The first column is not explained by either**, and is left open
+here rather than folded into them: in the 12:00 session the position never left Chunk 0 and the
+look-ahead never went past its initial 11 Chunks, whereas the 13:04 PWA run advanced normally
+until it was killed. Whatever happened at 12:00, it was not a process reclaimed 101 seconds
+in. There is no diagnostic log for it — see "Two instrument lessons" below for why — so it may
+simply have to be reproduced before it can be diagnosed.
+
+The full numbers are in phase 1.10 [ticket 06](../../phase-1-10-continuous-hls-playback/issues/06-verify-growing-playlist-in-background.md)
+and [the spike log](../../hls-background-spike/spike-log.md); this ticket only needs the
+conclusion, which is that **the serving path this phase built is not what fails**. In the PWA
+run the playlist was being polled on schedule, generation was ahead of the playhead, and R2 was
+still being written to seconds before the process stopped existing. That failure is now phase
+1.10 [ticket 11](../../phase-1-10-continuous-hls-playback/issues/11-the-standalone-pwa-is-killed-while-backgrounded.md),
+and it is a `needs-info` measurement rather than a fix, because three runs varying two things at
+once cannot say whether standalone is stricter or whether background network I/O is what gets a
+process reclaimed.
+
+**The serving path was checked end to end and is healthy**, which is what made the split
+above readable rather than mysterious. Every one of these was measured against the live
+deployment rather than reasoned about:
+
+- **Segment durations are exact.** The 11 advertised `#EXTINF` values compared against
+  `measureMp3Duration` over the bytes the Worker actually serves: **cumulative drift
+  0.000s** across 237.912s. So a desynchronised highlight could not have been the app's
+  timeline disagreeing with the element's.
+- **The Worker answers ranges properly** — `Range: bytes=0-1023` gives `206` with
+  `Content-Range: bytes 0-1023/219744`, not a `200` with the whole object.
+- **Cue ordinals line up with the transcript's.** The highlight is addressed by a Book-global
+  Sentence ordinal that the manifest and the transcript derive independently; for all 11
+  generated Chunks they agree exactly, so the two could not have been counting Sentences
+  differently.
+- **The diagnostic panel itself works.** Verified on the deployed build by dispatching the
+  events and reading the buffer back: `visibilitychange`, `pagehide`, `focus` and `reconcile`
+  all persist.
+
+**A wrong diagnosis, recorded because the reasoning was seductive.** Three independent
+signals — 11 Chunks generated, `resumeIndex: 0` afterwards, and the look-ahead re-requesting
+Chunks 0–10 on reopening — all said the Sentence ordinal had never advanced. Since
+`cuechange` is the only thing that advances it, and ADR 0003 explicitly records that the
+spike never established that `cuechange` fires, the conclusion looked forced: the mechanism
+the ADR flagged as unverified had failed. It had not. The Safari-tab run generated 44 Chunks,
+which is impossible unless cues were activating. **The frozen ordinal was a symptom of that
+session's playback not running, not the cause of it** — and every one of the three signals is
+equally consistent with both, which is exactly why three of them agreeing proved nothing.
+
+**Two instrument lessons for the next run.** The diagnostic log is per storage container, and
+a standalone PWA on iOS has its own — so a log copied from the Safari tab after a PWA run is
+a different log that will look empty. And 清除記錄 before a run destroys the history that makes
+the failure legible; the entries are timestamped, so there is nothing to gain by clearing.
+
+**Still open on the device.** In-Chunk seeking, resume across devices, the capacity
+indicator, and the deletion check. The standalone-PWA question has moved out of this ticket
+into phase 1.10 [ticket 11](../../phase-1-10-continuous-hls-playback/issues/11-the-standalone-pwa-is-killed-while-backgrounded.md),
+which owns both the 13:04 kill and the unexplained 12:00 session.
 
 ### If the measurement disagrees
 
