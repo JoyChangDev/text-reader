@@ -4,7 +4,11 @@
 
 **Blocked by:** 01, 02, 03, 04
 
-**Status:** ready-for-human — needs the deployment, a physical device, and someone watching two dashboards. The remaining criteria are written up step by step in "The runbook for the device session" below, and the bucket-side checks have an instrument (`npm run inspect-r2`) rather than a dashboard that lags. A first device session on 2026-08-11 closed two criteria and produced both runs phase 1.10 [ticket 06](../../phase-1-10-continuous-hls-playback/issues/06-verify-growing-playlist-in-background.md) was waiting for, one of which opened [ticket 11](../../phase-1-10-continuous-hls-playback/issues/11-the-standalone-pwa-is-killed-while-backgrounded.md); see "The device session" below, including what it got wrong.
+**Status:** resolved — **every criterion measured on 2026-08-11**, on a physical iPhone against the deployed app and the live stores. The phase's central claim is now an observation rather than arithmetic: **Class A 2.0 per generated Chunk and Upstash 2.0 per generated Chunk**, both over 20 Chunks in a window with nothing else in it.
+
+It also resolved phase 1.10 [tickets 04 and 06](../../phase-1-10-continuous-hls-playback/issues/06-verify-growing-playlist-in-background.md) and opened four new ones — [11](../../phase-1-10-continuous-hls-playback/issues/11-the-standalone-pwa-is-killed-while-backgrounded.md), [12](../../phase-1-10-continuous-hls-playback/issues/12-the-playlist-route-reads-the-whole-book-per-poll.md), [13](../../phase-1-10-continuous-hls-playback/issues/13-deleting-a-book-leaves-its-chunk-index-in-redis.md), [14](../../phase-1-10-continuous-hls-playback/issues/14-the-durable-resume-snapshot-is-almost-never-written.md) — none of which could have been found by reading the code, and two of which were found by looking once more at a criterion that had already passed. The session's own wrong turn is recorded under "The device session"; it is the more useful half of that story.
+
+Two criteria are ticked with a stated gap rather than silently: **pagination** in the delete cascade is still untested (the deleted Book had 84 objects against a 1,000-key page), and the **playlist route's response time** is recorded at 1.32s rather than the "well under a second" its own wording asks — that is ticket 12.
 
 This is the ticket that turns the phase's central claim from arithmetic into an observation. Everything before it was written against mocked `fetch`; nothing has yet stored a byte in R2 from the app.
 
@@ -33,7 +37,7 @@ While in the dashboards, take Upstash's command count over the same window: [tic
 - [x] Seeking to a Sentence inside the Chunk the playhead is in works — ~~exercising the Worker's range handling against a real media element rather than against a hand-made request~~. _The stated rationale is wrong and is replaced: **what this exercises is whether a cue's `startTime` matches the audio**, not the Worker. See "What in-Chunk seeking actually tests" below. **Passed 2026-08-11 in the standalone PWA: the first word heard was the first word of the tapped Sentence, and the highlight followed.** That is the Sentence spans derived from edge-tts word boundaries at generation time, confirmed against real audio by the only instrument that can reach them._
 - [x] The resume position survives closing and reopening the Book, and survives on a second device. _2026-08-11, at Chunk 82 / Sentence 3. Closed and reopened on the phone: same Sentence. Opened on a desktop browser: same Sentence again, **verified against the Book's own text rather than by recall** — the Sentence on screen was 「還是來殺他的，只是找錯了目標？」, and splitting Chunk 82 with `splitIntoSentences` puts exactly that string at index 3. **What this exercises is Redis, not the durable snapshot**, which turns out never to have been written at all — [ticket 14](../../phase-1-10-continuous-hls-playback/issues/14-the-durable-resume-snapshot-is-almost-never-written.md)._
 - [x] **Measured: Class A operations per generated Chunk**, recorded here with the Chunk count it was measured over. Expected 2. **Measured 2.0, over 20 Chunks** — 40 objects written, counted directly rather than read off the dashboard, which had not caught up. See "The first measurements".
-- [ ] **Measured: Upstash commands per generated Chunk**, recorded here. Expected 2 after ticket 04. _**47 commands over 20 Chunks = ≤ 2.35**, an upper bound rather than the figure, because the window carried instrumentation traffic that cannot be separated after the fact. It rules out 3 decisively and is consistent with 2. Left open for one clean run — see "The first measurements" for what that needs._
+- [x] **Measured: Upstash commands per generated Chunk**, recorded here. Expected 2 after ticket 04. _**Measured 2.0, over 20 Chunks**, on a clean run 2026-08-11: 2423 → 2464 = **41 commands** across a window containing nothing but the Book read and the generation. `getBook` spends exactly one (the resume position; the index and chunks blobs are R2, and Redis held the position so the snapshot was not read), leaving **40 for 20 Chunks**. The conclusion does not depend on that subtraction: 41/20 = 2.05 either way, against 60 for three. The earlier **≤ 2.35 upper bound is now a figure.** See "The clean measurement" below._
 - [x] The capacity indicator reports a plausible percentage against 10 GB. _2026-08-11: `/api/blob-usage` answers `usedBytes: 15663760, quotaBytes: 10000000000, percent: 0.1566376`, and `inspect-r2` independently sums the same bucket to 15.66 MB. The indicator displays **0%**, which is `Math.round(0.157)` and is correct. **`quotaBytes` also confirms ticket 04's change is live in production** — the pre-migration value was Vercel Blob's 1 GiB, against which these same bytes would have read 1.5% rather than 0.16%._
 - [x] Deleting a Book removes its audio from R2, verified by listing the prefix afterwards — this is the path ticket 03's pagination fix exists for. _2026-08-11, deleting the 42-Chunk `84ee9c96…`: the prefix lists **0 objects**, its `chunks.json` is gone, `library/index.json` was rewritten 17,001 → 10,073 B, and `library:resume` dropped it. The bucket went 277 → 192 objects, exactly the 85 that Book owned. **Pagination is still untested** — 84 objects is a twelfth of a page; see the note under step 10 of the runbook. **And the Redis Chunk index was not cleaned**, which is [ticket 13](../../phase-1-10-continuous-hls-playback/issues/13-deleting-a-book-leaves-its-chunk-index-in-redis.md)._
 - [x] Phase 1.10's [ticket 08](../../phase-1-10-continuous-hls-playback/issues/08-playlist-routes-read-one-blob-per-chunk.md) runbook is run against R2, and its two open criteria are closed or their real numbers recorded. _Run 2026-08-11. Rate limiting: **closed** — the two device runs are a listening session, 691s and 650s with the playlist polled throughout and no 403. Response time: **recorded, not closed** — 1.32s warm, 2.4s cold, which beats the 5.4s it set out to fix but is not "well under a second"; ~0.6s of it is a 1.6 MB read the route does not need, now [ticket 12](../../phase-1-10-continuous-hls-playback/issues/12-the-playlist-route-reads-the-whole-book-per-poll.md). All four of its step-8 items are closed._
@@ -533,6 +537,51 @@ play, not tap-while-playing. Worth knowing before trying it and concluding the t
 **One paragraph on screen is one Chunk.** `TranscriptView` renders `chunks.map` as one `<p>`
 each, so Chunk boundaries are already visible without any marker; the Chunk the playhead is in
 is the paragraph containing the highlighted Sentence.
+
+### The clean measurement — 2026-08-11
+
+The run "The first measurements" said this needed: a window with nothing else in it, and no
+counting script inside it.
+
+```
+[window opened 2026-08-11T15:01:30.721Z]
+  chunks 93–112, sequential, all 200
+[window closed 2026-08-11T15:03:41.881Z]
+
+Upstash commands   2423 → 2464   = 41
+R2 objects written               = 40   (20 MP3 + 20 JSON)
+```
+
+**Class A 2.0 per Chunk and Upstash 2.0 per Chunk**, the second confirming
+[ticket 04](04-segment-origin-becomes-configuration.md)'s claim that dropping the origin `SET`
+took generation from three commands to two.
+
+**What made it clean was ordering, not discipline.** `POST /api/audio-chunks` needs the Chunk's
+`text`, so the Book has to be read first — and that read spends an Upstash command, which is
+exactly the contamination that made the first attempt an upper bound.
+[`measure-generation-cost.mjs`](../../../scripts/measure-generation-cost.mjs) does the reading
+before the window opens, then pauses for the counters to be taken, then generates. The 41 still
+carries `getBook`'s single command because the console's figure lagged behind that read; it is
+subtracted in the arithmetic rather than pretended away, and the answer is 2.0 with or without
+it.
+
+**The guard earned its place on the first run.** It refused `--from 92`, because Chunk 92 had
+been generated during the seek test twenty minutes earlier — after the range was chosen. A cache
+hit writes the Chunk index but no R2 object, so including one would have lowered the Class A
+ratio and left the Upstash one alone, and the numbers would have looked merely surprising rather
+than wrong. It refused before spending the window.
+
+### Upstash's `INFO` cannot be used as the instrument
+
+Worth writing down, because it looks like the obvious way to avoid reading a dashboard at all.
+`INFO stats` **is** available over the REST API and returns `total_commands_processed` — but the
+value is per node, and Upstash's REST requests land on whichever node answers. Four consecutive
+reads returned 2024, 396, 396, 2025. Two `INFO`s with nothing between them differed by 0, and a
+third pair by 1,629.
+
+It would have produced a confident, precise, entirely wrong number. The console's aggregate is
+the honest instrument, lag and all — take the "after" reading a few minutes late rather than
+trying to be clever.
 
 ### If the measurement disagrees
 
