@@ -70,8 +70,8 @@ It also means ticket 04's remaining item cannot be honestly checked off: segment
 - [x] Generating a Chunk updates whatever index the routes read, so a growing Book still grows the playlist — the EVENT playlist's whole mechanism depends on it. _Every path through `getOrGenerateAudio` that ends in playable audio writes the index, and the write is awaited so the poll that follows cannot read a short run._
 - [x] The index carries what `isPlayableChunk` needs (`url`, `durationSeconds`) and what the manifest needs (`boundaries`), or the routes stay O(Chunk) for the data they can't get from it. _`url` is derived rather than stored, and the manifest gets pre-derived spans instead of `boundaries` — see the decisions above._
 - [x] A Chunk cached before `durationSeconds` existed is still reported ungenerated, so ticket 02's lazy re-measurement still triggers. _`writeChunk` refuses to index a Chunk whose duration could not back a segment, applying `isPlayableChunk`'s rule before the entry exists rather than after._
-- [ ] The playlist route responds in well under a second on a ~2,000-Chunk Book. _Blocked until 2026-09-06: populating the index needs generation, which needs Blob. Step 6 of the runbook at the bottom of this ticket._
-- [ ] A full listening session's worth of playlist polls does not trip the store's rate limiting — verified against the real store, not a fake. _Same block. The polled path now makes no Blob call at all when the index answers, which is the claim to test. Step 7 of the runbook._
+- [ ] The playlist route responds in well under a second on a ~2,000-Chunk Book. _Measured 2026-08-11 against R2: **1.32s warm, 2.4s cold** on a 4,962-Chunk Book. That decisively beats the 5.4s this ticket set out to fix, but it is not "well under a second" and the criterion stays open. About 0.6s of it is a 1.6 MB read the route does not need — [ticket 12](12-the-playlist-route-reads-the-whole-book-per-poll.md), which is this ticket's own shape in the one place it did not look._
+- [x] A full listening session's worth of playlist polls does not trip the store's rate limiting — verified against the real store, not a fake. _Answered by the device runs in [ticket 06](06-verify-growing-playlist-in-background.md), which are a listening session rather than a probe: 691s and 650s of continuous backgrounded playback, playlist polled ~42s apart throughout, no 403 and no failed request. Class A rose only with the Chunks actually generated, which is the shape this predicted._
 - [x] `readCachedChunks`'s existing behaviour stays covered: one entry per Chunk index, `undefined` where not cached, never synthesizing. _Untouched by stage 2; it is now the fallback rather than the only path._
 
 ## Comments
@@ -223,3 +223,23 @@ Response time is a proxy, not proof — a warm Blob scan over a short generated 
 - **The manifest's cue times still line up with playback.** Play a little and watch the Sentence highlighting; the spans are now derived at generation time rather than per request, so a systematic offset would be new.
 
 **9 — Update this ticket.** Tick the two checklist items with the measured numbers, or record what actually happened if they did not hold. Ticket 09's note that `/api/library` is requested three times per home page load is also unblocked once the store is readable, and wants its own ticket.
+
+### The runbook was run — 2026-08-11, against R2
+
+Not on 2026-09-06 and not against Vercel Blob: phase 1.11 moved the store, so the instruments
+became R2's Class A/B counters and step 0 fell away. All four of step 8's items are now closed,
+and they were closed in three different places, which is worth knowing before re-reading them:
+
+- **Derived segment URLs resolve** and **durations round-trip as numbers** — closed in passing
+  during phase 1.11 ticket 05's first measurements, 2026-08-10.
+- **`HMGET` is keyed by field name** — closed 2026-08-11. `manifest?from=50` on a Book with
+  Chunks 0–91 generated returns **42 generated Chunks, every one with cues and none with an
+  empty `sentences` array**, Chunk 50 at `startSeconds: 0` (the timeline zero moved with
+  `from`), and Sentence ids still Book-global rather than restarted. That is the bug review
+  caught, pinned against the real service.
+- **The manifest's cue times line up with playback** — closed 2026-08-11 by the in-Chunk seek
+  in phase 1.11 ticket 05: tapping a Sentence and hearing its first word first. Spans derived
+  at generation time are correct against real audio.
+
+Step 6 is the one item that did not close, and step 7 closed from the device runs rather than
+from a probe. Both are annotated on the checklist above.

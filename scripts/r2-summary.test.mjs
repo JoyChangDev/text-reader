@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { formatBytes, summariseObjects } from './r2-summary.mjs';
+import { formatBytes, generatedChunkIndexes, summariseObjects } from './r2-summary.mjs';
 
 const object = (pathname, size, uploadedAt) => ({ pathname, size, uploadedAt });
 
@@ -86,6 +86,52 @@ describe('summariseObjects', () => {
 
   test('answers with nothing rather than failing on an empty bucket', () => {
     expect(summariseObjects([])).toEqual({ count: 0, bytes: 0, groups: [], since: undefined });
+  });
+});
+
+// The measurement in ticket 05 is only valid over Chunks that were not already stored: a
+// cache hit still writes the Redis index but writes nothing to R2, so it pushes the two
+// ratios being measured in opposite directions. This is what lets the script refuse a range
+// instead of quietly measuring the wrong thing.
+describe('generatedChunkIndexes', () => {
+  const audio = (index, voice = 'zh-TW-HsiaoChenNeural') => ({
+    pathname: `book-1/${index}/${voice}.mp3`,
+  });
+
+  test('reports which Chunks already have audio for the voice', () => {
+    expect(generatedChunkIndexes([audio(0), audio(1), audio(2)], 'zh-TW-HsiaoChenNeural')).toEqual([
+      0, 1, 2,
+    ]);
+  });
+
+  // The metadata JSON sits beside every MP3 under the same key, so counting both would
+  // report every Chunk twice.
+  test('counts the audio object rather than its metadata twin', () => {
+    const objects = [audio(7), { pathname: 'book-1/7/zh-TW-HsiaoChenNeural.json' }];
+
+    expect(generatedChunkIndexes(objects, 'zh-TW-HsiaoChenNeural')).toEqual([7]);
+  });
+
+  // A Chunk narrated in one voice is not narrated in another - generating it would be a
+  // real generation, not a cache hit, so it must not be excluded from the range.
+  test('ignores audio stored for a different voice', () => {
+    const objects = [audio(3, 'zh-TW-YunJheNeural'), audio(4)];
+
+    expect(generatedChunkIndexes(objects, 'zh-TW-HsiaoChenNeural')).toEqual([4]);
+  });
+
+  // Sorted as numbers: lexical order would put 10 before 9 and make the "highest generated
+  // index" the script reports for choosing a range simply wrong.
+  test('orders indexes numerically, not as text', () => {
+    const objects = [audio(9), audio(10), audio(100), audio(2)];
+
+    expect(generatedChunkIndexes(objects, 'zh-TW-HsiaoChenNeural')).toEqual([2, 9, 10, 100]);
+  });
+
+  test('drops a key that does not name a Chunk at all', () => {
+    const objects = [{ pathname: 'book-1/chunks.json' }, { pathname: 'book-1/x/voice.mp3' }];
+
+    expect(generatedChunkIndexes(objects, 'voice')).toEqual([]);
   });
 });
 

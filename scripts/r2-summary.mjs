@@ -75,6 +75,28 @@ export function summariseObjects(objects, { since } = {}) {
   };
 }
 
+// Which Chunks of one Book already have narrated audio, from a listing of that Book's prefix.
+// Keyed off the `.mp3` rather than the metadata JSON beside it, because the pair is written
+// together and counting both would report every Chunk twice.
+//
+// The voice matters: audio is stored per (Chunk, voice), so a Chunk narrated in one voice is
+// genuinely ungenerated in another. Treating it as generated would exclude it from a
+// measurement range it belongs in.
+const CHUNK_AUDIO = /^[^/]+\/(\d+)\/(.+)\.mp3$/;
+
+export function generatedChunkIndexes(objects, voice) {
+  const indexes = new Set();
+
+  for (const { pathname } of objects) {
+    const match = CHUNK_AUDIO.exec(pathname);
+    if (match && match[2] === voice) indexes.add(Number(match[1]));
+  }
+
+  // Numerically. Sorting these as text would put 10 before 9, and the caller's next move is
+  // to take the highest one and start a range past it.
+  return [...indexes].sort((a, b) => a - b);
+}
+
 // Decimal units, because the quota these are read against is decimal: blobCleanupService.js
 // bills against 10^10 for R2's 10 GB, so reporting GiB here would disagree with the capacity
 // indicator over the same bucket. Bytes stay bytes below a kilobyte, where two decimal places

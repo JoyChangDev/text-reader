@@ -36,7 +36,7 @@ While in the dashboards, take Upstash's command count over the same window: [tic
 - [ ] **Measured: Upstash commands per generated Chunk**, recorded here. Expected 2 after ticket 04. _**47 commands over 20 Chunks = ≤ 2.35**, an upper bound rather than the figure, because the window carried instrumentation traffic that cannot be separated after the fact. It rules out 3 decisively and is consistent with 2. Left open for one clean run — see "The first measurements" for what that needs._
 - [ ] The capacity indicator reports a plausible percentage against 10 GB.
 - [ ] Deleting a Book removes its audio from R2, verified by listing the prefix afterwards — this is the path ticket 03's pagination fix exists for.
-- [ ] Phase 1.10's [ticket 08](../../phase-1-10-continuous-hls-playback/issues/08-playlist-routes-read-one-blob-per-chunk.md) runbook is run against R2, and its two open criteria are closed or their real numbers recorded.
+- [x] Phase 1.10's [ticket 08](../../phase-1-10-continuous-hls-playback/issues/08-playlist-routes-read-one-blob-per-chunk.md) runbook is run against R2, and its two open criteria are closed or their real numbers recorded. _Run 2026-08-11. Rate limiting: **closed** — the two device runs are a listening session, 691s and 650s with the playlist polled throughout and no 403. Response time: **recorded, not closed** — 1.32s warm, 2.4s cold, which beats the 5.4s it set out to fix but is not "well under a second"; ~0.6s of it is a 1.6 MB read the route does not need, now [ticket 12](../../phase-1-10-continuous-hls-playback/issues/12-the-playlist-route-reads-the-whole-book-per-poll.md). All four of its step-8 items are closed._
 - [ ] Phase 1.10 tickets 04 and 06 are re-triaged now that a live store is available to them.
 
 ## Comments
@@ -398,11 +398,15 @@ now says so out loud (ticket 06).
 store, and **no counting script inside it** — the counting is what made the last Upstash figure
 an upper bound rather than a number.
 
-11. Read Upstash's command count. Note the moment. `POST /api/audio-chunks` for an exact range
-    of 20 indexes starting past anything already generated — an existing Chunk returns as a
-    cache hit, which still writes the index but writes nothing to R2, and that pulls the two
-    ratios in opposite directions. Read Upstash again: **expect 40**, which is the 2/Chunk
-    ticket 04 claims.
+11. `npm run measure-generation -- <bookId> --from <past everything generated> --count 20`
+    ([scripts/measure-generation-cost.mjs](../../../scripts/measure-generation-cost.mjs)). It
+    reads the Book's text first, then pauses 30 seconds telling you to read both counters,
+    generates the range sequentially, and prints the window's timestamps and what to expect.
+    The read-first ordering is the point: `POST /api/audio-chunks` needs the Chunk's `text`, and
+    fetching it spends Upstash commands — that contamination is what made the first attempt an
+    upper bound rather than a figure. It refuses a range that is already generated rather than
+    letting cache hits, which write the index but not R2, pull the two ratios apart. Read
+    Upstash again when it says to: **expect 40**, the 2/Chunk ticket 04 claims.
 12. `npm run inspect-r2 -- --since <the moment from step 11>` — **expect exactly 40 objects**,
     20 MP3s and 20 JSONs. Only now re-read the dashboard's Class A figure, as a cross-check on
     a counter that lags rather than as the instrument.
