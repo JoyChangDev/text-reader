@@ -1,4 +1,5 @@
 import { toCueSpans, toStoredSpans } from './chunkIndex';
+import { AVAILABLE_VOICES } from './listenerSettings';
 import { requireSegmentOrigin } from './segmentOrigin';
 import { orMiss, redisFromEnv } from './upstashRedis';
 
@@ -16,6 +17,12 @@ import { orMiss, redisFromEnv } from './upstashRedis';
 // Chunks only, and only when the manifest is read.
 const durationsKey = ({ bookId, voice }) => `book:${bookId}:${voice}:durations`;
 const cuesKey = ({ bookId, voice }) => `book:${bookId}:${voice}:cues`;
+
+// Every voice a Book could have been narrated in - see removeBook, the only thing that
+// needs to name them. listenerSettings.js is where the Listener's choices are defined and
+// is the single definition of this list; it guards its own `window` access, so a server
+// module can read the constant without dragging localStorage in.
+const ALL_VOICES = AVAILABLE_VOICES.map(({ value }) => value);
 
 // redis is injected so tests substitute a fake instead of reaching Upstash, matching how
 // audioGenerationService.js takes its storageClient. An absent client is not an error: a
@@ -90,6 +97,35 @@ export function createChunkIndexClient({ redis = redisFromEnv() } = {}) {
           })
           .exec(),
       );
+    },
+
+    // deleteBook's cascade, for this store. Every other part of a deleted Book is reachable
+    // from something that survives it - the audio from an R2 prefix listing, the blobs and
+    // the position from keys derived from the bookId - but a Chunk index key also carries
+    // the voice, and Redis has no prefix listing to sweep them without naming it. Nothing
+    // records which voices a Book was narrated in.
+    //
+    // So the voices are named. `AVAILABLE_VOICES` is three, and a DEL against a key that
+    // was never written costs nothing, so deleting all of them unconditionally is one round
+    // trip and needs no new state - cheaper than a SCAN and cheaper than recording voices
+    // per Book. If that list ever grows to where this looks wasteful, the Library index
+    // entry is the place to record what was actually narrated. See ticket 13.
+    async removeBook({ bookId }, voices = ALL_VOICES) {
+      if (!redis) return;
+
+      // Swallowed like every other write here, and for a sharper reason than usual: by the
+      // time this runs the Book's objects and index entry are already gone, so throwing
+      // would report a failed delete for one that has substantially happened, and leave the
+      // caller with nothing useful to do about it. The orphan is bytes, and it is logged.
+      await orMiss('the Chunk index could not be removed', () => {
+        const pipeline = redis.pipeline();
+        for (const voice of voices) {
+          pipeline.del(durationsKey({ bookId, voice }));
+          pipeline.del(cuesKey({ bookId, voice }));
+        }
+
+        return pipeline.exec();
+      });
     },
   };
 }

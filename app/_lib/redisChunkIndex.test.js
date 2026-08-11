@@ -15,6 +15,7 @@ function fakeRedis(results = []) {
     hgetall: (...args) => (commands.push(['hgetall', ...args]), pipeline),
     hmget: (...args) => (commands.push(['hmget', ...args]), pipeline),
     hset: (...args) => (commands.push(['hset', ...args]), pipeline),
+    del: (...args) => (commands.push(['del', ...args]), pipeline),
     exec: vi.fn(async () => results),
   };
   const hgetall = vi.fn(async (...args) => (commands.push(['hgetall', ...args]), results[0]));
@@ -229,6 +230,56 @@ describe('createChunkIndexClient', () => {
       );
 
       expect(redis.exec).not.toHaveBeenCalled();
+    });
+  });
+
+  // Nothing removed this before, and nothing else ever could: the Chunk index arrived after
+  // deleteBook's cascade was written, and adding a second store to the write path did not
+  // put it on the delete path. See ticket 13.
+  describe('removeBook', () => {
+    test('deletes both hashes for every voice the Book could have been narrated in', async () => {
+      const redis = fakeRedis();
+      const client = createChunkIndexClient({ redis });
+
+      await client.removeBook({ bookId: 'book-1' }, ['voice-a', 'voice-b']);
+
+      expect(redis.commands).toEqual([
+        ['del', 'book:book-1:voice-a:durations'],
+        ['del', 'book:book-1:voice-a:cues'],
+        ['del', 'book:book-1:voice-b:durations'],
+        ['del', 'book:book-1:voice-b:cues'],
+      ]);
+    });
+
+    // One round trip regardless of how many voices there are, matching writeChunk. Unlike
+    // R2, Redis offers no prefix listing to sweep a Book's keys without naming them.
+    test('issues them as one pipeline rather than a call per key', async () => {
+      const redis = fakeRedis();
+      const client = createChunkIndexClient({ redis });
+
+      await client.removeBook({ bookId: 'book-1' }, ['voice-a', 'voice-b']);
+
+      expect(redis.exec).toHaveBeenCalledTimes(1);
+    });
+
+    // Deleting is not a read whose miss is harmless, but by the time this runs the Book's
+    // objects and index entry are already gone, so failing the whole delete would report a
+    // failure for something that mostly succeeded. Same rule as every other write here.
+    test('swallows a Redis failure rather than failing a delete that already happened', async () => {
+      const redis = fakeRedis();
+      redis.exec.mockRejectedValue(new Error('Redis is unreachable'));
+      // orMiss warns rather than errors - it is reporting a degraded cache, not a fault.
+      const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const client = createChunkIndexClient({ redis });
+
+      await expect(client.removeBook({ bookId: 'book-1' }, ['voice-a'])).resolves.not.toThrow();
+      expect(consoleWarn).toHaveBeenCalled();
+    });
+
+    test('does nothing at all without a Redis client, like every other method here', async () => {
+      await expect(
+        createChunkIndexClient({ redis: undefined }).removeBook({ bookId: 'book-1' }, ['voice-a']),
+      ).resolves.toBeUndefined();
     });
   });
 });

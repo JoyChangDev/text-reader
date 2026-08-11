@@ -337,6 +337,10 @@ export function useBookPlayer({
   // from "still needs persisting" without a mutable trigger flag - starts at null so the
   // very first render always persists once (see phase 1.5 ticket 05).
   const lastPersistedRef = useRef(null);
+  // Tracked apart from lastPersistedRef, which records the last position sent by any write.
+  // The flush below has to know whether a *snapshot* exists for a position, and an ordinary
+  // per-Sentence save - Redis only, no blob - answers the wrong question (see ticket 14).
+  const lastSnapshotRef = useRef(null);
   const persistTimeoutRef = useRef(null);
 
   // Persist the reading position - both Chunk and Sentence together, as one atomic pair
@@ -353,6 +357,7 @@ export function useBookPlayer({
   const persistResumePosition = useCallback(
     (chunkIndex, sentenceIndex, { snapshot = false } = {}) => {
       lastPersistedRef.current = { chunkIndex, sentenceIndex };
+      if (snapshot) lastSnapshotRef.current = { chunkIndex, sentenceIndex };
       updateResumeIndex(bookId, {
         resumeIndex: chunkIndex,
         resumeSentenceIndex: sentenceIndex,
@@ -441,7 +446,15 @@ export function useBookPlayer({
   useEffect(() => {
     flushOnHiddenRef.current = () => {
       clearTimeout(persistTimeoutRef.current);
-      const last = lastPersistedRef.current;
+      // Compared against the last *snapshot*, not the last write of any kind. Comparing
+      // against lastPersistedRef looked like duplicate suppression and was not: the
+      // per-Sentence save that sets it writes to Redis alone, so matching it meant skipping
+      // the one write that survives a Redis outage. With a 400ms debounce against
+      // multi-second Sentences it matched nearly always, and the snapshot was effectively
+      // never written - confirmed against the live store, where a Book read all day had no
+      // resume.json at all (ticket 14). What this still skips is a second backgrounding at
+      // a position already snapshotted, which is the bound below.
+      const last = lastSnapshotRef.current;
       if (last && last.chunkIndex === currentIndex && last.sentenceIndex === activeSentenceIndex) {
         return;
       }

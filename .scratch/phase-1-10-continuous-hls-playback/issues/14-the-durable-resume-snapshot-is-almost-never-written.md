@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** ready-for-agent
+**Status:** resolved — 2026-08-11. The flush now compares against the last position written **as a snapshot** rather than the last position written at all, and the blob it exists to maintain was observed appearing against live R2.
 
 Found on 2026-08-11 while running phase 1.11 [ticket 05](../../phase-1-11-object-storage-migration/issues/05-cut-over-and-measure.md)'s
 resume criterion, by looking for the snapshot blob before relying on it.
@@ -72,10 +72,10 @@ the debounce covering for the mechanism, not the mechanism working.
 
 ## Acceptance criteria
 
-- [ ] Backgrounding a Book that is being read writes `library/<bookId>/resume.json`, reliably rather than when the timing happens to allow it. Verified against the real store: background, then list `library/`.
-- [ ] It still costs at most one blob write per backgrounding — the bound the flush's comment claims and the reason ticket 10 moved the position out of the index in the first place. Backgrounding twice at the same position should not write twice.
-- [ ] The per-Sentence path still writes no blob at all. That is the whole of ticket 10 and must not regress in the course of fixing this.
-- [ ] Covered at the seam, with a test that fails on the current guard — the shape is "advance a Sentence, let the debounce fire, then background, and assert a snapshot was requested".
+- [x] Backgrounding a Book that is being read writes `library/<bookId>/resume.json`, reliably rather than when the timing happens to allow it. Verified against the real store: background, then list `library/`. _2026-08-11, through the local dev server against live R2: the blob went from absent to **68 bytes at 15:53:39.920Z**, carrying `{"resumeIndex":82,"resumeSentenceIndex":3,…}` — the position the device had been left at._
+- [x] It still costs at most one blob write per backgrounding — the bound the flush's comment claims and the reason ticket 10 moved the position out of the index in the first place. Backgrounding twice at the same position should not write twice. _Backgrounded twice more at the same position; the blob's write time stayed `15:53:39.920Z`. There is a unit test for it too, and dropping the new ref makes that test fail._
+- [x] The per-Sentence path still writes no blob at all. That is the whole of ticket 10 and must not regress in the course of fixing this. _Unchanged: `snapshot` is still passed only by the flush, and the existing tests pinning `snapshot: false` on the debounced path still pass._
+- [x] Covered at the seam, with a test that fails on the current guard — the shape is "advance a Sentence, let the debounce fire, then background, and assert a snapshot was requested". _That test is the rewritten version of the one that pinned the bug; see below._
 
 ## Comments
 
@@ -90,6 +90,25 @@ Note that the server already resolves the harder half of this: `updateResumeInde
 the snapshot when Redis did not reject the position as stale, and re-reads the stored snapshot
 to compare when Redis could not be reached at all. Nothing about that needs to change; the
 client simply has to ask.
+
+### The bug was pinned by a test, which is why it survived
+
+`AudioPlayer.test.jsx` carried a test named _"does not fire a duplicate persistence call when
+the debounce timer already covered the same (chunk, sentence) pair"_. It backgrounded after the
+debounce had sent a position, and asserted that **nothing further was written**. It passed, and
+it was wrong.
+
+The duplicate it was guarding against is not a duplicate: the debounced save is Redis-only and
+the flush's is a snapshot, so the second write is the only one that leaves anything durable
+behind. The test encoded the guard's own confusion between "already sent" and "already
+snapshotted", and any future reader would have taken it as the specification.
+
+It is now two tests — one asserting the snapshot **is** taken after a debounced save of the same
+pair, and one asserting a second backgrounding at that same position is free — with the old
+name and reasoning quoted in a comment so nobody restores the original intent by accident.
+
+Worth remembering the general shape: a test whose name describes an optimisation is worth
+re-reading whenever the thing being optimised turns out never to happen.
 
 ### Do not fix it by deleting the guard
 

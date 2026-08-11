@@ -1762,7 +1762,13 @@ describe('AudioPlayer background flush of resume-position persistence', () => {
     });
   });
 
-  test('does not fire a duplicate persistence call when the debounce timer already covered the same (chunk, sentence) pair', async () => {
+  // This test used to assert the opposite - that backgrounding after the debounce had
+  // already sent the same pair wrote nothing at all. That looked like duplicate suppression
+  // and was in fact the bug in ticket 14: the debounced save is Redis-only, so skipping the
+  // flush skipped the durable snapshot entirely. At a 400ms debounce against multi-second
+  // Sentences the position is almost always already sent, and the live store confirmed it -
+  // after a day of backgrounding, the Book had no resume.json at all.
+  test('still takes a snapshot when the debounce already sent the same pair to Redis, because that write was not a snapshot', async () => {
     render(
       <ChakraProvider>
         <AudioPlayer bookId="book-flush-3" chunks={twoSentenceChunks} />
@@ -1777,11 +1783,35 @@ describe('AudioPlayer background flush of resume-position persistence', () => {
         snapshot: false,
       }),
     );
-    const patchCallCountAfterDebounce = libraryPatchCalls().length;
 
     setVisibilityState('hidden');
 
-    expect(libraryPatchCalls()).toHaveLength(patchCallCountAfterDebounce);
+    expect(JSON.parse(libraryPatchCalls().at(-1)[1].body)).toEqual({
+      resumeIndex: 0,
+      resumeSentenceIndex: 0,
+      updatedAt: expect.any(Number),
+      snapshot: true,
+    });
+  });
+
+  // The bound the flush's comment claims, and the reason ticket 10 moved the position out
+  // of the index: backgrounding happens on every app switch and every lock, and a blob
+  // write on each of those is the cost that was removed. Once a snapshot exists for a
+  // position, further backgrounding at that same position is free.
+  test('does not write a second snapshot when backgrounded again at the same position', async () => {
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-flush-4" chunks={twoSentenceChunks} initialIndex={1} />
+      </ChakraProvider>,
+    );
+
+    setVisibilityState('hidden');
+    const afterFirstFlush = libraryPatchCalls().length;
+
+    setVisibilityState('visible');
+    setVisibilityState('hidden');
+
+    expect(libraryPatchCalls()).toHaveLength(afterFirstFlush);
   });
 
   // Coalescing rapid *automatic* Sentence advances is the debounce's real job, and

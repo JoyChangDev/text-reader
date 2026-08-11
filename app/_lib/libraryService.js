@@ -1,5 +1,6 @@
 import { splitIntoSentences } from './chunkText';
 import { createObjectStorageClient } from './objectStorageClient';
+import { createChunkIndexClient } from './redisChunkIndex';
 import { createResumePositionClient } from './redisResumePosition';
 
 const INDEX_KEY = 'library/index';
@@ -41,6 +42,7 @@ function legacyPosition(summary) {
 const defaultClients = {
   storageClient: createObjectStorageClient(),
   positionClient: createResumePositionClient(),
+  chunkIndexClient: createChunkIndexClient(),
 };
 
 // The server-side Library store (parallel to audioGenerationService.js): a compact
@@ -188,12 +190,21 @@ async function writeSnapshot(storageClient, bookId, position, { unverified }) {
 }
 
 // Cascade delete: drops the book from the index, its chunks and progress blobs, its stored
-// resume position, and every audio/metadata blob audioGenerationService.js cached under
-// `${bookId}/${chunkIndex}/${voice}` (see
+// resume position, its Chunk index, and every audio/metadata blob audioGenerationService.js
+// cached under `${bookId}/${chunkIndex}/${voice}` (see
 // .scratch/phase-1-6-listening-polish/issues/08-delete-book-cascade-blob-cleanup.md). list()
 // is scoped to the bookId prefix, so this never touches other books' or the library
 // index's own blobs.
-export async function deleteBook(bookId, { storageClient, positionClient } = defaultClients) {
+//
+// The Chunk index was missing from this list until ticket 13, which is the hazard worth
+// naming rather than just fixing: this cascade has to be extended by hand every time the
+// app gains a store, and nothing fails when it isn't. It was measured on the live service -
+// deleting a 42-Chunk Book left both its Redis hashes behind, with nothing that would ever
+// collect them.
+export async function deleteBook(
+  bookId,
+  { storageClient, positionClient, chunkIndexClient } = defaultClients,
+) {
   const index = await readIndex(storageClient);
   if (!index.some((book) => book.bookId === bookId)) return null;
 
@@ -202,6 +213,7 @@ export async function deleteBook(bookId, { storageClient, positionClient } = def
   await storageClient.del(`${chunksKey(bookId)}.json`);
   await storageClient.del(`${resumeSnapshotKey(bookId)}.json`);
   await positionClient.remove(bookId);
+  await chunkIndexClient.removeBook({ bookId });
 
   const audioBlobs = await storageClient.list(`${bookId}/`);
   await Promise.all(audioBlobs.map(({ pathname }) => storageClient.del(pathname)));

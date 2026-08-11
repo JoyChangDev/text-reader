@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** ready-for-agent
+**Status:** resolved — 2026-08-11. `removeBook` joins the cascade, verified against the live Upstash and R2 on a throwaway Book. **One thing is left over rather than fixed:** the orphan this was found by, `book:84ee9c96…:{durations,cues}`, is still in Redis — the fix stops new ones and does not retroactively collect old ones. Two `DEL`s clear it whenever someone wants to.
 
 Found by running phase 1.11 [ticket 05](../../phase-1-11-object-storage-migration/issues/05-cut-over-and-measure.md)'s
 deletion criterion on 2026-08-11 — the R2 half of which passed cleanly, which is what left the
@@ -55,10 +55,10 @@ There is no cleanup path that would ever collect it. `blobCleanupService` is obj
 
 ## Acceptance criteria
 
-- [ ] Deleting a Book removes its Chunk index for every voice it was narrated in, not only the voice most recently used — the key is per (Book, voice) and a Book read in two voices has two of each hash.
-- [ ] The removal is covered at the same seam the rest of the cascade is, with the injected client, so the test does not reach Upstash.
-- [ ] A delete whose Redis half fails does not leave the Book half-deleted in a worse way than it already would — decide and state whether Redis failing should fail the delete, given the R2 half is already gone by then.
-- [ ] Verified against the real store the way this was found: delete a Book, then `SCAN book:*` and confirm nothing of it remains.
+- [x] Deleting a Book removes its Chunk index for every voice it was narrated in, not only the voice most recently used — the key is per (Book, voice) and a Book read in two voices has two of each hash. _`removeBook` deletes both hashes for every voice in `AVAILABLE_VOICES`, in one pipeline. A `DEL` against a key that was never written costs nothing, so naming all three unconditionally is cheaper than recording which were used._
+- [x] The removal is covered at the same seam the rest of the cascade is, with the injected client, so the test does not reach Upstash. _`chunkIndexClient` joins `storageClient` and `positionClient` in `defaultClients`; `libraryService.test.js` asserts against a fake._
+- [x] A delete whose Redis half fails does not leave the Book half-deleted in a worse way than it already would — decide and state whether Redis failing should fail the delete, given the R2 half is already gone by then. _**Decided: swallow it**, via the same `orMiss` every other write here uses. By the time this runs the Book's objects and index entry are gone, so throwing would report a failed delete for one that substantially happened and leave the caller nothing to do. There is a test for it, and the reasoning is in the code rather than only here._
+- [x] Verified against the real store the way this was found: delete a Book, then `SCAN book:*` and confirm nothing of it remains. _2026-08-11, through the local dev server against the live R2 and Upstash, on a throwaway Book so nothing real was risked: **before** 2 Redis keys and 2 R2 objects, **after** 0 and 0, with the other Books' four keys untouched._
 
 ## Comments
 

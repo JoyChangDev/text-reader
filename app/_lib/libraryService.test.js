@@ -12,6 +12,7 @@ import {
 describe('libraryService', () => {
   let storageClient;
   let positionClient;
+  let chunkIndexClient;
   let clients;
   let blobs;
   let positions;
@@ -48,7 +49,10 @@ describe('libraryService', () => {
         positions.delete(bookId);
       },
     };
-    clients = { storageClient, positionClient };
+    // The Chunk index is a third store deleteBook has to reach. It arrived after the
+    // cascade was written and was left out of it for a year of tickets - see ticket 13.
+    chunkIndexClient = { removeBook: vi.fn(async () => {}) };
+    clients = { storageClient, positionClient, chunkIndexClient };
     putSpy = vi.spyOn(storageClient, 'putJson');
   });
 
@@ -513,6 +517,33 @@ describe('libraryService', () => {
       expect(listSpy).toHaveBeenCalledWith('book-1/');
       expect(delSpy).toHaveBeenCalledWith('book-1/0/voice-a.mp3');
       expect(delSpy).toHaveBeenCalledWith('book-1/0/voice-a.json');
+    });
+
+    // The third store. Measured on the live service before this landed: deleting a
+    // 42-Chunk Book left both its hashes behind with 42 fields each, unreachable by
+    // anything the app runs, because the cascade predates the index (ticket 13).
+    test("clears the Book's Chunk index", async () => {
+      await addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }, clients);
+
+      await deleteBook('book-1', clients);
+
+      expect(chunkIndexClient.removeBook).toHaveBeenCalledWith({ bookId: 'book-1' });
+    });
+
+    test('leaves another Book’s Chunk index alone', async () => {
+      await addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }, clients);
+      await addBook({ bookId: 'book-2', title: 'Second Book', chunks: ['二。'] }, clients);
+
+      await deleteBook('book-1', clients);
+
+      expect(chunkIndexClient.removeBook).toHaveBeenCalledTimes(1);
+      expect(chunkIndexClient.removeBook).not.toHaveBeenCalledWith({ bookId: 'book-2' });
+    });
+
+    test('does not touch the Chunk index for a Book that was not in the index', async () => {
+      await deleteBook('missing', clients);
+
+      expect(chunkIndexClient.removeBook).not.toHaveBeenCalled();
     });
 
     test('returns the deleted bookId', async () => {
