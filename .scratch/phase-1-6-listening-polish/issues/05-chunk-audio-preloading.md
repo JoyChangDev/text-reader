@@ -6,7 +6,7 @@ actual audio ahead of time.
 
 **Blocked by:** None — can start immediately
 
-**Status:** done
+**Status:** resolved
 
 - [x] `useBookPlayer.js` maintains two `<audio>` elements (active/standby) instead of one
 - [x] As soon as the next chunk's audio is ready, its actual audio bytes begin loading into

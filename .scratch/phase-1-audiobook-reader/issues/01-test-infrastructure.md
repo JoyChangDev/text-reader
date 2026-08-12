@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** resolved — every acceptance criterion below is ticked and the work is in the code; only the Status line was never updated. Re-confirmed against the codebase on 2026-08-12.
 
 - [x] A test runner (e.g. Vitest) is installed and configured to work with this Next.js/React project
 - [x] A `test` script exists in package.json and is wired into the existing `check` script (or documented as a separate step) so tests run alongside lint/format checks

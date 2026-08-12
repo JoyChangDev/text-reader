@@ -6,7 +6,7 @@ whole book and letting them jump anywhere — including into not-yet-generated c
 
 **Blocked by:** 07
 
-**Status:** ready-for-agent
+**Status:** resolved — every acceptance criterion below is ticked and the work is in the code; only the Status line was never updated. Re-confirmed against the codebase on 2026-08-12.
 
 - [x] Each chunk's estimated duration is computed from its character count once at least
       one chunk has been generated for the current voice, using the observed

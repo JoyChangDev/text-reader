@@ -4,7 +4,7 @@
 
 **Blocked by:** 06 — Upload + progressive playback UI
 
-**Status:** done
+**Status:** resolved
 
 - [x] Uploading a `.txt` file adds a new entry to a persisted local library, without replacing any existing entries
 - [x] A library view lists all previously uploaded books

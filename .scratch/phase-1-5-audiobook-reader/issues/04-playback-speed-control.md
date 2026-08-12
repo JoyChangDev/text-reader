@@ -6,7 +6,7 @@ across books.
 
 **Blocked by:** 02 (extends the same Listener settings store)
 
-**Status:** ready-for-agent
+**Status:** resolved — every acceptance criterion below is ticked and the work is in the code; only the Status line was never updated. Re-confirmed against the codebase on 2026-08-12.
 
 - [x] `listenerSettings` (02) is extended with a `speed` field, defaulting to `1x`
 - [x] Discrete presets are offered: 0.75x, 1x, 1.25x, 1.5x, 1.75x, 2x

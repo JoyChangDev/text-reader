@@ -6,7 +6,7 @@ and resumed from any other device.
 
 **Blocked by:** 01
 
-**Status:** done
+**Status:** resolved
 
 - [x] `libraryService.js` implements `listBooks()`, `addBook({ bookId, title, chunks })`,
       `getBook(bookId)`, `updateResumeIndex(bookId, resumeIndex)`, persisted via the shared

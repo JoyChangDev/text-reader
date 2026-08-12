@@ -6,7 +6,7 @@ visibility into current usage and a manual trigger.
 
 **Blocked by:** 01
 
-**Status:** done
+**Status:** resolved
 
 - [x] `blobCleanupService.js` implements `planCleanup({ blobs, now, retentionDays = 7 })`
       and `computeUsagePercent({ blobs, quotaBytes })` as pure functions, unit tested

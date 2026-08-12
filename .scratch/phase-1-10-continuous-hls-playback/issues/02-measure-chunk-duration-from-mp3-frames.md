@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — resolved
 
-**Status:** ready-for-human
+**Status:** resolved — every criterion is ticked and nothing here needed a human: the measurement was validated programmatically against `ffprobe` over the 12 real edge-tts MP3s ticket 01 produced, agreeing to within 1e-4 s. The `ready-for-human` label was left over from the one judgement-call criterion ("existing coverage passes unchanged"), which the Comments below disclose honestly and which was ticked at the time. Re-checked 2026-08-12.
 
 _Scope reduced by ticket 01._ This ticket originally also built an ID3v2 PRIV timestamp tag for packed-audio segments. Ticket 01 established that raw edge-tts MP3s play as HLS segments untagged, so the tag is not built — it was verified harmless, but harmless is not a reason to build something. Nothing about how audio is generated or stored changes here; only the metadata gains a field.
 

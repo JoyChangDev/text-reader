@@ -7,7 +7,7 @@ exactly like `audioGenerationService.js` already does for `get`/`put`.
 
 **Blocked by:** None — can start immediately
 
-**Status:** done
+**Status:** resolved
 
 - [x] `blobStorageClient.js` exposes `del(key)`, wrapping `@vercel/blob`'s `del`
 - [x] `blobStorageClient.js` exposes `list(prefix)`, wrapping `@vercel/blob`'s `list`,

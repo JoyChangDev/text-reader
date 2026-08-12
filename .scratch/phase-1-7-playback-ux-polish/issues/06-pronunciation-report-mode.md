@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** resolved — built and in the code, confirmed against the codebase on 2026-08-12. The boxes below were never ticked: that is unfilled paperwork, not open work. They have not been audited line by line, so trust the code over the checkboxes here.
 
 - [ ] A report-mode toggle renders in the bottom bar near the settings disclosure and reflects current report-mode state.
 - [ ] While report mode is active, Sentence-click seeking is disabled unconditionally (on top of, not instead of, the existing playing-state gate).

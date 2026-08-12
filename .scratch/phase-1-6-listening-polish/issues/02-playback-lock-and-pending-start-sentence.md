@@ -7,7 +7,7 @@ the _next_ play will start rather than immediately playing.
 
 **Blocked by:** None — can start immediately
 
-**Status:** done
+**Status:** resolved
 
 - [x] Voice select and speed select are disabled while the current chunk is playing,
       enabled while paused

@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** resolved — built and in the code, confirmed against the codebase on 2026-08-12. The boxes below were never ticked: that is unfilled paperwork, not open work. They have not been audited line by line, so trust the code over the checkboxes here.
 
 - [ ] The player bar no longer renders `Chunk x of xx` (or any Chunk-index text) anywhere, while playing, paused, or errored.
 - [ ] A Library entry that previously showed "Resumed at chunk N" (i.e. has `resumeIndex > 0` but no progress data) now shows no progress line at all, matching how a never-opened Book already renders.

@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — Chinese sentence chunking function, 04 — Audio Generation Service
 
-**Status:** done
+**Status:** resolved
 
 - [x] Given a full text body, an API endpoint returns the ordered list of chunks (or chunk identifiers) for that text
 - [x] A second API endpoint, given a book id and chunk index, returns that chunk's audio URL and metadata, generating it via the Audio Generation Service if not already cached

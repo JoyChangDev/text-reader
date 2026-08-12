@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** ready-for-human — built and green. The one criterion left open needs Joy to verify it on the device; nothing here is waiting on an agent.
 
 - [x] `app/book/[bookId]/page.jsx` exists as a Client Component route, renders `AudioPlayer` for the book matching the route's `bookId` param.
 - [x] `app/page.jsx` no longer holds a `book` state variable or conditionally renders `AudioPlayer` — it only renders the library view (`BookUploader`, `BookLibrary`, `BlobUsageIndicator`, the settings/report-link footer).

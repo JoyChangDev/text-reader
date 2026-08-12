@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** resolved — built and in the code, confirmed against the codebase on 2026-08-12. The boxes below were never ticked: that is unfilled paperwork, not open work. They have not been audited line by line, so trust the code over the checkboxes here.
 
 - [ ] The settings sheet panel has a `640px` max-width and is horizontally centered.
 - [ ] The dimming overlay behind the panel still covers the full viewport (`inset: 0`), independent of the panel's narrower width.

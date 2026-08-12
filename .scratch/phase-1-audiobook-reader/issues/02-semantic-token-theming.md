@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately, independent of the TTS pipeline work
 
-**Status:** ready-for-agent
+**Status:** resolved — every acceptance criterion below is ticked and the work is in the code; only the Status line was never updated. Re-confirmed against the codebase on 2026-08-12.
 
 - [x] The Chakra provider's `defineConfig` includes a custom semantic token set (at minimum background/foreground/accent-style names)
 - [x] At least one component in the app is updated to consume a semantic token name rather than a raw color value, demonstrating the pattern

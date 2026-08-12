@@ -5,7 +5,7 @@ chunk audio cleaned up automatically rather than left orphaned in Blob storage.
 
 **Blocked by:** 01, 07
 
-**Status:** done
+**Status:** resolved
 
 - [x] The library UI gains a way to delete a book from the list
 - [x] `libraryService.js` gains `deleteBook(bookId)`

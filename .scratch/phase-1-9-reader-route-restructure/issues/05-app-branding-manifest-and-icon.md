@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately, independent of the routing tickets
 
-**Status:** ready-for-agent
+**Status:** ready-for-human — built and green. The one criterion left open needs Joy to verify it on the device; nothing here is waiting on an agent.
 
 - [x] `app/layout.jsx`'s `metadata` export has `title: 'text-reader'` and a real (non-placeholder) `description`, replacing the `create-next-app` defaults.
 - [x] `app/manifest.js` exists, returning `name`/`short_name: 'text-reader'`, `display: 'standalone'`, `start_url: '/'`, `theme_color`/`background_color` matching the app's existing theme tokens, and an `icons` array pointing at the new icon assets.

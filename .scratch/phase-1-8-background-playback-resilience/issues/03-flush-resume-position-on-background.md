@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately (independent of tickets 01/02)
 
-**Status:** ready-for-agent
+**Status:** resolved — built and in the code, confirmed against the codebase on 2026-08-12. The boxes below were never ticked: that is unfilled paperwork, not open work. They have not been audited line by line, so trust the code over the checkboxes here.
 
 - [ ] `visibilitychange` → `document.visibilityState === 'hidden'` triggers an immediate `persistResumePosition` call, not routed through the existing debounce timer.
 - [ ] `pagehide` triggers the same immediate flush as a fallback.

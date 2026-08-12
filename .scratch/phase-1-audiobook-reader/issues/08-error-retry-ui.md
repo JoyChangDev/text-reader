@@ -4,7 +4,7 @@
 
 **Blocked by:** 06 — Upload + progressive playback UI
 
-**Status:** done
+**Status:** resolved
 
 - [x] A simulated/forced generation failure for a chunk results in a visible, specific error state in the UI (not a silent failure or generic crash)
 - [x] The reader can trigger a manual retry for the failed chunk

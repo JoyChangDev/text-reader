@@ -4,7 +4,7 @@
 
 **Blocked by:** 04 (needs `resumeSentenceIndex`/`sentenceCountsByChunk` persisted in the Library)
 
-**Status:** ready-for-agent
+**Status:** resolved — built and in the code, confirmed against the codebase on 2026-08-12. The boxes below were never ticked: that is unfilled paperwork, not open work. They have not been audited line by line, so trust the code over the checkboxes here.
 
 - [ ] Opening a Book seeds `useBookPlayer`'s pending-seek/active-Sentence state from the saved `(resumeIndex, resumeSentenceIndex)` pair, instead of always defaulting to Sentence `0` of the resumed Chunk.
 - [ ] `wantsToPlay` stays `false` on open — audio never starts playing on its own.

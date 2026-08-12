@@ -6,7 +6,7 @@ listening position without hunting for it.
 
 **Blocked by:** None — can start immediately
 
-**Status:** done
+**Status:** resolved
 
 - [x] A visible button/control scrolls the transcript to the active sentence when clicked,
       reusing the existing auto-scroll ref/behavior

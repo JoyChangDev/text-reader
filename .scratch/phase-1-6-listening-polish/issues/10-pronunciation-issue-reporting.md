@@ -6,7 +6,7 @@ server-assigned timestamp.
 
 **Blocked by:** 01
 
-**Status:** done
+**Status:** resolved
 
 - [x] `pronunciationReportService.js` implements `submitReport({ bookTitle, phrase,
 description })`, storing `{ bookTitle, phrase, description, reportedAt }` (a

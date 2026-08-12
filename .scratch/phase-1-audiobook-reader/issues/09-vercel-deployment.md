@@ -4,7 +4,7 @@
 
 **Blocked by:** 07 — Local library with resume position, 08 — Chunk generation error + manual retry UI
 
-**Status:** done
+**Status:** resolved
 
 - [x] The app is deployed and reachable at a Vercel URL
 - [x] All required environment variables (including the Vercel Blob token) are configured for the production deployment

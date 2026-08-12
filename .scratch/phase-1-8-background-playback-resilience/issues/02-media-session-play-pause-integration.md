@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately (independent of ticket 01)
 
-**Status:** ready-for-agent
+**Status:** resolved — every acceptance criterion below is ticked and the work is in the code; only the Status line was never updated. Re-confirmed against the codebase on 2026-08-12.
 
 - [x] `navigator.mediaSession.setActionHandler('play', ...)` / `('pause', ...)` call through to the same `play`/`pause` functions the on-screen PlayerBar button uses, guarded by `'mediaSession' in navigator`.
 - [x] Handlers are re-registered if the underlying `play`/`pause` identities change, and cleared (`setActionHandler(action, null)`) on unmount.

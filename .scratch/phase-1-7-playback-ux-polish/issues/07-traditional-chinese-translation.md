@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02, 03, 05, 06 — sequenced last so no string is translated and then reworked or deleted by a later structural change
 
-**Status:** ready-for-agent
+**Status:** resolved — built and in the code, confirmed against the codebase on 2026-08-12. The boxes below were never ticked: that is unfilled paperwork, not open work. They have not been audited line by line, so trust the code over the checkboxes here.
 
 - [ ] `AudioPlayer.jsx` ("Back to library") is translated.
 - [ ] `PlayerBar.jsx` (audio-generation-failed alert, report-mode toggle label) is translated.

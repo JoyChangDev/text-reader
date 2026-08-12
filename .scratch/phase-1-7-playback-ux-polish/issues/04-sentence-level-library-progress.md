@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** resolved — built and in the code, confirmed against the codebase on 2026-08-12. The boxes below were never ticked: that is unfilled paperwork, not open work. They have not been audited line by line, so trust the code over the checkboxes here.
 
 - [ ] Uploading a Book (`addBook`) computes and persists `sentenceCountsByChunk` (one Sentence count per Chunk, via the same sentence-splitting logic the transcript already uses for rendering) into the Library index summary, alongside the existing `resumeIndex`/`totalChunks`.
 - [ ] The Library index summary gains a `resumeSentenceIndex` field (defaulting to `0`).

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (the `/book/[bookId]` half needs the new route to exist)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human — built and green. The one criterion left open needs Joy to verify it on the device; nothing here is waiting on an agent.
 
 - [x] `BookUploader` shows a loading indicator (and disables the file picker button) for the duration of the `/api/chunks` fetch in `processFile`, instead of leaving the dropzone static with no feedback.
 - [x] `/book/[bookId]` shows a loading state while `getBook` is in flight, before `AudioPlayer` mounts — evaluated `loading.tsx` and decided against it: that convention only covers the Suspense boundary around a server-rendered Page's initial render, but `BookPage` is a Client Component fetching in a `useEffect`, so `loading.tsx` would never actually cover this gap. Local component state (a `Spinner`, already added in ticket 01) is the only mechanism that can.

@@ -6,7 +6,7 @@ decoupled from audio playback position or chunk duration.
 
 **Blocked by:** None — can start immediately
 
-**Status:** done
+**Status:** resolved
 
 - [x] `bookProgress.js` and ADR 0002 are removed from the codebase
 - [x] `ProgressScrubber` and `useBookPlayer.js`'s `timeline`/`buildBookTimeline`/

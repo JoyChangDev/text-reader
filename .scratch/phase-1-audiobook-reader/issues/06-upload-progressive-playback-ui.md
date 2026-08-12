@@ -4,7 +4,7 @@
 
 **Blocked by:** 05 — Whole-book progressive generation orchestration
 
-**Status:** done
+**Status:** resolved
 
 - [x] A reader can select or drop a `.txt` file from a page in the app
 - [x] Playback of the first chunk begins within a couple of seconds of upload, without waiting for the whole book to be processed

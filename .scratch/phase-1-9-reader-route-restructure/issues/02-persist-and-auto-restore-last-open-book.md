@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (needs the real `/book/[bookId]` route to redirect into)
 
-**Status:** ready-for-agent
+**Status:** ready-for-human — built and green. The one criterion left open needs Joy to verify it on the device; nothing here is waiting on an agent.
 
 - [x] Entering `/book/[bookId]` (route mount) writes `{ bookId }` to a `localStorage` key (e.g. `lastOpenBook`).
 - [x] Pressing "返回書庫" clears that key before navigating to `/`.

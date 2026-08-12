@@ -7,7 +7,7 @@ invalidated.
 
 **Blocked by:** none
 
-**Status:** ready-for-agent
+**Status:** resolved — every acceptance criterion below is ticked and the work is in the code; only the Status line was never updated. Re-confirmed against the codebase on 2026-08-12.
 
 - [x] A new Listener settings store (per ADR 0001, `listenerSettings.js`) persists a
       `voice` field in its own `localStorage` key, separate from `bookLibrary.js`'s

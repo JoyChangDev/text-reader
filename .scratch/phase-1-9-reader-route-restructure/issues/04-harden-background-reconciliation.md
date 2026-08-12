@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 (done - real-device diagnostic log gathered and reviewed)
 
-**Status:** ready-for-agent
+**Status:** resolved — every acceptance criterion below is ticked and the work is in the code; only the Status line was never updated. Re-confirmed against the codebase on 2026-08-12.
 
 - [x] Diagnostic log data has been gathered from a real-device repro session (background the app for a while on iOS Safari Home Screen, return) and reviewed.
 - [x] Root cause identified and written up under Comments.

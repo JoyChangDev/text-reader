@@ -5,7 +5,7 @@ only from inside the player.
 
 **Blocked by:** None — can start immediately
 
-**Status:** done
+**Status:** resolved
 
 - [x] Preview logic currently inline in `AudioPlayer.jsx` (preview audio element, toggle
       behavior, sample URL lookup) is extracted into a shared component/hook

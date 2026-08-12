@@ -5,7 +5,7 @@ sample clip of each option directly from the voice picker.
 
 **Blocked by:** 02 (needs the voice picker to exist)
 
-**Status:** ready-for-agent
+**Status:** resolved — every acceptance criterion below is ticked and the work is in the code; only the Status line was never updated. Re-confirmed against the codebase on 2026-08-12.
 
 - [x] A one-time script generates 3 short sample clips (the same fixed sentence, one per
       voice) via `edge-tts-universal`, committed as static assets — not generated at

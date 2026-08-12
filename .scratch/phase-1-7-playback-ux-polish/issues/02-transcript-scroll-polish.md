@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** resolved — built and in the code, confirmed against the codebase on 2026-08-12. The boxes below were never ticked: that is unfilled paperwork, not open work. They have not been audited line by line, so trust the code over the checkboxes here.
 
 - [ ] The transcript's scroll-to-active-Sentence call is immediate (no smooth/animated transition), for both natural playback advance and "jump to now playing".
 - [ ] The existing suspend-on-manual-scroll / resume-after-idle-delay behavior is unchanged.

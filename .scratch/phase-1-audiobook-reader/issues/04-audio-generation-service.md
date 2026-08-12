@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Project test infrastructure
 
-**Status:** done
+**Status:** resolved
 
 - [x] An API route accepts a chunk of text (plus a book/chunk identifier and voice) and returns a real, playable audio URL and boundary-timing metadata
 - [x] The underlying `edge-tts` integration runs as a pure Node/TypeScript port with no Python dependency

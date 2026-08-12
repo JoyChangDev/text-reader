@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (avoid building this against the soon-to-be-replaced single-route layout)
 
-**Status:** ready-for-agent
+**Status:** resolved — every acceptance criterion below is ticked and the work is in the code; only the Status line was never updated. Re-confirmed against the codebase on 2026-08-12.
 
 - [x] A capped `localStorage` ring buffer (e.g. last 50 entries) records, with timestamps: `visibilitychange` firing (+ `document.visibilityState`), `focus` firing, each reconciliation-checkpoint run and what it found/corrected (`isPlaying` mismatch corrected true/false, `activeSentenceIndex` correction from/to, whether a missed chunk-advance was triggered), and MediaSession registration outcome (`'mediaSession' in navigator`, whether handlers attached successfully).
 - [x] A small collapsible panel renders in the reader UI, showing the current log contents in a readable format (most recent first).

@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** ready-for-agent
+**Status:** resolved — every acceptance criterion below is ticked and the work is in the code; only the Status line was never updated. Re-confirmed against the codebase on 2026-08-12.
 
 Found while diagnosing ticket 08's quota exhaustion. Separate bug, separate quota, same root cause shape: a read whose cost nobody was counting.
 

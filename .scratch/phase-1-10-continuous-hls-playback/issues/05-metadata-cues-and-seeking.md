@@ -4,7 +4,7 @@
 
 **Blocked by:** 04
 
-**Status:** ready-for-human
+**Status:** resolved — the code landed with every criterion ticked; what kept this open was the "Still not verified in a browser" note below, which hands the question to ticket 06. **Ticket 06 answered it on a device:** its "look-ahead is a second witness" section shows 44 Chunks generated during the backgrounded run, and the look-ahead only advances from the `cuechange` handler — so `cuechange` was firing against a growing EVENT playlist. That is the evidence this ticket was waiting for. Closed 2026-08-12.
 
 The track is created with `audio.addTextTrack('metadata')` rather than declared as `<track src>`, because a `<track>`'s source is fetched once and a Book's cue set grows as Chunks generate. Adding cues is JS running during background playback, which ADR 0003 established is reliable — only `.play()` is not. This also removes the cross-origin `<track>` question the ADR listed as unverified.
 

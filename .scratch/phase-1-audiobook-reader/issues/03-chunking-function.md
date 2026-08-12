@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — Project test infrastructure
 
-**Status:** ready-for-agent
+**Status:** resolved — every acceptance criterion below is ticked and the work is in the code; only the Status line was never updated. Re-confirmed against the codebase on 2026-08-12.
 
 - [x] Given a sample Chinese paragraph, the function returns an ordered list of chunks, each ending on a sentence boundary
 - [x] No chunk exceeds the configured maximum character count

@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** ready-for-agent
+**Status:** ready-for-human — the work landed and every other criterion is ticked. The one left open is a timing number, and ticket 12 has since moved it: the playlist measures 0.17s against a production build on the real store. Closing it needs the deployed measurement ticket 12 also owes, which is a human step, not an agent one.
 
 Found by running the real dev server against the live Blob store while trying to close ticket 04's last item. It is a blocker for that item and for ticket 06, and it is not a storage misconfiguration — the app is doing it to itself.
 

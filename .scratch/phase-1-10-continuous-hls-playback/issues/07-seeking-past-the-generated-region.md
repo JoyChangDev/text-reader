@@ -4,7 +4,7 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-human
+**Status:** ready-for-human — the code landed with every criterion ticked. One thing is still unwatched, and ticket 06 did not cover it: whether re-pointing `src` resumes cleanly at the new timeline's zero on a real device. Ticket 06's runs were ordinary playback plus one manual Sentence seek, neither of which re-points — the spike log records no seek past the generated region at all. To close this, seek past an ungenerated stretch on the device and watch playback resume. Scoped 2026-08-12.
 
 Ticket 05 rebuilt seeking around cue times and left one case unreachable. A playlist truncates at its first gap ([hlsPlaylist.js](../../../app/_lib/hlsPlaylist.js)) and the manifest follows it, so a Chunk past an ungenerated one has no `startSeconds` and gets no cues. `seekToSentence` generates only the target — a phase-1.5 rule, correct when each Chunk was its own audio file — so on a 20-Chunk Book, opening it generates 0–10, clicking into Chunk 15 generates 15 alone, and Chunks 11–14 are never requested by anything. The playlist stays 11 segments long, the parked seek waits forever, and playback stops at the end of Chunk 10 with the highlight sitting on a Sentence that never plays.
 
