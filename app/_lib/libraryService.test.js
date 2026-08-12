@@ -5,7 +5,9 @@ import {
   BOOK_INCOMPLETE,
   deleteBook,
   getBook,
+  getBookSummary,
   listBooks,
+  readBookChunks,
   updateResumeIndex,
 } from './libraryService';
 
@@ -241,6 +243,61 @@ describe('libraryService', () => {
       await addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }, clients);
 
       expect(readSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // The half of getBook that answers questions about a Book's shape rather than its
+  // contents. It exists so the continuously polled HLS playlist can learn how many Chunks
+  // a Book has without pulling its text across the network (see ticket 12).
+  describe('getBookSummary', () => {
+    test('returns null for an unknown id', async () => {
+      expect(await getBookSummary('missing', clients)).toBeNull();
+    });
+
+    test('returns the index entry, which already records how long the Book is', async () => {
+      await addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。', '二。'] }, clients);
+
+      expect(await getBookSummary('book-1', clients)).toEqual({
+        bookId: 'book-1',
+        title: 'First Book',
+        totalChunks: 2,
+        sentenceCountsByChunk: [1, 1],
+      });
+    });
+
+    // The point of the whole thing: the index blob and nothing else. A Book's text is
+    // ~1.6 MB at 5,000 Chunks, and its position costs a Redis command on top.
+    test('reads neither the Book’s text nor its position', async () => {
+      await addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。'] }, clients);
+      const getSpy = vi.spyOn(storageClient, 'get');
+      const readSpy = vi.spyOn(positionClient, 'read');
+
+      await getBookSummary('book-1', clients);
+
+      expect(getSpy.mock.calls.map(([key]) => key)).toEqual(['library/index']);
+      expect(readSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('readBookChunks', () => {
+    test('returns the stored Chunk text', async () => {
+      await addBook({ bookId: 'book-1', title: 'First Book', chunks: ['一。', '二。'] }, clients);
+
+      expect(await readBookChunks('book-1', clients)).toEqual(['一。', '二。']);
+    });
+
+    // Absence is corruption, not an empty Book - the distinction ticket 06 exists for, and
+    // it has to survive being split out of getBook.
+    test('refuses to report a missing chunks blob as an empty Book', async () => {
+      await expect(readBookChunks('book-1', clients)).rejects.toMatchObject({
+        code: BOOK_INCOMPLETE,
+      });
+    });
+
+    test('still returns a Book that genuinely has no chunks', async () => {
+      await addBook({ bookId: 'book-1', title: 'First Book', chunks: [] }, clients);
+
+      expect(await readBookChunks('book-1', clients)).toEqual([]);
     });
   });
 

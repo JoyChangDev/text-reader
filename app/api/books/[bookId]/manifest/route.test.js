@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { getCachedChunks } from '@/app/_lib/audioGenerationService';
-import { getBook } from '@/app/_lib/libraryService';
+import { getBookSummary, readBookChunks } from '@/app/_lib/libraryService';
 
-vi.mock('@/app/_lib/libraryService', () => ({ getBook: vi.fn() }));
+vi.mock('@/app/_lib/libraryService', () => ({
+  getBookSummary: vi.fn(),
+  readBookChunks: vi.fn(),
+}));
 vi.mock('@/app/_lib/audioGenerationService', () => ({ getCachedChunks: vi.fn() }));
 
 const { GET } = await import('./route');
@@ -28,13 +31,24 @@ const chunkAudio = (index, durationSeconds) => ({
   durationSeconds,
 });
 
+// Unlike the playlist, the manifest genuinely needs the Chunk text: bookManifest counts
+// Sentence ordinals from it, and the Blob fallback derives spans from it (see ticket 12).
+function bookWithText(chunks) {
+  getBookSummary.mockResolvedValueOnce({
+    bookId: 'book-1',
+    title: 'First Book',
+    totalChunks: chunks.length,
+  });
+  readBookChunks.mockResolvedValueOnce(chunks);
+}
+
 describe('GET /api/books/[bookId]/manifest', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   test("returns each Chunk's timeline position and its Sentences as absolute spans", async () => {
-    getBook.mockResolvedValueOnce({ bookId: 'book-1', chunks: ['你好。世界。', '你好。世界。'] });
+    bookWithText(['你好。世界。', '你好。世界。']);
     getCachedChunks.mockResolvedValueOnce([chunkAudio(0, 7.5), chunkAudio(1, 4)]);
 
     const response = await GET(requestFor('book-1'), paramsFor('book-1'));
@@ -71,7 +85,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
   });
 
   test('keys the lookup by the requested voice', async () => {
-    getBook.mockResolvedValueOnce({ bookId: 'book-1', chunks: ['你好。'] });
+    bookWithText(['你好。']);
     getCachedChunks.mockResolvedValueOnce([chunkAudio(0, 3)]);
 
     await GET(requestFor('book-1', '?voice=zh-TW-HsiaoYuNeural'), paramsFor('book-1'));
@@ -87,7 +101,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
   // Cues are added as the Book generates, so a stale copy would leave the client
   // permanently short of the Sentences it needs.
   test('forbids caching so a growing Book keeps yielding new cues', async () => {
-    getBook.mockResolvedValueOnce({ bookId: 'book-1', chunks: ['你好。'] });
+    bookWithText(['你好。']);
     getCachedChunks.mockResolvedValueOnce([undefined]);
 
     const response = await GET(requestFor('book-1'), paramsFor('book-1'));
@@ -96,7 +110,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
   });
 
   test('returns an empty manifest, not an error, for a Book with nothing generated yet', async () => {
-    getBook.mockResolvedValueOnce({ bookId: 'book-1', chunks: ['你好。', '世界。'] });
+    bookWithText(['你好。', '世界。']);
     getCachedChunks.mockResolvedValueOnce([undefined, undefined]);
 
     const response = await GET(requestFor('book-1'), paramsFor('book-1'));
@@ -114,10 +128,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
   // highlight lands at the wrong second (see ticket 07).
   describe('?from', () => {
     test('rebases the timeline on the given Chunk while leaving Sentence ids alone', async () => {
-      getBook.mockResolvedValueOnce({
-        bookId: 'book-1',
-        chunks: ['你好。世界。', '你好。世界。', '你好。世界。'],
-      });
+      bookWithText(['你好。世界。', '你好。世界。', '你好。世界。']);
       getCachedChunks.mockResolvedValueOnce([
         chunkAudio(0, 7.5),
         chunkAudio(1, 4),
@@ -153,7 +164,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
     // No getCachedChunks mock: the Chunk audio is never read, which is the point - an
     // unusable start is rejected before anything touches the store.
     test('rejects a start that names no Chunk in this Book with 400', async () => {
-      getBook.mockResolvedValueOnce({ bookId: 'book-1', chunks: ['你好。'] });
+      bookWithText(['你好。']);
 
       const response = await GET(
         requestFor('book-1', '?voice=zh-TW-default&from=4'),
@@ -173,7 +184,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
   });
 
   test('returns 404 when the book does not exist', async () => {
-    getBook.mockResolvedValueOnce(null);
+    getBookSummary.mockResolvedValueOnce(null);
 
     const response = await GET(requestFor('missing'), paramsFor('missing'));
 
@@ -181,7 +192,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
   });
 
   test('returns a 502 when reading the Book fails', async () => {
-    getBook.mockRejectedValueOnce(new Error('blob get failed'));
+    getBookSummary.mockRejectedValueOnce(new Error('blob get failed'));
 
     const response = await GET(requestFor('book-1'), paramsFor('book-1'));
 
@@ -189,7 +200,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
   });
 
   test('returns a 502 when reading the cached Chunks fails', async () => {
-    getBook.mockResolvedValueOnce({ bookId: 'book-1', chunks: ['你好。'] });
+    bookWithText(['你好。']);
     getCachedChunks.mockRejectedValueOnce(new Error('blob get failed'));
 
     const response = await GET(requestFor('book-1'), paramsFor('book-1'));

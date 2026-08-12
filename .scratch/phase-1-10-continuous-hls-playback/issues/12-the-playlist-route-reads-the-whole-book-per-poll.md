@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** ready-for-agent
+**Status:** resolved — except the deployed re-measurement, which is owed once this ships (see the third acceptance criterion, still open)
 
 This is [ticket 08](08-playlist-routes-read-one-blob-per-chunk.md)'s shape, in the one place it
 did not look. That ticket removed an O(Book) fan-out of one storage read per Chunk from the
@@ -58,12 +58,43 @@ and the Book in question had a small `chunks.json`. The blob whose size matters 
 proportional to the Book's text, and the Books this was measured on before were short. At 4,962
 Chunks it is 1.6 MB; the phase's own target of ~2,000 Chunks would be ~700 KB.
 
+## Measured again — 2026-08-12, after the change
+
+`getBook` is now two exports. `getBookSummary` reads `library/index.json` and stops;
+`readBookChunks` reads the text, and `readBookAudio` calls it only when the caller asked for
+cues. Neither the playlist nor the manifest reads the Resume position any more.
+
+Measured against a **production build running locally on the real store** — the same R2
+bucket and Upstash instance the deployed app uses, and the same Book — rather than against
+the deployed app, because the change is not deployed yet. Same machine, same session, four
+warm requests each, before and after taken minutes apart with nothing else changed:
+
+| route               | before    | after     |
+| ------------------- | --------- | --------- |
+| `/api/library`      | 0.18s     | 0.17s     |
+| `…/playlist.m3u8`   | **0.59s** | **0.17s** |
+| `…/manifest?from=0` | 0.63s     | 0.55s     |
+
+**The playlist poll lost 0.42s and now costs what listing the Library costs**, which is the
+shape the ticket predicted: both routes read the same 17 KB index, and what the playlist
+adds on top of that is Redis (the Chunk index, plus a Blob scan on a miss) rather than the
+Book's text. The manifest kept its 1.6 MB read — it needs the text, see below — and lost
+only the Resume position, worth ~0.08s and one Redis command.
+
+Response bodies were byte-identical across the change on all three routes (13,551 B for the
+playlist, 381,256 B for the manifest), which is the correctness half of the measurement.
+
+The deployed baseline was re-taken first and reproduced 2026-08-11's numbers exactly
+(library 0.74s, playlist 1.32s, manifest 1.71s), so the ~0.7s round-trip floor is the whole
+difference between the two tables. **Still owed: the same four requests against the deployed
+app once this ships**, to confirm the saving survives Vercel's own latency to R2.
+
 ## Acceptance criteria
 
-- [ ] A playlist request for a Book with a large `chunks.json` does not transfer that blob. The Chunk count comes from somewhere cheap — `totalChunks` on the Library index entry is already written and already read.
-- [ ] The manifest's Blob-fallback path still gets the Chunk text it needs to derive spans, and is still correct when the Chunk index cannot answer. This is the reason the full read exists at all, and it must not become a path that silently returns no Sentences.
-- [ ] The saving is measured the same way it was found — request timings against the deployed app on a Book whose text is large — and recorded here. A change that only looks cheaper in a unit test has not been shown to do anything.
-- [ ] Whatever `readBookAudio` ends up needing is a named thing rather than "a Book minus its text", so the next reader can tell which callers pay for the text and which do not.
+- [x] A playlist request for a Book with a large `chunks.json` does not transfer that blob. The Chunk count comes from somewhere cheap — `totalChunks` on the Library index entry is already written and already read. _With one carve-out the ticket did not anticipate: a Book whose index entry predates `totalChunks` still pays the read, because there is nowhere cheap to ask and an absent count reads as an empty Book rather than as a failure. The one Book in the deployed store has the field._
+- [x] The manifest's Blob-fallback path still gets the Chunk text it needs to derive spans, and is still correct when the Chunk index cannot answer. This is the reason the full read exists at all, and it must not become a path that silently returns no Sentences.
+- [ ] The saving is measured the same way it was found — request timings against the deployed app on a Book whose text is large — and recorded here. A change that only looks cheaper in a unit test has not been shown to do anything. _Half done: measured against a production build on the real store, recorded above. The deployed run is owed once this ships, and cannot be taken before then._
+- [x] Whatever `readBookAudio` ends up needing is a named thing rather than "a Book minus its text", so the next reader can tell which callers pay for the text and which do not.
 
 ## Comments
 
@@ -74,8 +105,36 @@ already settled for the capacity indicator — a TTL bounds a cost rather than r
 it puts a staleness window on the Chunk count, which is the one number that grows while a Book
 is being read. The count is already stored somewhere cheap; read it from there.
 
+### The playlist stopped being able to notice a corrupt Book
+
+Not reading the text means not discovering it is missing, so `BOOK_INCOMPLETE` (ticket 06)
+can no longer surface on the playlist path: a Book advertised by the index whose text was
+never stored now serves a valid, empty playlist instead of a 502. Judged acceptable rather
+than overlooked — the reader page reaches `/api/library/[bookId]` before it points the
+element at a playlist, and that still 409s, so the Listener sees the corruption at the point
+where something can be done about it. Detecting it a second time on a route polled every
+42 seconds would cost the read this ticket removed.
+
+### The manifest needs the text for a second reason this ticket did not name
+
+"`chunks[chunkIndex]`, only inside `withDerivedCues`" is true of `bookAudio.js` and not of
+the manifest route: `readBookAudio` _returns_ the text, and `buildBookManifest` counts
+Sentence ordinals off it with `splitIntoSentences`. So the manifest reads the Book's text on
+every request whether or not the Chunk index answers, and the 1.6 MB is still on that path.
+
+The obvious next move is `sentenceCountsByChunk`, which `addBook` already writes onto the
+index entry for exactly this shape of question. It was left alone here because the fallback
+is silent in the wrong way: an index entry predating that field would give the manifest no
+counts, and the failure mode is every cue id shifted rather than an error — `bookProgress.js`
+guards for such entries, so they are not merely hypothetical. Worth its own ticket, with a
+look at whether any Book in the store actually lacks the field.
+
 ### The resume position on this path is worth its own look
 
 `getBook` exists to open a Book for a Listener, which is why it reads the position. The HLS
 routes are not that, and they do nothing with what it returns. Whether the fix is a separate
 lookup or a flag on this one, the polled path should not be paying for a position nobody reads.
+
+Settled by the split: `getBookSummary` reads the index and nothing else, so neither HLS route
+touches Redis for a position or falls back to the snapshot blob. Only `getBook` — which is
+now the composition of the two halves, and is what the reader page calls — still pays for it.

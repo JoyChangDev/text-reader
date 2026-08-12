@@ -122,18 +122,46 @@ export async function addBook(
   return withPosition(summary, undefined);
 }
 
-export async function getBook(bookId, { storageClient, positionClient } = defaultClients) {
+// A Book's index entry, exactly as the index holds it: what it is called and what shape it
+// is, with none of its text. The named thing a caller wants when the question is how long a
+// Book is rather than what it says - `totalChunks` and `sentenceCountsByChunk` are on it
+// for exactly that, written once by addBook.
+//
+// It looks up no Resume position. It does not strip one either: an entry written before
+// ticket 10 still carries the fields legacyPosition reads, which is why this returns the
+// summary raw and leaves withPosition to the callers that care.
+//
+// It is its own export because the HLS playlist route was calling getBook to take
+// `chunks.length` from it, which fetched ~1.6 MB of text on every poll of a Book that had
+// 4,962 Chunks, and a Redis command for a position it never looked at (see ticket 12).
+export async function getBookSummary(bookId, { storageClient } = defaultClients) {
   const index = await readIndex(storageClient);
-  const summary = index.find((book) => book.bookId === bookId);
-  if (!summary) return null;
+  return index.find((book) => book.bookId === bookId) ?? null;
+}
 
-  // No `?? []` here, unlike the blobs where absence is genuinely a valid state (a Book with
-  // no stored resume position has not been started). A summary exists precisely because the
-  // chunks were supposed to have been written alongside it, so their absence is corruption,
-  // and defaulting it away is what turned a failed write into an openable Book with no text
-  // and a play button that did nothing. An empty array is still a value and still passes.
+// A Book's Chunk text - the expensive half, so callers reach for it deliberately.
+//
+// No `?? []` here, unlike the blobs where absence is genuinely a valid state (a Book with
+// no stored resume position has not been started). An index entry exists precisely because
+// the chunks were supposed to have been written alongside it, so their absence is
+// corruption, and defaulting it away is what turned a failed write into an openable Book
+// with no text and a play button that did nothing. An empty array is still a value and
+// still passes.
+export async function readBookChunks(bookId, { storageClient } = defaultClients) {
   const chunks = await storageClient.get(chunksKey(bookId));
   if (!chunks) throw incompleteBookError(bookId);
+
+  return chunks;
+}
+
+// Opening a Book for a Listener: everything about it, position included. The other two
+// reads above are the pieces, and callers that need only one of them should say so rather
+// than coming through here.
+export async function getBook(bookId, { storageClient, positionClient } = defaultClients) {
+  const summary = await getBookSummary(bookId, { storageClient });
+  if (!summary) return null;
+
+  const chunks = await readBookChunks(bookId, { storageClient });
 
   // This is the read that decides where playback resumes, so unlike listBooks it pays for
   // the snapshot when Redis has nothing - one extra Blob read when a Book is opened,

@@ -1,13 +1,13 @@
 import { getCachedChunks } from './audioGenerationService';
 import { readIndexedRun } from './chunkIndex';
-import { getBook } from './libraryService';
+import { getBookSummary, readBookChunks } from './libraryService';
 import { parsePlaylistStart } from './playlistStart';
 import { createChunkIndexClient } from './redisChunkIndex';
 import { deriveCueSpans } from './sentenceSpans';
 
-// The one lookup both HLS routes make: a Book's Chunk text plus whatever audio is already
-// cached for one voice, in Chunk order. Read-only — /api/audio-chunks remains the only
-// thing that generates (see ticket 03).
+// The one lookup both HLS routes make: whatever audio is already cached for one voice, in
+// Chunk order, and as much of the Book itself as the caller will actually use. Read-only —
+// /api/audio-chunks remains the only thing that generates (see ticket 03).
 //
 // It owns the `from` contract rather than leaving each route to parse it, because the
 // playlist and the manifest have to agree on where the timeline's zero is; a route
@@ -47,6 +47,10 @@ async function withIndexedCues(chunkIndexClient, run, { bookId, voice }) {
 // be derived from them here — the index path had them derived once at generation time
 // instead. Doing it here is what lets bookManifest see one entry shape whichever source
 // answered, and the playlist skips it because it reads no cue.
+//
+// `chunks` is `undefined` on the playlist path, which never paid for the text (ticket 12).
+// The early return is what makes that safe, so the two conditions are the same condition:
+// needsCues is exactly when needsBookText below is true, and exactly when the text is here.
 function withDerivedCues(chunkAudio, chunks, needsCues) {
   if (!needsCues) return chunkAudio;
 
@@ -60,8 +64,10 @@ function withDerivedCues(chunkAudio, chunks, needsCues) {
   );
 }
 
-async function readChunkAudio(chunkIndexClient, { bookId, voice, chunks, from, needsCues }) {
-  const chunkCount = chunks.length;
+async function readChunkAudio(
+  chunkIndexClient,
+  { bookId, voice, chunks, chunkCount, from, needsCues },
+) {
   const index = await chunkIndexClient.readIndex({ bookId, voice });
   const run = index && readIndexedRun(index, { bookId, voice, chunkCount, from });
 
@@ -81,8 +87,25 @@ async function readChunkAudio(chunkIndexClient, { bookId, voice, chunks, from, n
 
 const defaultClients = { chunkIndexClient: createChunkIndexClient() };
 
+// Whether this lookup has to pull the Book's text across the network, and why.
+//
+// The manifest does: bookManifest counts Sentence ordinals from the Chunk text, and the
+// Blob fallback derives spans from it. The playlist wants one integer — how long the Book
+// is — which the Library index entry already records, so it reads the 17 KB index instead
+// of a blob that is 1.6 MB on a 4,962-Chunk Book and is re-fetched every ~42 seconds for
+// as long as a Listener is listening (ticket 12).
+//
+// The exception is a Book indexed before addBook recorded `totalChunks`. There is nowhere
+// cheap to ask, and an absent count is worse than a slow one: `new Array(undefined)` is a
+// one-element run, so a fully narrated Book would serve as a stump of a playlist rather
+// than fail. It pays the read it always paid.
+function needsBookText({ totalChunks }, needsCues) {
+  return needsCues || typeof totalChunks !== 'number';
+}
+
 // Returns null for an unknown Book, `{ error }` for a `from` that names no Chunk in it,
-// and otherwise the Book's text alongside the Chunk audio reachable from `from`.
+// and otherwise the Chunk audio reachable from `from` — alongside the Book's text, for the
+// caller that asked for cues and therefore paid for it.
 //
 // `needsCues` is the manifest route; the playlist route leaves it off. It is a property of
 // what the caller will do with the answer rather than of the Book, which is why it is a
@@ -95,12 +118,15 @@ export async function readBookAudio(
   { bookId, voice, from: requestedFrom, needsCues = false },
   { chunkIndexClient } = defaultClients,
 ) {
-  const book = await getBook(bookId);
-  if (!book) {
+  const summary = await getBookSummary(bookId);
+  if (!summary) {
     return null;
   }
 
-  const { from, error } = parsePlaylistStart(requestedFrom, { chunkCount: book.chunks.length });
+  const chunks = needsBookText(summary, needsCues) ? await readBookChunks(bookId) : undefined;
+  const chunkCount = chunks?.length ?? summary.totalChunks;
+
+  const { from, error } = parsePlaylistStart(requestedFrom, { chunkCount });
   if (error) {
     return { error };
   }
@@ -108,10 +134,11 @@ export async function readBookAudio(
   const chunkAudio = await readChunkAudio(chunkIndexClient, {
     bookId,
     voice,
-    chunks: book.chunks,
+    chunks,
+    chunkCount,
     from,
     needsCues,
   });
 
-  return { chunks: book.chunks, chunkAudio, from };
+  return { chunks, chunkAudio, from };
 }

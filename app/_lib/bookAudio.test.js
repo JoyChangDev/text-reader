@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { getCachedChunks } from './audioGenerationService';
-import { getBook } from './libraryService';
+import { getBookSummary, readBookChunks } from './libraryService';
 
-vi.mock('./libraryService', () => ({ getBook: vi.fn() }));
+vi.mock('./libraryService', () => ({ getBookSummary: vi.fn(), readBookChunks: vi.fn() }));
 vi.mock('./audioGenerationService', () => ({ getCachedChunks: vi.fn() }));
 
 const { readBookAudio } = await import('./bookAudio');
@@ -21,7 +21,8 @@ const spans = [
 ];
 
 const BASE = 'https://abc.public.blob.vercel-storage.com/';
-const book = { bookId: 'book-1', chunks: [TEXT, TEXT, TEXT] };
+const chunks = [TEXT, TEXT, TEXT];
+const summary = { bookId: 'book-1', title: 'A Book', totalChunks: 3 };
 const request = { bookId: 'book-1', voice: 'voice-a' };
 
 // The Blob shape: raw word boundaries, no spans.
@@ -40,7 +41,8 @@ function indexClient({ durations, base = BASE, cues } = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getBook.mockResolvedValue(book);
+  getBookSummary.mockResolvedValue(summary);
+  readBookChunks.mockResolvedValue(chunks);
   getCachedChunks.mockResolvedValue([undefined, undefined, undefined]);
 });
 
@@ -90,6 +92,45 @@ describe('readBookAudio', () => {
 
     await readBookAudio({ ...request, from: '2' }, { chunkIndexClient: indexClient() });
     expect(getCachedChunks).toHaveBeenCalledWith(expect.objectContaining({ from: 2 }));
+  });
+
+  // The Book's text is the largest thing either route can read - 1.6 MB on a 4,962-Chunk
+  // Book, measured against the deployed app - and the playlist is re-fetched every
+  // ~42 seconds for as long as a Listener is listening. See ticket 12.
+  describe('the Book’s text', () => {
+    test('is not read for the playlist, which needs only how long the Book is', async () => {
+      const chunkIndexClient = indexClient({ durations: { 0: '12.5', 1: '11' } });
+
+      const result = await readBookAudio({ ...request, from: '1' }, { chunkIndexClient });
+
+      expect(readBookChunks).not.toHaveBeenCalled();
+      // The count still bounds the run, it just came from the index entry instead.
+      expect(result.chunkAudio).toHaveLength(3);
+    });
+
+    // bookManifest counts Sentence ordinals from the Chunk text, and the Blob fallback
+    // derives spans from it. Neither has anywhere cheaper to get it.
+    test('is read for the manifest, which counts Sentence ordinals from it', async () => {
+      const chunkIndexClient = indexClient({ durations: { 0: '12.5' }, cues: { 0: spans } });
+
+      const result = await readBookAudio({ ...request, needsCues: true }, { chunkIndexClient });
+
+      expect(readBookChunks).toHaveBeenCalledWith('book-1');
+      expect(result.chunks).toEqual(chunks);
+    });
+
+    // A Book indexed before addBook recorded totalChunks has no cheap count. Reading it as
+    // `undefined` would build a one-element run and serve a fully narrated Book as a stump
+    // of a playlist, so it pays the read it always paid instead.
+    test('is read anyway when the index entry does not say how long the Book is', async () => {
+      getBookSummary.mockResolvedValue({ bookId: 'book-1', title: 'A Book' });
+      const chunkIndexClient = indexClient({ durations: { 0: '12.5', 1: '11' } });
+
+      const result = await readBookAudio(request, { chunkIndexClient });
+
+      expect(readBookChunks).toHaveBeenCalledWith('book-1');
+      expect(result.chunkAudio[1].durationSeconds).toBe(11);
+    });
   });
 
   describe('cues', () => {
@@ -163,7 +204,7 @@ describe('readBookAudio', () => {
 
   describe('what it refuses to look up', () => {
     test('returns null for an unknown Book without reading either source', async () => {
-      getBook.mockResolvedValue(null);
+      getBookSummary.mockResolvedValue(null);
       const chunkIndexClient = indexClient({ durations: { 0: '12.5' } });
 
       expect(await readBookAudio(request, { chunkIndexClient })).toBeNull();
@@ -179,6 +220,7 @@ describe('readBookAudio', () => {
       expect(result.error).toBeTruthy();
       expect(chunkIndexClient.readIndex).not.toHaveBeenCalled();
       expect(getCachedChunks).not.toHaveBeenCalled();
+      expect(readBookChunks).not.toHaveBeenCalled();
     });
   });
 });
