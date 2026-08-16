@@ -1956,6 +1956,26 @@ describe('AudioPlayer MediaSession integration', () => {
     expect(navigator.mediaSession.metadata.title).toBe('我的書');
   });
 
+  // Pinned because the failure is invisible from here: with no artwork the OS falls back to
+  // a page icon and still shows *something* on the lock screen, so nothing looks broken
+  // until you notice it is the wrong picture. See app/media-artwork/route.js.
+  test('declares Now Playing artwork rather than letting the OS pick a page icon', async () => {
+    mockMediaSession();
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId="book-media-session-artwork" chunks={chunks} title="我的書" />
+      </ChakraProvider>,
+    );
+
+    await screen.findByRole('button', { name: /^播放$/i });
+
+    await waitFor(() => expect(navigator.mediaSession.metadata).not.toBeNull());
+    expect(navigator.mediaSession.metadata.artwork).toEqual([
+      { src: '/media-artwork', sizes: '512x512', type: 'image/png' },
+    ]);
+  });
+
   test('keeps playbackState in sync with play/pause', async () => {
     mockMediaSession();
 

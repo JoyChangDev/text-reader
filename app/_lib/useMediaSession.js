@@ -29,7 +29,14 @@ export function useMediaSession({ title, isPlaying, play, pause }) {
 
   useEffect(() => {
     if (!('mediaSession' in navigator) || !title) return undefined;
-    navigator.mediaSession.metadata = new MediaMetadata({ title });
+    // `artwork` is declared rather than left out: with no entry, iOS falls back to whatever
+    // page icon it can find, which is a different file from the one the Home Screen uses
+    // (apple-touch-icon) and produced a lock screen showing the create-next-app default
+    // while the Home Screen showed the app's own glyph. See app/media-artwork/route.js.
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title,
+      artwork: [{ src: '/media-artwork', sizes: '512x512', type: 'image/png' }],
+    });
     // Otherwise a Listener navigating back to the Library leaves this Book's title on
     // the OS lock screen with nothing actually playing.
     return () => {
