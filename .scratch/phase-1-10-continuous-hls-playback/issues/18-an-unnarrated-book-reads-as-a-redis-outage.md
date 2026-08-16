@@ -6,11 +6,10 @@ index that could not be read.
 
 **Blocked by:** —
 
-**Status:** ready-for-human — built and green, and every criterion below is ticked. What is
-**not** answered is the last section, "What it costs today": this makes the routes tell the
-truth, and whether a brand-new Book's first playlist actually plays is a separate question that
-wants a device. Nothing here was verified against a real unnarrated Book end to end — only the
-`hgetall` reply it turns on, which was.
+**Status:** ready-for-human — built, green, and **both routes measured against the live Upstash,
+before and after** (see "Measured, not inferred"). What is **not** answered is the last section,
+"What it costs today": the routes tell the truth now, and whether a brand-new Book's first
+playlist actually plays is a separate question that wants a device and an ear.
 
 Found on 2026-08-16 while closing
 [phase 1.11's ticket 06](../../phase-1-11-object-storage-migration/issues/06-a-failed-write-reads-as-an-empty-book.md),
@@ -104,6 +103,44 @@ One `?? {}` in `readIndex`, with the reasoning at the line, and a test whose fak
 resolves `null`. The test was confirmed to fail against the old line before the fix went in —
 worth saying, because the entire defect is that a test which looks like it covers this passes
 either way.
+
+### Measured, not inferred — 2026-08-16
+
+Reproducing this needs a (Book, voice) with nothing narrated, and that does **not** need an
+upload or a single TTS call: the index is keyed by both, so **an existing Book in a voice it was
+never narrated in is exactly the state**. `book:<id>:zh-TW-YunJheNeural:durations` has never been
+written for any Book here, and the routes are read-only, so this costs nothing and changes
+nothing.
+
+Against 戰神(上) (2,372 Chunks, narrated in `zh-TW-HsiaoChenNeural` only), on the dev server
+wired to the real Upstash and the real R2:
+
+| request                             | before      | after       |
+| ----------------------------------- | ----------- | ----------- |
+| `playlist.m3u8?voice=YunJhe` (none) | **502**     | 200         |
+| `manifest?voice=YunJhe` (none)      | **502**     | 200         |
+| `playlist.m3u8?voice=HsiaoChen`     | 200, 17 seg | 200, 17 seg |
+
+The "before" column is the committed line with `?? {}` taken back out, against the same store
+minutes apart — so this is the defect itself, not a reconstruction of it. The narrated voice is
+the control: unchanged, and still 17 segments.
+
+**What the element now receives for an unnarrated Book**, in full:
+
+```
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:1
+#EXT-X-PLAYLIST-TYPE:EVENT
+#EXT-X-MEDIA-SEQUENCE:0
+```
+
+Well-formed, EVENT, no `ENDLIST`, and no segments. Which is precisely the source
+[ticket 15](15-the-re-point-races-the-generation-it-asked-for.md) found an element "errors on and
+never recovers from" — so this measurement confirms the fix and sharpens the open question at the
+same time. It does not answer it: ticket 15 saw that on a playlist the element was re-pointed at
+mid-session, and this one is the element's first load. Whether those behave the same is the thing
+still wanting a device.
 
 ### The other two criteria, answered rather than changed
 
