@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** ready-for-human — built 2026-08-09, see the notes at the bottom. The Lua script has never run against the real service.
+**Status:** resolved — 2026-08-16. The Lua script has now run against the real Upstash and both things this ticket said to check are right, along with two more it did not think to name. Written up in "The script, against the real service" at the bottom. Two loose ends stay open and are recorded there rather than lost with the ticket.
 
 Found on 2026-08-09 while checking Vercel Blob's operation classes for ticket 08's stage 2. Third instance of the same bug shape as [ticket 08](08-playlist-routes-read-one-blob-per-chunk.md) and [ticket 09](09-blob-usage-indicator-costs-an-advanced-operation.md) — a storage call on a hot path whose cost nobody was counting — but this one is on the **write** side, and it spends the smaller of the two quotas.
 
@@ -109,3 +109,44 @@ Resolution order when reading: Redis → the snapshot → the field left on the 
 Worth folding into ticket 08's 2026-09-06 runbook while the dashboard is open: the Advanced Operations figure this ticket is built on (~330/hour) was derived from `chunkText`'s sizing, never measured. A listening session now ought to move that counter by a handful rather than by hundreds, and that delta is the proof this worked.
 
 `app/dev-preview/previewFetchMock.js` still models the pre-ticket-10 shape — it embeds `resumeIndex` in its fake index and ignores `updatedAt`/`snapshot`. It intercepts `fetch` rather than exercising the real route, so nothing is broken by that, but the preview harness and the real API now describe different things and it will mislead whoever reads it next.
+
+### The script, against the real service
+
+Run 2026-08-16 against the real Upstash, on a throwaway `zz-probe-<ts>` bookId whose three fields
+were deleted afterwards (`HDEL` returned 3, and a re-read returned null). No Book's position was
+touched. The probe called `redis.eval` directly rather than going through `write()`, deliberately:
+`orMiss` swallows the error and `written === 1` collapses the return value to a boolean, and the
+return value is the thing under test.
+
+**`EVAL` returns integers, not strings.** All four calls came back `typeof === 'number'`, with
+`value === 1` and `value === 0` strictly true. This is the one that mattered. `write()` compares
+with `written === 1`, so a string `"1"` would have made every successful save report itself as
+"a newer one was already stored" — the position would have silently stopped following the Listener
+around, with nothing logged and nothing thrown. Ticket 08 was caught by exactly this deserializer
+inconsistency, which is why it was worth a look rather than an assumption.
+
+**An identical timestamp is refused, not an error.** Returned `0`, no throw — the `>=` on the
+reject side behaving as the comment above it says, so a retry of the same save is harmless.
+
+Two more the ticket did not name, checked while the probe was open:
+
+- **A newer timestamp wins (`1`) and an older one is refused (`0`).** The rule this ticket exists
+  to establish, confirmed at the seam rather than only in a test against a fake.
+- **The stored state proves the semantics end to end.** After four writes — base, same, newer,
+  older — the hash held the _newer_ write's values and neither refused write had touched it. A
+  script that returned the right verdicts while still writing would have passed the first two
+  checks and failed this one.
+
+### Still open, and deliberately not closed by this ticket
+
+Both were named in the notes above and neither is a criterion; recorded here so closing the ticket
+does not lose them.
+
+**The ~330 Advanced Operations/hour figure is still derived, never measured.** It came from
+`chunkText`'s 200-char / 4-Sentence cap. The gap it justified is roughly 50×, so the decision does
+not depend on the number being exact — but nobody has watched the counter move.
+
+**`app/dev-preview/previewFetchMock.js` still models the pre-ticket-10 shape.** It embeds
+`resumeIndex` in its fake index and ignores `updatedAt`/`snapshot`. Nothing is broken by it, since
+it intercepts `fetch` rather than exercising the real route, but the preview harness and the real
+API now describe different things.
