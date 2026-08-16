@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { readBookAudio } from '@/app/_lib/bookAudio';
 import { buildBookManifest } from '@/app/_lib/bookManifest';
+import { BOOK_INCOMPLETE } from '@/app/_lib/libraryService';
 
 // The absolute-time Sentence spans the client turns into metadata cues, alongside the
 // playlist route's segments and keyed by the same (Book, voice). Read-only, like it, and
@@ -45,6 +46,16 @@ export async function GET(request, { params }) {
       headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' },
     });
   } catch (error) {
+    // The Book is listed but its text was never stored. This route always reads that text —
+    // bookManifest counts Sentence ordinals from it — so it is the one HLS route that can
+    // tell the condition apart, and it answers the same 409 /api/library/[bookId] does
+    // rather than the 502 that invites a retry which can only fail again (see ticket 06 of
+    // phase 1.11).
+    if (error.code === BOOK_INCOMPLETE) {
+      console.error('The book is in the library index but its text was never stored', error);
+      return NextResponse.json({ error: 'book is incomplete' }, { status: 409 });
+    }
+
     console.error('Building the manifest failed', error);
     return NextResponse.json({ error: 'Building the manifest failed' }, { status: 502 });
   }

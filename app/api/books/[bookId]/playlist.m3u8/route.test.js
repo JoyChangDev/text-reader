@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { getBookSummary, readBookChunks } from '@/app/_lib/libraryService';
+import { BOOK_INCOMPLETE, getBookSummary, readBookChunks } from '@/app/_lib/libraryService';
 
 vi.mock('@/app/_lib/libraryService', () => ({
+  BOOK_INCOMPLETE: 'BOOK_INCOMPLETE',
   getBookSummary: vi.fn(),
   readBookChunks: vi.fn(),
 }));
@@ -203,6 +204,23 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
     const response = await GET(requestFor('book-1'), paramsFor('book-1'));
 
     expect(response.status).toBe(502);
+  });
+
+  // The one Book whose text this route still reads: indexed before addBook recorded
+  // `totalChunks`, so there is nowhere cheap to ask how long it is. If that read finds
+  // nothing the Book is listed with no text behind it, which is permanent - 409, not the 502
+  // that asks for a retry (see ticket 06 of phase 1.11). Every other Book never opens the
+  // chunks blob here, so this route cannot reach the condition and does not pay per poll to
+  // look for it.
+  test('returns 409 for a Book with no recorded length whose text was never stored', async () => {
+    getBookSummary.mockResolvedValueOnce({ bookId: 'book-1', title: 'First Book' });
+    const incomplete = new Error('the chunks were never stored');
+    incomplete.code = BOOK_INCOMPLETE;
+    readBookChunks.mockRejectedValueOnce(incomplete);
+
+    const response = await GET(requestFor('book-1'), paramsFor('book-1'));
+
+    expect(response.status).toBe(409);
   });
 
   test('returns a 502 when reading the Chunk index fails', async () => {

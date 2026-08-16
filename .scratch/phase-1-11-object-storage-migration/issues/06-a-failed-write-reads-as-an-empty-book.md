@@ -6,10 +6,12 @@ openable, and silently unreadable.
 
 **Blocked by:** —
 
-**Status:** ready-for-human — built and green. One thing is worth a look before this is closed:
-the two HLS routes now answer 502 for an incomplete Book (written up below). The reader's new
-error screen was verified by test rather than by eye; the player half was verified in the
-running app.
+**Status:** resolved — 2026-08-16. The one thing left open at close was looked at and both
+halves of it are now answered: the HLS routes answer 409 rather than 502 (the write-up below
+that said otherwise was stale in a way that mattered — see "Reviewed at close"), and the
+reader's incomplete-Book screen was finally seen in the running app, delete branch included.
+One thing found on the way is **not** this ticket's and is recorded at the bottom under
+"Found while closing".
 
 Found while diagnosing [ticket 05](05-cut-over-and-measure.md)'s first real upload. That
 ticket's bug — a `411 MissingContentLength` on the chunks blob — is fixed. This one is what
@@ -118,6 +120,11 @@ inverts the dependency. Each side carries a comment pointing at the other.
 
 ### The playlist routes now answer 502 for an incomplete Book
 
+> **Superseded at close, 2026-08-16.** Both routes answer 409 now, and the reasoning below was
+> already out of date when it was written — `readBookAudio` had stopped calling `getBook`. See
+> "Reviewed at close" at the bottom. Kept in place because the decision it records ("left as
+> it is, for a state a Listener cannot get to") is the one that was overturned.
+
 `bookAudio.readBookAudio` calls the same `libraryService.getBook`, so the throw reaches
 `/api/books/[bookId]/playlist.m3u8` and `/manifest` too. Both already wrap their lookup, so
 each returns its own 502 rather than crashing — but 502 is the "the store is down, try again"
@@ -204,6 +211,78 @@ fix is to surface the error the element already reports, not to add a playback p
 Low priority against the criteria above — the target device is iPhone and this app currently
 has one Listener — but it cost an investigation once already, and it will cost one again the
 first time somebody opens the app on a laptop.
+
+### Reviewed at close, 2026-08-16
+
+**The 502 note above was describing code that no longer existed.** It said `readBookAudio`
+calls `getBook`; it calls `getBookSummary`, and `readBookChunks` only when it will actually use
+the text — [ticket 12](../../phase-1-10-continuous-hls-playback/issues/12-the-playlist-route-reads-the-whole-book-per-poll.md)
+took the whole-Book read off the polled path after this ticket was written. So the two routes
+were not doing the same thing as each other at all:
+
+- **The manifest** always reads the Chunk text (`bookManifest` counts Sentence ordinals from
+  it), so it always throws `BOOK_INCOMPLETE` and always answered 502. The note was right here.
+- **The playlist** reads the text only for a Book indexed before `addBook` recorded
+  `totalChunks`. For every other Book it never opens the chunks blob, so it never throws — it
+  serves whatever the Chunk index says, which for an incomplete Book is not a 502 at all.
+
+That second line is why the note was worth more than a status-line correction. "Both routes
+answer 502" is a wrong description that reads as a tolerable one; what was actually there was a
+route that cannot tell an incomplete Book from an unnarrated one — the ticket's own defect
+shape, one layer down.
+
+**What was changed:** both routes now answer `409`, matching `/api/library/[bookId]`, with a
+test each. The overturned reasoning was "unreachable, so leave it": true, and the cost of not
+leaving it is five lines and an import that only ever runs on the server. A 502 is a standing
+instruction to retry, and this one can only fail again — it would have cost somebody an
+investigation exactly the way the silence this ticket is named after did.
+
+**What was deliberately not changed:** the playlist still cannot detect an incomplete Book that
+has a recorded `totalChunks`, and should not learn to. The only way to know is to read the
+chunks blob, which is the 1.6 MB per poll ticket 12 removed — paid forever, on the app's
+hottest path, to detect a state that no Listener can reach because opening the Book fails at
+`/api/library/[bookId]` first. The route says so at the `catch`.
+
+### The reader's incomplete-Book screen, seen at last — 2026-08-16
+
+The gap the Status line named. Verified in the running app at `localhost:3100` the same way the
+generic branch was on 2026-08-11: `window.fetch` replaced in the page so that one made-up
+bookId answers `409`, no real Book and no real store touched, and the saved `lastOpenBook`
+pointer read before and restored after.
+
+What the 409 branch renders: 「這本書的內容沒有儲存成功，無法閱讀。刪除後重新上傳即可。」 in
+`danger`, then 刪除這本書, then 返回書庫 — **and no 重新載入**, which is the distinction the
+"try again, but not actually try" section above draws, now confirmed on screen rather than only
+in jsdom. Centred, `maxW` 420px, and at 375 px wide (the target device) the message keeps its
+`px={6}` margins with no horizontal overflow.
+
+Both of its actions were exercised:
+
+- **刪除這本書 with the delete succeeding** cleared the last-open pointer and landed on the
+  Library.
+- **刪除這本書 with the delete answering 502** left the message and both buttons on screen, on
+  the same route, with nothing disabled — "a delete that itself fails leaves the message on
+  screen rather than pretending it worked", which until now was a claim in a test.
+
+Not a pixel screenshot: the browser pane was not compositing, so this is the accessibility tree
+plus computed geometry and colour rather than an image. That is enough for the two things that
+were actually in doubt — the 409 branch's wording, and its delete.
+
+### Found while closing, and it belongs to ticket 17 rather than here
+
+Not this ticket's, not fixed here, and worth someone's attention: `redisChunkIndex.readIndex`
+hands `readIndexedRun` whatever `hgetall` returned, and `@upstash/redis` types that as
+`TData | null` — Redis has no empty hash, so **a Book nobody has narrated yet returns `null`,
+not `{}`**. `readIndexedRun` treats that as "no usable index" and both HLS routes answer 502.
+
+That is the exact distinction
+[ticket 17](../../phase-1-10-continuous-hls-playback/issues/17-a-generated-chunk-past-the-gap-reads-as-ungenerated.md)
+was built to preserve, and its criterion says "a valid index must yield a run — even an
+entirely empty one". Its tests use `indexed({})`, a truthy empty object, which is a shape the
+real client cannot produce for a Book with nothing in it. Self-healing — the first generated
+Chunk creates the hash — so what it costs is the manifest read on a newly uploaded Book, which
+`useBookPlayer` logs and swallows. Recorded here because this is where it was found; it should
+be its own ticket.
 
 ### Why this was worth its own ticket rather than a line in ticket 05
 

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { getBookSummary, readBookChunks } from '@/app/_lib/libraryService';
+import { BOOK_INCOMPLETE, getBookSummary, readBookChunks } from '@/app/_lib/libraryService';
 
 vi.mock('@/app/_lib/libraryService', () => ({
+  BOOK_INCOMPLETE: 'BOOK_INCOMPLETE',
   getBookSummary: vi.fn(),
   readBookChunks: vi.fn(),
 }));
@@ -207,6 +208,21 @@ describe('GET /api/books/[bookId]/manifest', () => {
     const response = await GET(requestFor('book-1'), paramsFor('book-1'));
 
     expect(response.status).toBe(502);
+  });
+
+  // A Book the index advertises whose text was never stored. 502 says "try again", and this
+  // one can only fail again - so it gets the same 409 /api/library/[bookId] answers (see
+  // ticket 06 of phase 1.11). This route always reads the Chunk text, so unlike the playlist
+  // it can always tell.
+  test('returns 409 when the Book is listed but its text was never stored', async () => {
+    getBookSummary.mockResolvedValueOnce({ bookId: 'book-1', title: 'First Book', totalChunks: 2 });
+    const incomplete = new Error('the chunks were never stored');
+    incomplete.code = BOOK_INCOMPLETE;
+    readBookChunks.mockRejectedValueOnce(incomplete);
+
+    const response = await GET(requestFor('book-1'), paramsFor('book-1'));
+
+    expect(response.status).toBe(409);
   });
 
   // Ticket 17: with the Blob scan gone there is no second opinion, so an index that cannot be

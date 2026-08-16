@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { readBookAudio } from '@/app/_lib/bookAudio';
 import { buildEventPlaylist, toPlaylistSegments } from '@/app/_lib/hlsPlaylist';
+import { BOOK_INCOMPLETE } from '@/app/_lib/libraryService';
 
 // The EVENT playlist a Book is played from: one lookup, one pure builder, no generation.
 // Keyed by (Book, voice) to match the cache key audioGenerationService.js already uses.
@@ -45,6 +46,18 @@ export async function GET(request, { params }) {
       },
     );
   } catch (error) {
+    // The same 409 the manifest route answers, and for the same reason — but this route can
+    // only reach it for a Book indexed before addBook recorded `totalChunks`, which is the
+    // one case where it still reads the Book's text. For every other Book it takes the
+    // length off the Library index entry and never opens the chunks blob (ticket 12), so it
+    // cannot tell an incomplete Book from an unnarrated one and does not pay a read per poll
+    // to find out. Nothing is lost: opening the Book fails at /api/library/[bookId] first,
+    // and no player is ever mounted against it.
+    if (error.code === BOOK_INCOMPLETE) {
+      console.error('The book is in the library index but its text was never stored', error);
+      return NextResponse.json({ error: 'book is incomplete' }, { status: 409 });
+    }
+
     console.error('Building the playlist failed', error);
     return NextResponse.json({ error: 'Building the playlist failed' }, { status: 502 });
   }
