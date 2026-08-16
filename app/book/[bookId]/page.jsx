@@ -6,7 +6,12 @@ import { useCallback, useEffect, useState } from 'react';
 
 import AudioPlayer from '@/app/_components/AudioPlayer';
 import { deleteBook, getBook, INCOMPLETE_BOOK_STATUS } from '@/app/_lib/bookLibrary';
-import { clearLastOpenBook, getLastOpenBook, setLastOpenBook } from '@/app/_lib/lastOpenBook';
+import {
+  clearLastOpenBook,
+  getLastOpenBook,
+  markReaderOpened,
+  setLastOpenBook,
+} from '@/app/_lib/lastOpenBook';
 
 // Everything this route renders other than the reader itself is one centred thing on an
 // otherwise empty screen - the loading spinner, and the error states below it.
@@ -92,6 +97,15 @@ export default function BookPage() {
   useEffect(() => {
     if (notFound) router.replace('/');
   }, [notFound, router]);
+
+  // Tells `/` that the reader has been open in this document, which is what lets it treat a
+  // back gesture differently from a cold launch - see markReaderOpened in lastOpenBook.js.
+  // Unconditional and separate from the fetch above: the Listener has arrived at the reader
+  // whether or not the Book turns out to load, and a failed load that still traps the back
+  // button would be the worse half of the bug.
+  useEffect(() => {
+    markReaderOpened();
+  }, []);
 
   const handleBackToLibrary = useCallback(() => {
     // An explicit exit should be respected on the next launch, not silently overridden

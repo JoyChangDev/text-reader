@@ -9,7 +9,7 @@ import BookLibrary from './_components/BookLibrary';
 import BookUploader from './_components/BookUploader';
 import PlayerSettingsSheet from './_components/PlayerSettingsSheet';
 import { addBook } from './_lib/bookLibrary';
-import { getLastOpenBook } from './_lib/lastOpenBook';
+import { getLastOpenBook, hasReaderOpenedInThisDocument } from './_lib/lastOpenBook';
 import { getListenerSettings, updateListenerSettings } from './_lib/listenerSettings';
 
 // The library route: which book is open lives in the URL (see
@@ -23,7 +23,14 @@ export default function Home() {
   // since been deleted, app/book/[bookId]/page.jsx clears it and redirects back here,
   // where this will then read null and fall through to the library normally - no need
   // to duplicate that existence check here too.
-  const [lastOpenBookId] = useState(() => getLastOpenBook());
+  //
+  // Only on the first arrival in this document. Reaching here with the reader already
+  // open in this document means the Listener navigated back out of it, and redirecting
+  // then would make the back gesture a no-op - `/` bouncing straight into the route the
+  // Listener just left, with no way to the library except 返回書庫.
+  const [lastOpenBookId] = useState(() =>
+    hasReaderOpenedInThisDocument() ? null : getLastOpenBook(),
+  );
   // Same device-scoped voice/speed defaults AudioPlayer reads on mount (see
   // listenerSettings.js) - surfaced here too so the Listener can preview a voice and
   // set their preferred speed/theme before ever opening a book, not just mid-playback.

@@ -3,7 +3,12 @@ import { useParams, useRouter } from 'next/navigation';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { deleteBook, getBook } from '@/app/_lib/bookLibrary';
-import { getLastOpenBook, setLastOpenBook } from '@/app/_lib/lastOpenBook';
+import {
+  getLastOpenBook,
+  hasReaderOpenedInThisDocument,
+  resetReaderOpened,
+  setLastOpenBook,
+} from '@/app/_lib/lastOpenBook';
 
 import ChakraProvider from '../../_providers/chakra';
 import BookPage from './page';
@@ -25,6 +30,7 @@ describe('BookPage', () => {
 
   beforeEach(() => {
     localStorage.clear();
+    resetReaderOpened();
     push = vi.fn();
     replace = vi.fn();
     useParams.mockReturnValue({ bookId: 'book-1' });
@@ -416,5 +422,45 @@ describe('BookPage', () => {
     fireEvent.click(await screen.findByText(/返回書庫/i));
 
     expect(getLastOpenBook()).toBeNull();
+  });
+
+  // Found on the device verifying tickets 01 and 02 together: `/` redirected on the pointer
+  // alone, so a back gesture out of the reader bounced straight back in and the Library was
+  // unreachable by anything but 返回書庫. This is the half the reader owns - `/` reads it in
+  // app/page.test.jsx.
+  test('marks the reader as opened in this document, so `/` can tell a back gesture from a cold launch', async () => {
+    getBook.mockResolvedValue({
+      bookId: 'book-1',
+      title: 'First Book',
+      chunks: ['第一段。'],
+      resumeIndex: 0,
+      resumeSentenceIndex: 0,
+    });
+
+    expect(hasReaderOpenedInThisDocument()).toBe(false);
+
+    render(
+      <ChakraProvider>
+        <BookPage />
+      </ChakraProvider>,
+    );
+
+    await waitFor(() => expect(hasReaderOpenedInThisDocument()).toBe(true));
+  });
+
+  // The mark is about having arrived at the reader, not about having arrived successfully. A
+  // Book that fails to load still leaves the Listener on this route with a back gesture to
+  // spend, and trapping them there would be the worse half of the bug.
+  test('marks the reader as opened even when the book fails to load', async () => {
+    getBook.mockRejectedValue(Object.assign(new Error('store unreachable'), { status: 502 }));
+
+    render(
+      <ChakraProvider>
+        <BookPage />
+      </ChakraProvider>,
+    );
+
+    await screen.findByText(/無法載入這本書/);
+    expect(hasReaderOpenedInThisDocument()).toBe(true);
   });
 });

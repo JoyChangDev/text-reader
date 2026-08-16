@@ -3,7 +3,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { addBook, listBooks } from '@/app/_lib/bookLibrary';
-import { setLastOpenBook } from '@/app/_lib/lastOpenBook';
+import { markReaderOpened, resetReaderOpened, setLastOpenBook } from '@/app/_lib/lastOpenBook';
 
 import ChakraProvider from './_providers/chakra';
 import BookPage from './book/[bookId]/page';
@@ -64,6 +64,7 @@ describe('Home', () => {
   beforeEach(() => {
     libraryBooks = [];
     localStorage.clear();
+    resetReaderOpened();
     push = vi.fn();
     replace = vi.fn();
     useRouter.mockReturnValue({ push, replace });
@@ -181,6 +182,27 @@ describe('Home', () => {
     expect(screen.queryByLabelText(/上傳/)).not.toBeInTheDocument();
   });
 
+  // The bug this pins was found on the device verifying tickets 01 and 02 together, and lives
+  // in the gap between them: 01 asked that the back button work, 02 made `/` redirect on the
+  // pointer, and 02 never mentioned back. The pointer is still set here - the Listener has not
+  // left the Book, they have navigated out of it - so redirecting on the pointer alone sent
+  // them straight back in, and 返回書庫 became the only exit from a Book that existed.
+  test('shows the library when the reader is navigated back out of, rather than bouncing back in', async () => {
+    global.fetch = fetchMock(async () => new Response('{}', { status: 200 }));
+    setLastOpenBook('book-in-progress');
+    // What a back gesture leaves behind: same document, reader already opened in it.
+    markReaderOpened();
+
+    render(
+      <ChakraProvider>
+        <Home />
+      </ChakraProvider>,
+    );
+
+    expect(await screen.findByLabelText(/上傳/)).toBeInTheDocument();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
   test('renders the library normally when there is no last-open book', async () => {
     global.fetch = fetchMock(async () => new Response('{}', { status: 200 }));
 
@@ -215,6 +237,10 @@ describe('Home', () => {
     );
     fireEvent.click(await screen.findByText(/返回書庫/i));
     unmount();
+    // A fresh launch is a fresh document, which in the app resets this by itself. Reset it
+    // here too, or this would pass because the reader had been open rather than because
+    // 返回書庫 cleared the pointer - which is the thing under test.
+    resetReaderOpened();
 
     render(
       <ChakraProvider>
