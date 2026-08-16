@@ -61,9 +61,22 @@ exists.** Ticket 07's own note — "Chunks before the start are still reported w
       full; this is a loop bound, not a fetch.
 - [ ] The Blob-scan fallback (`readCachedChunks` / `getCachedChunks` on the read path) is removed,
       along with the code that chooses between it and the index.
-- [ ] A Book whose Chunk index is empty or unreachable fails in a way a Listener can act on, rather
-      than reading as a Book with nothing narrated — see below, this is the criterion that needs a
-      decision rather than a keystroke.
+- [ ] A Book whose Chunk index is **unreachable** fails in a way a Listener can act on — the
+      reader's existing 無法載入這本書，請稍後再試 with its retry — rather than reading as a Book
+      with nothing narrated.
+- [ ] A Book whose index is **present but empty** still opens, and still generates from where
+      reading is. An outage and a Book nobody has listened to yet must not produce the same answer.
+- [ ] **`readIndexedRun` stops discarding a whole index because one Chunk is missing.** Its
+      `toDurationSeconds(durations[from]) === undefined` guard returns `undefined` for the entire
+      read when the Chunk at `from` is not narrated, which the routes then cannot tell from "there
+      is no index". A valid index must yield a run — even an entirely empty one — so the
+      unreachable/empty distinction above survives as far as the route. See "The Book that cannot
+      open" below.
+- [ ] **A Book whose Chunk 0 was never narrated opens and plays.** Reachable today: upload a Book
+      and seek somewhere far before playing from the start, and ticket 15 generates only the target.
+- [ ] **A script rebuilds the Chunk index from what is in the bucket**, so an evicted Redis is
+      recoverable without re-synthesising audio that already exists. See "There is no way back"
+      below; without it this ticket is a one-way door.
 - [ ] `readIndexedRun`'s tests cover a Book with a gap: Chunks past it report generated when they
       are, and the playlist built from the same data still truncates.
 - [ ] Ticket 08's "Redis is a cache, not the source of truth" is marked superseded in place, with a
@@ -115,11 +128,23 @@ path afterwards.
 
 The fifth criterion is where this has to be answered. "Redis said nothing" and "this Book has no
 narration yet" are indistinguishable once the fallback is gone, and they are opposite situations:
-one is an outage, the other is a new Book. The index read already distinguishes a miss from an
-error at the seam ([`orMiss`](../../../app/_lib/upstashRedis.js)); the routes need to keep that
-distinction rather than collapsing both into an empty playlist, which is
-[ticket 15](15-the-re-point-races-the-generation-it-asked-for.md)'s failure arriving by a different
-road.
+one is an outage, the other is a new Book.
+
+**Correcting this ticket's own first draft**, which claimed `orMiss` already tells them apart. It
+does the exact opposite, deliberately, and says so: "A miss and a failure are the same outcome to
+every caller, so they are the same code path." Both come back `undefined`.
+
+The distinction does exist, one level up, at what `readIndex` returns:
+
+| situation                                   | `readIndex`               |
+| ------------------------------------------- | ------------------------- |
+| Redis unreachable, or no credentials at all | `undefined`               |
+| Redis answered; this Book has no index yet  | `{ base, durations: {} }` |
+
+That is enough to build on, but it is not where the draft said it was, and `readIndexedRun`
+currently flattens it again — returning `undefined` both for "no index" and for "an index that does
+not cover `from`". So the signal has to be read from `index` itself rather than from the run, which
+is what the sixth criterion is about.
 
 ### Not the same as reading the whole Book per poll
 
@@ -127,3 +152,38 @@ road.
 this ticket must not put one back. It does not: the loop bound changes from "the first gap" to "the
 Book's Chunk count" over an object already in memory. No I/O of any kind is added on the Redis
 path, and the expensive scan is being deleted outright rather than lengthened.
+
+### The Book that cannot open
+
+The guard at the top of `readIndexedRun` throws away a good index whenever the Chunk at `from` is
+not narrated:
+
+```js
+if (!base || !durations || toDurationSeconds(durations[from]) === undefined) return undefined;
+```
+
+Harmless today, because `undefined` means "fall back to the Blob scan" and the scan answers. With
+the fallback deleted, `undefined` has to mean "Redis said nothing", and this guard would produce it
+for a Book that is merely narrated somewhere other than `from` — turning a partly-narrated Book
+into 無法載入這本書.
+
+**And that Book is easy to make now.** Upload one, and seek somewhere far before ever playing from
+the beginning: [ticket 15](15-the-re-point-races-the-generation-it-asked-for.md) generates the
+target alone, so Chunk 0 is never narrated and `from=0` hits this guard on every launch afterwards.
+So this is not defensive tidying — it is the difference between this ticket fixing playback and
+bricking a Book.
+
+### There is no way back
+
+Today an evicted or wiped Redis is survivable: the Blob scan answers, and generation re-indexes as a
+side effect, so the index heals itself. That is the property being deleted, and nothing replaces it.
+
+Afterwards, a wiped index means every already-narrated Chunk is unreachable — the MP3s sit in R2
+under keys nothing can name — and the Book regenerates from scratch, paying edge-tts and R2 writes
+for audio that already exists. It fails silently and it costs money, which is the worst combination
+to leave unguarded.
+
+A rebuild script closes it: walk the bucket's prefix for a Book and voice, read each object's
+duration the way `mp3Frames.js` already does, and write the durations hash back. It needs no new
+concepts and it is the only thing that makes this decision reversible, which is why it is a
+criterion here rather than a nice-to-have filed elsewhere.
