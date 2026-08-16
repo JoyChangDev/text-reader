@@ -1122,6 +1122,87 @@ describe('AudioPlayer seeking past the generated region', () => {
     expect(srcAssignments[0]).toContain('/api/books/book-repoint/playlist.m3u8');
   });
 
+  // Ticket 15, found on a device: the re-point used to fire before the Chunk it had just
+  // asked for existed. A playlist starting at an ungenerated Chunk truncates at its own first
+  // entry, so the element was handed a source with no segments, errored, and never recovered -
+  // nothing reassigns `src` when the Chunk later arrives. Every existing test here resolved
+  // generation immediately, which is exactly why none of them saw it.
+  test('does not re-point until the Chunk it is waiting for exists', async () => {
+    let releaseChunk;
+    const { generatedFor, manifestFor } = fakeRoutes();
+    mockAudioChunkFetch(async ({ body }) => {
+      const { chunkIndex, voice } = JSON.parse(body);
+      if (chunkIndex === 15) {
+        await new Promise((resolve) => {
+          releaseChunk = resolve;
+        });
+      }
+      generatedFor(voice).add(chunkIndex);
+      return new Response(
+        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
+        { status: 200 },
+      );
+    }, manifestFor);
+
+    const audioEl = await renderAtOpeningBurst('book-repoint-race');
+    const srcAssignments = recordSrcAssignments(audioEl);
+
+    fireEvent.click(screen.getByTestId('sentence-15-0'));
+
+    // The Listener is told the wait is happening, rather than facing a disabled button.
+    expect(await screen.findByText(/正在準備這個段落/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        audioChunkFetchCalls().some(([, init]) => JSON.parse(init.body).chunkIndex === 15),
+      ).toBe(true),
+    );
+    expect(srcAssignments).toHaveLength(0);
+
+    releaseChunk();
+
+    await waitFor(() => expect(srcAssignments).toHaveLength(1));
+    expect(srcAssignments[0]).toContain('from=15');
+    expect(screen.queryByText(/正在準備這個段落/)).not.toBeInTheDocument();
+  });
+
+  // The abandoned-target case. Without clearing what the playlist is waiting for, a long seek
+  // the Listener changed their mind about would re-point the element minutes later, whenever
+  // look-ahead happened to reach the Chunk it had wanted.
+  test('a later reachable seek cancels a re-point that was still waiting', async () => {
+    let releaseChunk;
+    const { generatedFor, manifestFor } = fakeRoutes();
+    mockAudioChunkFetch(async ({ body }) => {
+      const { chunkIndex, voice } = JSON.parse(body);
+      if (chunkIndex === 15) {
+        await new Promise((resolve) => {
+          releaseChunk = resolve;
+        });
+      }
+      generatedFor(voice).add(chunkIndex);
+      return new Response(
+        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
+        { status: 200 },
+      );
+    }, manifestFor);
+
+    const audioEl = await renderAtOpeningBurst('book-repoint-abandoned');
+    const srcAssignments = recordSrcAssignments(audioEl);
+
+    fireEvent.click(screen.getByTestId('sentence-15-0'));
+    await screen.findByText(/正在準備這個段落/);
+
+    // Back to somewhere already on this timeline: no re-point, and the Chunk 15 wait is off.
+    fireEvent.click(screen.getByTestId('sentence-6-0'));
+    expect(audioEl.currentTime).toBe(6);
+
+    releaseChunk();
+
+    // Chunk 15 arriving must not now drag the element away from where the Listener is.
+    await waitFor(() => expect(metadataTrack().cues.length).toBeGreaterThan(11));
+    expect(srcAssignments).toHaveLength(0);
+    expect(audioEl.currentTime).toBe(6);
+  });
+
   test('plays from the target once its Chunk is on the new timeline', async () => {
     const audioEl = await renderAtOpeningBurst('book-repoint-time');
 

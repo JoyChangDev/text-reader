@@ -1,6 +1,6 @@
 'use client';
 
-import { Box, HStack, IconButton, Text } from '@chakra-ui/react';
+import { Box, HStack, IconButton, Spinner, Text } from '@chakra-ui/react';
 import { FiArrowUp, FiFlag, FiPause, FiPlay, FiRefreshCw } from 'react-icons/fi';
 
 import PlayerSettingsSheet from './PlayerSettingsSheet';
@@ -25,6 +25,7 @@ export default function PlayerBar({
   isPlaying,
   currentChunkReady,
   currentChunkErrored,
+  currentChunkPending,
   onPlay,
   onPause,
   onRetry,
@@ -60,6 +61,22 @@ export default function PlayerBar({
         {currentChunkErrored && (
           <Text color="danger" role="alert" mb={2}>
             此段落的語音產生失敗。
+          </Text>
+        )}
+        {/* Not an error, so not `danger` and not an alert - it is the ordinary wait for a
+            Chunk to be narrated, which after a long seek is a real synthesis round-trip with
+            the play button disabled throughout. Saying nothing there is what made a working
+            app look like a stuck one (ticket 15). */}
+        {currentChunkPending && (
+          <Text
+            display="flex"
+            alignItems="center"
+            gap={2}
+            fontSize="sm"
+            color="foregroundMuted"
+            mb={2}
+          >
+            <Spinner size="xs" /> 正在準備這個段落…
           </Text>
         )}
         {/* What the media element reported about the source, as opposed to the line above,

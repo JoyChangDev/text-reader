@@ -90,6 +90,10 @@ export default function AudioPlayer({
   const currentChunkStatus = chunkAudio[currentIndex]?.status;
   const currentChunkReady = currentChunkStatus === 'ready';
   const currentChunkErrored = currentChunkStatus === 'error';
+  // Narration for the Sentence being read is still being synthesised. Worth saying out loud
+  // rather than only disabling the play button: after a long seek this is a real round-trip,
+  // and a dead button with no explanation is the same silence ticket 15 was filed about.
+  const currentChunkPending = currentChunkStatus === 'loading';
 
   return (
     <Box
@@ -133,6 +137,7 @@ export default function AudioPlayer({
         isPlaying={isPlaying}
         currentChunkReady={currentChunkReady}
         currentChunkErrored={currentChunkErrored}
+        currentChunkPending={currentChunkPending}
         onPlay={play}
         onPause={pause}
         onRetry={handleRetry}

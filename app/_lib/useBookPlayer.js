@@ -82,6 +82,13 @@ export function useBookPlayer({
   // Which Chunk the playlist currently being played starts at. Only seekToSentence moves
   // it, and only when the Listener asks for somewhere this playlist can't reach.
   const [playlistStart, setPlaylistStart] = useState(0);
+  // The Chunk a re-point is waiting on, or null. `playlistStart` cannot move to a Chunk that
+  // does not exist yet - see the note in seekToSentence - so a long seek records its target
+  // here and fetchChunk moves the playlist at the moment that Chunk arrives. A ref rather
+  // than state because nothing renders from it: the wait the Listener sees is driven by the
+  // Chunk's own status, which is what tells the difference between still generating and
+  // failed.
+  const awaitedChunkRef = useRef(null);
   const audioRef = useRef(null);
   const pendingFetchesRef = useRef(new Set());
 
@@ -130,6 +137,17 @@ export function useBookPlayer({
           ...prev,
           [index]: { status: 'ready', url: data.url, boundaries: data.boundaries, voice },
         }));
+
+        // The second half of a deferred re-point (see seekToSentence). This is the moment the
+        // Chunk the playlist was waiting for starts existing, so it is the moment the playlist
+        // can safely begin there - before it, `from=index` is a playlist with no segments at
+        // all. Here rather than in an effect watching chunkAudio because that is what this is:
+        // one event, not a state the app has to keep reconciling. A failure deliberately
+        // leaves the target set, so the retry the Listener is offered resolves the same seek.
+        if (awaitedChunkRef.current === index) {
+          awaitedChunkRef.current = null;
+          setPlaylistStart(index);
+        }
       } catch {
         setChunkAudio((prev) => ({ ...prev, [index]: { status: 'error' } }));
       } finally {
@@ -572,13 +590,27 @@ export function useBookPlayer({
       // what they queued.
       setActiveOrdinal(ordinal);
 
+      // Every branch below settles what the playlist is waiting for, including settling it as
+      // "nothing". Leaving a previous target in place would let an abandoned long seek re-point
+      // the element minutes later, when look-ahead happened to reach the Chunk it wanted.
       if (canPlaylistReach(chunkIndex)) {
+        awaitedChunkRef.current = null;
         applySeek(ordinal);
       } else {
         // Parked before the re-point so the reload path adopts this target rather than
         // re-parking wherever reading was.
         pendingSeekRef.current = ordinal;
-        setPlaylistStart(chunkIndex);
+        // A playlist that begins at an ungenerated Chunk has no segments at all - it
+        // truncates at the gap, and the gap is its own first entry - so re-pointing now
+        // would hand the element an empty source it errors on and never recovers from
+        // (ticket 15). The re-point waits for the Chunk this call is about to request,
+        // and the effect below performs it.
+        if (chunkAudio[chunkIndex]?.status === 'ready') {
+          awaitedChunkRef.current = null;
+          setPlaylistStart(chunkIndex);
+        } else {
+          awaitedChunkRef.current = chunkIndex;
+        }
       }
 
       if (chunkAudio[chunkIndex]?.status !== 'ready') {
