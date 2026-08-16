@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** ready-for-human — creating the Cloudflare account and the bucket cannot be automated, and the verification is a physical-device check.
+**Status:** resolved — 2026-08-16. Every criterion is met, the physical-device check was run and recorded in "What verified what", and the repo-side claims were re-verified at close. Two ticks depend on things outside this ticket and stay honest only while those hold; both are named in "Reviewed at close" at the bottom.
 
 Gates the whole phase, because it produces the one value everything else is configured with: the origin segments are played from. See [the spec](../../../specs/phase-1-11-object-storage-migration.md).
 
@@ -134,3 +134,40 @@ object was uploaded with `--content-type=audio/mpeg` and the Worker echoes store
 than inventing it. The guarantee therefore lives in [ticket 02](02-object-storage-client-on-aws4fetch.md),
 whose own criterion is that objects are written with a `Content-Type`. If that regresses, this
 Worker will faithfully serve the wrong type and this ticket's tick will still be honest.
+
+### Reviewed at close
+
+Checked on 2026-08-16, after [ticket 05](05-cut-over-and-measure.md) had run the whole phase
+against this origin in anger. Nothing here needed revisiting; what follows is what a later reader
+should know about the ticks rather than a change to them.
+
+**The repo-side criteria re-verified.** `workers/segments/` holds `worker.js`, `wrangler.toml` and
+a `README.md`; the deploy command (`npx wrangler deploy` from that directory) and the binding name
+(`SEGMENTS`) are both recorded, in the README and in `wrangler.toml`'s own header. The origin is
+written as `https://leia.text-reader.workers.dev/` — with the trailing slash the note above
+insists on.
+
+**The trailing-slash hazard is no longer only advisory.** This ticket could only record the slash
+in prose and hope ticket 04 copied it faithfully. `requireSegmentOrigin()` now rejects a slashless
+`SEGMENT_ORIGIN` outright, naming the variable, rather than repairing it — so the failure this
+ticket predicted (`…workers.devbook-1/0/voice.mp3`, a 404 on every segment from a store that is
+working perfectly) is caught at the seam instead of at a Listener. The README's instruction and
+the code now agree.
+
+**Two ticks rest on something this ticket does not own, as it already says.** Recorded again here
+because they are the ones that could quietly stop being true:
+
+- **`Content-Type: audio/mpeg`** passes because the probe object was uploaded with it and the
+  Worker echoes stored metadata rather than inventing it. The guarantee lives in
+  [ticket 02](02-object-storage-client-on-aws4fetch.md)'s write path. If that regresses, this
+  Worker will faithfully serve the wrong type and this tick will still be honest.
+- **"has never had `r2.dev` enabled"** is verified as _currently disabled_
+  (`wrangler r2 bucket dev-url get`). The "never" rests on the account's history, not on that
+  observation. Stated plainly rather than tidied away, because the reason the rule exists — the
+  rate-limited public endpoint that reproduces
+  [ticket 08](../../phase-1-10-continuous-hls-playback/issues/08-playlist-routes-read-one-blob-per-chunk.md)'s
+  week-long diagnosis — is about it never being turned on again either.
+
+**The two deviations from "no application logic" stand as recorded.** Serving only `.mp3`, and
+answering 416 rather than letting R2's throw become a 500. Both are argued above; neither was
+disturbed by the cutover.

@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-human — built and green, and no consumer test changed. One criterion was met somewhere other than where it was written; the write-up is below.
+**Status:** resolved — 2026-08-16. The one criterion met somewhere other than where it was written was reviewed against the code and accepted; see "Reviewed at close" at the bottom. No consumer test changed, which is the criterion that mattered here.
 
 The price of choosing `aws4fetch` over the AWS SDK ([ticket 02](02-object-storage-client-on-aws4fetch.md)): listing comes back as XML rather than as objects. The repo has direct precedent for paying that price rather than taking on a dependency — `mp3Frames.js` walks MP3 frame headers by hand, with `mp3Frames.fixture.js` supplying bytes, because an audio library would have been far more than was needed to sum frame durations.
 
@@ -80,3 +80,35 @@ The split now follows what each layer is for. **The parser stays lenient and sti
 **Also noted, and acted on: `Segment` was not in the glossary.** `docs/agents/domain.md` asks for a concept that has become first-class to be recorded, and this phase made one — segment origin, segment Worker, segment URL, a module named for it, an environment variable. `CONTEXT.md` now defines it, including that its origin is always configuration and never the host writes go to.
 
 **Left deliberately.** `put` resolves the origin through `requireSegmentOrigin(overrides.segmentOrigin)` rather than through `settings()`, which every R2 setting goes through — the origin is not an R2 setting, names a different host, and is shared with the Chunk index, which is the whole reason it lives in its own module. And `request`/`listPage` share a two-line credentials preamble; extracting it would hide which of the two addresses a key and which addresses the bucket, which is the difference the comment on `listPage` exists to explain.
+
+### Reviewed at close
+
+Checked against the code on 2026-08-16.
+
+**The split verification is accepted, and it is the honest arrangement rather than a workaround.**
+The criterion asked that `deleteBook`'s cascade be verified with a fake returning more than one
+page. `deleteBook` cannot see a page — pagination lives inside `list()`, which is the whole point
+of putting it there — so a fake it could substitute would have to be a fake `list()` returning two
+pages, which is not a thing the seam permits and would be asserting over a client that does not
+exist. `objectStorageClient.test.js` proves "`list()` returns everything under the prefix" by
+faking `fetch` and asserting the second request carried `continuation-token`; `libraryService.test.js`
+proves "the cascade deletes everything `list()` returns", untouched. Composed, they are the claim.
+
+That `libraryService.test.js` needed no edit at all is the stronger result, and it is what
+distinguishes this ticket from [02](02-object-storage-client-on-aws4fetch.md) and
+[04](04-segment-origin-becomes-configuration.md): pagination was added underneath a consumer that
+never learned pages exist.
+
+**What the code review caught is the more important half of this ticket.** The criterion asked the
+parser to be lenient — "returns what could be parsed rather than throwing" — and leniency at the
+parser is right. Carrying it into `list()` would have reproduced this ticket's own opening
+sentence: a truncated body, or a 200 carrying an HTML error page from something in front of the
+endpoint, parses to a token-less page that is shaped exactly like a complete listing, and the
+orphaned audio it leaves is invisible because the Book is already out of the index. The split as
+built is the right one — the parser stays lenient and reports `isListing` / `isTruncated`
+alongside the records; `list()` refuses on either, and also refuses a repeated continuation token
+rather than spinning forever. Verified present at `objectStorageClient.js:177`, `:181` and `:294`.
+
+This is the same rule ticket 02 settled on for `get`, arrived at independently: a broken store must
+never be mistaken for an empty one. Worth stating as a phase-level rule rather than twice as a
+local one.
