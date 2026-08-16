@@ -249,6 +249,29 @@ export function useBookPlayer({
     return () => track.removeEventListener('cuechange', handleCueChange);
   }, []);
 
+  // Whether the playlist now loaded could ever reach a Chunk, which is not the same as
+  // whether it has yet. It truncates at its first gap, so it reaches Chunk N only if
+  // every Chunk from its start up to N is narrated - one that isn't, and never will be
+  // unless something asks for it, walls off everything after it (see ticket 07).
+  //
+  // The manifest is the only authority on what is narrated, deliberately - the client's
+  // own `chunkAudio` says a Chunk generated, but not whether the playlist can place it
+  // (a Chunk cached before durationSeconds existed can't be - see ticket 02). Getting
+  // this wrong in the optimistic direction parks a seek against a playlist that will
+  // never reach it, which is the ticket 05 hang; getting it wrong the other way costs one
+  // extra reload. So it trusts only what the routes themselves report.
+  const canPlaylistReach = useCallback(
+    (chunkIndex) => {
+      if (chunkIndex < playlistStart) return false;
+
+      for (let index = playlistStart; index < chunkIndex; index += 1) {
+        if (!generatedChunksRef.current.has(index)) return false;
+      }
+      return true;
+    },
+    [playlistStart],
+  );
+
   // Read on mount and again whenever another Chunk finishes generating, which is when the
   // Book gains Sentences that can be placed on the timeline. The mount read matters even
   // for a Book that generates nothing this session: it is how opening a partly-narrated
@@ -288,7 +311,32 @@ export function useBookPlayer({
 
         // Cues arriving is exactly the signal a parked seek was waiting for: a Sentence
         // has a cue only once the playlist covers its Chunk.
-        if (pendingSeekRef.current !== null) applySeek(pendingSeekRef.current);
+        if (pendingSeekRef.current !== null) {
+          const { chunkIndex } = ordinals.toChunkPosition(pendingSeekRef.current);
+
+          // A seek the Listener made was already judged reachable when they made it. This
+          // one may never have been judged at all: a resume position is parked here on mount
+          // (see pendingSeekRef's initialiser), before any manifest has said what is
+          // narrated, so a Book reopened past an ungenerated stretch would otherwise wait
+          // for a cue that cannot arrive - highlight frozen where reading is, audio playing
+          // from Chunk 0, and no error anywhere (ticket 16).
+          //
+          // Only the unreachable case is handled here; a reachable one is applySeek's, and
+          // deciding it again from this later vantage point would quietly overturn ticket
+          // 07 - by now look-ahead may have filled the gap that made the Listener's own seek
+          // a re-point in the first place.
+          if (!canPlaylistReach(chunkIndex)) {
+            if (generatedChunksRef.current.has(chunkIndex)) {
+              setPlaylistStart(chunkIndex);
+            } else {
+              // Still being narrated. Look-ahead runs from the reading position, so this is
+              // the Chunk it is already asking for; the re-point lands when it arrives.
+              awaitedChunkRef.current = chunkIndex;
+            }
+          }
+
+          applySeek(pendingSeekRef.current);
+        }
       })
       .catch((error) => {
         console.error('Failed to read the Book manifest', error);
@@ -297,7 +345,9 @@ export function useBookPlayer({
     return () => {
       cancelled = true;
     };
-  }, [applySeek, manifestSrc, readyChunkCount]);
+    // `canPlaylistReach` closes over `playlistStart`, which `manifestSrc` is derived from
+    // too, so it adds no re-runs of its own - the two always change together.
+  }, [applySeek, canPlaylistReach, manifestSrc, ordinals, readyChunkCount]);
 
   const src = playlistUrl({ bookId, voice, from: playlistStart });
   // The only assignment to `src` in the codebase: once on mount, and again only when the
@@ -536,29 +586,6 @@ export function useBookPlayer({
       window.removeEventListener('pagehide', handlePageHide);
     };
   }, []);
-
-  // Whether the playlist now loaded could ever reach a Chunk, which is not the same as
-  // whether it has yet. It truncates at its first gap, so it reaches Chunk N only if
-  // every Chunk from its start up to N is narrated - one that isn't, and never will be
-  // unless something asks for it, walls off everything after it (see ticket 07).
-  //
-  // The manifest is the only authority on what is narrated, deliberately - the client's
-  // own `chunkAudio` says a Chunk generated, but not whether the playlist can place it
-  // (a Chunk cached before durationSeconds existed can't be - see ticket 02). Getting
-  // this wrong in the optimistic direction parks a seek against a playlist that will
-  // never reach it, which is the ticket 05 hang; getting it wrong the other way costs one
-  // extra reload. So it trusts only what the routes themselves report.
-  const canPlaylistReach = useCallback(
-    (chunkIndex) => {
-      if (chunkIndex < playlistStart) return false;
-
-      for (let index = playlistStart; index < chunkIndex; index += 1) {
-        if (!generatedChunksRef.current.has(index)) return false;
-      }
-      return true;
-    },
-    [playlistStart],
-  );
 
   // Selects where reading is, identified by a Chunk and its index within that Chunk's
   // Sentences - the click target for both the current Chunk's text and any other's,

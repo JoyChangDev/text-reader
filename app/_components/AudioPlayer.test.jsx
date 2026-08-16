@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { getDiagnosticLog } from '@/app/_lib/backgroundDiagnostics';
-import { getListenerSettings } from '@/app/_lib/listenerSettings';
+import { DEFAULT_VOICE, getListenerSettings } from '@/app/_lib/listenerSettings';
 
 import ChakraProvider from '../_providers/chakra';
 import AudioPlayer from './AudioPlayer';
@@ -1201,6 +1201,65 @@ describe('AudioPlayer seeking past the generated region', () => {
     await waitFor(() => expect(metadataTrack().cues.length).toBeGreaterThan(11));
     expect(srcAssignments).toHaveLength(0);
     expect(audioEl.currentTime).toBe(6);
+  });
+
+  // Ticket 16. A resume position is parked exactly like a Listener's seek, but on mount -
+  // before any manifest has said what is narrated, so it is never judged reachable or not.
+  // Reopening a Book past an ungenerated stretch left the seek parked for a cue that could
+  // never arrive: the highlight frozen where reading was, the audio playing from Chunk 0,
+  // and nothing on screen suggesting anything was wrong.
+  function manifestFromValues() {
+    return global.fetch.mock.calls
+      .map(([url]) => url)
+      .filter((url) => typeof url === 'string' && url.includes('/manifest'))
+      .map((url) => new URL(url, 'https://test.example').searchParams.get('from'));
+  }
+
+  function renderResumedAt({ bookId, resumeIndex, narrated }) {
+    const { generatedFor, manifestFor } = fakeRoutes();
+    narrated.forEach((index) => generatedFor(DEFAULT_VOICE).add(index));
+    mockAudioChunkFetch(({ body }) => {
+      const { chunkIndex, voice } = JSON.parse(body);
+      generatedFor(voice).add(chunkIndex);
+      return new Response(
+        JSON.stringify({ url: `https://blob.test/${chunkIndex}`, boundaries: [] }),
+        { status: 200 },
+      );
+    }, manifestFor);
+
+    render(
+      <ChakraProvider>
+        <AudioPlayer bookId={bookId} chunks={longBook} initialIndex={resumeIndex} />
+      </ChakraProvider>,
+    );
+  }
+
+  test('re-points on mount when the resume position is past a gap', async () => {
+    // What an earlier session's long seek leaves behind: an opening burst, then the Chunk
+    // jumped to, and nothing in between - 6 through 14 were never asked for by anything.
+    renderResumedAt({
+      bookId: 'book-resume-past-gap',
+      resumeIndex: 15,
+      narrated: [0, 1, 2, 3, 4, 5, 15],
+    });
+
+    await waitFor(() => expect(manifestFromValues()).toContain('15'));
+    // The Sentence being read is on the timeline now, which is the whole point: before this,
+    // its cue never arrived and the highlight and the audio were in different places.
+    await waitFor(() => expect(metadataTrack().cues.getCueById('15')?.startTime).toBe(0));
+  });
+
+  test('does not re-point on mount when the resume position is reachable from the start', async () => {
+    renderResumedAt({
+      bookId: 'book-resume-reachable',
+      resumeIndex: 4,
+      narrated: [0, 1, 2, 3, 4, 5],
+    });
+
+    await waitFor(() => expect(metadataTrack().cues.getCueById('4')?.startTime).toBe(4));
+    // Every manifest read stayed on the timeline the Book opened with. An ordinary resume
+    // must not cost the reload this ticket added for the gap case.
+    expect(manifestFromValues().every((from) => from === null || from === '0')).toBe(true);
   });
 
   test('plays from the target once its Chunk is on the new timeline', async () => {

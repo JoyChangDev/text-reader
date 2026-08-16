@@ -7,10 +7,10 @@ while highlighting a Sentence hundreds of Chunks away.
 
 **Blocked by:** —
 
-**Status:** ready-for-agent — reproduced on an iPhone on 2026-08-16, and the mechanism is fully
-traced below. Unlike [ticket 15](15-the-re-point-races-the-generation-it-asked-for.md) this one has
-no open design question: the mount already knows where reading is, and the rule it needs is the one
-`seekToSentence` already applies.
+**Status:** ready-for-human — built and green 2026-08-16. Needs the device check in the last
+criterion before it resolves; [ticket 15](15-the-re-point-races-the-generation-it-asked-for.md)
+landed first, as this ticket's own note recommended, and both should be re-verified together with
+[ticket 07](07-seeking-past-the-generated-region.md).
 
 Found verifying [ticket 07](07-seeking-past-the-generated-region.md) on the device. It is the
 reason that ticket cannot be verified on its own: whatever a long seek does, the next launch
@@ -44,18 +44,18 @@ the mount should have done.
 
 ## Acceptance criteria
 
-- [ ] On mount, the playlist's start Chunk is derived from the resume position rather than being
+- [x] On mount, the playlist's start Chunk is derived from the resume position rather than being
       fixed at 0, so a Book reopened past a gap plays from where reading is.
-- [ ] A Book whose resume position is reachable from Chunk 0 — the ordinary case, no gap in between
+- [x] A Book whose resume position is reachable from Chunk 0 — the ordinary case, no gap in between
       — still starts its playlist at 0 and still parks the resume seek exactly as it does today.
       This must not become a reload for every Book that has ever been opened.
-- [ ] A Book with no resume position still starts at Chunk 0.
-- [ ] The highlight and the audio agree from the first moment playback starts, with no tap needed.
-- [ ] A resume position pointing past the end of the Book, or at a Chunk that no longer exists,
+- [x] A Book with no resume position still starts at Chunk 0.
+- [x] The highlight and the audio agree from the first moment playback starts, with no tap needed.
+- [x] A resume position pointing past the end of the Book, or at a Chunk that no longer exists,
       falls back rather than producing a playlist with no segments — see
       [ticket 15](15-the-re-point-races-the-generation-it-asked-for.md), whose failure this would
       otherwise reproduce on launch.
-- [ ] Tests: mounting with a resume position past a gap starts the playlist at that Chunk;
+- [x] Tests: mounting with a resume position past a gap starts the playlist at that Chunk;
       mounting with a reachable resume position does not change `playlistStart`; mounting with no
       resume position starts at 0.
 - [ ] Verified on a physical iPhone: reopen a Book left at a position past an ungenerated stretch,
@@ -95,3 +95,34 @@ Worth being precise, since both tickets were found by verifying 07. Ticket 07 in
 Chunk 0 before 07, and before 07 that was harmless — a playlist always started at 0, so "reachable
 from the start" and "reachable at all" were the same question. Ticket 07 made them different
 questions and updated one of the two callers.
+
+### What was built, and the design that had to be backed out first
+
+The fix is four lines in the manifest effect: a parked seek whose Chunk the playlist **cannot**
+reach re-points to it, or waits for it if it is not narrated yet. A resume position is already
+parked there on mount by `pendingSeekRef`'s initialiser, so it needed no separate entry point —
+which is what the ticket predicted when it said `canPlaylistReach` was already the rule.
+
+**Only the unreachable case is decided there, and that restriction is load-bearing.** The first
+attempt moved the _whole_ decision into the manifest effect, on the reasoning that it is the only
+place with fresh route-reported truth, and deleted the click-time branch as duplication. It broke
+two of ticket 07's tests, and they were right to break: by the time a manifest read happens,
+look-ahead started from the Listener's _previous_ position may have narrated the very gap that made
+their seek a re-point, so the same seek is judged reachable and no longer reloads. Defensible
+behaviour, arguably better behaviour — and not what ticket 07 specifies. Deciding a Listener's seek
+twice, from two vantage points, quietly overturns it.
+
+So the click-time decision stays exactly where ticket 07 put it, and this ticket only answers the
+question nobody had asked yet: what to do with a parked seek that was never judged at all.
+
+### Confirmed to fail without the fix
+
+With `useBookPlayer.js` reverted, `re-points on mount when the resume position is past a gap` fails
+with `expected [ null, null ] to include '15'` — every manifest read was for `from=0`, so the
+playlist never moved and the parked resume seek was waiting for a cue that could not arrive.
+
+Its companion, `does not re-point on mount when the resume position is reachable from the start`,
+passes with and without: it exists to catch this ticket adding a reload to every ordinary resume,
+so passing beforehand is the point of it.
+
+607 tests and `npm run lint` pass.
