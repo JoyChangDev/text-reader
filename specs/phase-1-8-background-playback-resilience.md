@@ -1,6 +1,6 @@
 # Phase 1.8 — Background Playback Resilience
 
-_Status: ready-for-agent_
+_Status: done — all three tickets resolved. The symptoms it set out to fix outlived it; see Phase 1.9 and, for the fix that finally held, Phase 1.10_
 
 ## Problem Statement
 

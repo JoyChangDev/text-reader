@@ -1,6 +1,6 @@
 # Phase 1.9 — Reader Route Restructure & Background Resilience Hardening
 
-_Status: ready-for-agent_
+_Status: done — all six tickets resolved, verified on the device_
 
 ## Problem Statement
 

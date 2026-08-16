@@ -1,6 +1,6 @@
 # Phase 1.11 — Object Storage Migration
 
-_Status: ready-for-agent_
+_Status: done — all six tickets resolved 2026-08-16. The phase's central claim is an observation rather than arithmetic: Class A 2.0 and Upstash 2.0 per generated Chunk, measured on a physical iPhone against the deployed app (see [ticket 05](../.scratch/phase-1-11-object-storage-migration/issues/05-cut-over-and-measure.md))_
 
 ## Problem Statement
 

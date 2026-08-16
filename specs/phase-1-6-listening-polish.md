@@ -1,6 +1,6 @@
 # Phase 1.6 — Listening Polish & Shared Library
 
-_Status: ready-for-agent_
+_Status: done — all ten tickets resolved_
 
 ## Problem Statement
 

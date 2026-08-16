@@ -1,6 +1,6 @@
 # Phase 1.5 — Audiobook Reader Enhancements
 
-_Status: not started_
+_Status: shipped, except upload formats — tickets 01–04 and 07–09 are resolved; [05 (PDF)](../.scratch/phase-1-5-audiobook-reader/issues/05-pdf-upload-support.md) and [06 (EPUB)](../.scratch/phase-1-5-audiobook-reader/issues/06-epub-upload-support.md) were never built and are still ready-for-agent_
 
 ## Problem Statement
 

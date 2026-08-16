@@ -1,6 +1,6 @@
 # Phase 1.7 — Reader Playback UX Polish
 
-_Status: ready-for-agent_
+_Status: done — all seven tickets resolved, confirmed against the codebase 2026-08-12_
 
 ## Problem Statement
 

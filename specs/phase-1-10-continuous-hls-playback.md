@@ -1,6 +1,6 @@
 # Phase 1.10 — Continuous HLS Playback
 
-_Status: needs-triage_
+_Status: shipped and verified on an iPhone 2026-08-16 — sixteen of eighteen tickets resolved. Still open: [11](../.scratch/phase-1-10-continuous-hls-playback/issues/11-the-standalone-pwa-is-killed-while-backgrounded.md) (needs-info, parked — one sighting, two non-reproductions) and [18](../.scratch/phase-1-10-continuous-hls-playback/issues/18-an-unnarrated-book-reads-as-a-redis-outage.md) (ready-for-human, built and green, wants a device)_
 
 ## Problem Statement
 
