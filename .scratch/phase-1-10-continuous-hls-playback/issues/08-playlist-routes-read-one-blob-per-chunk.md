@@ -97,6 +97,10 @@ Two hashes per (Book, voice), because their read frequencies differ by orders of
 
 **Redis is a cache, not the source of truth.** Per-Chunk Blob metadata stays authoritative, so an evicted or unavailable Redis degrades to a rebuild rather than data loss. That makes the fallback path load-bearing, which is why the first checklist item below is worth doing on its own even before Redis exists.
 
+> **Superseded 2026-08-16 by [ticket 17](17-a-generated-chunk-past-the-gap-reads-as-ungenerated.md).** The fallback is gone and Redis is now the only source. What forced it: the scan and the index both stop at the first gap, and stopping is right for the playlist and wrong for the manifest, which reports `isGenerated` for the whole Book. Fixing that on the index costs a loop bound over a hash already in memory; fixing it on the scan costs one storage read per Chunk, which is the cost this ticket spent a week removing. So one of them had to go.
+>
+> The "degrades to a rebuild" property really is lost, and it was load-bearing exactly as this section says. `scripts/reindex-book.mjs` replaces it deliberately rather than automatically: it lists the bucket, requests only the Chunks that already have audio, and lets `/api/audio-chunks` re-index each one from cache without synthesising. An unreadable index is now a 502 from both routes rather than an empty playlist, so an outage is no longer indistinguishable from a Book nobody has narrated.
+
 ### Staging
 
 1. **Stop reading past the first gap.** — **done**, see the notes below. The playlist truncates there, so everything beyond it is read for nothing. Reading from `from` until the first miss costs O(contiguous generated run) instead of O(Book): 12 reads instead of 1,983 on the Book currently in the store. No new state, no service, no migration — and it is exactly the shape the Redis-miss fallback needs, so it is not throwaway.

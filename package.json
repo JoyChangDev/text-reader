@@ -17,6 +17,7 @@
     "clear-abandoned-library": "node --env-file=.env.local scripts/clear-abandoned-library.mjs",
     "inspect-r2": "node --env-file=.env.local scripts/inspect-r2.mjs",
     "measure-generation": "node --env-file=.env.local scripts/measure-generation-cost.mjs",
+    "reindex-book": "node --env-file=.env.local scripts/reindex-book.mjs",
     "prepare": "git rev-parse --git-dir > /dev/null 2>&1 && git config core.hooksPath .githooks || exit 0"
   },
   "dependencies": {

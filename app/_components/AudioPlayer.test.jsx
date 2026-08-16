@@ -1047,6 +1047,11 @@ describe('AudioPlayer seeking past the generated region', () => {
       return generatedByVoice.get(voice);
     };
 
+    // `isGenerated` is the whole Book's truth and `startSeconds`/`sentences` are this
+    // timeline's, which is exactly the split the real routes make since ticket 17 - a Chunk
+    // past the gap, or before `from`, still reports that it exists. Before that fix the routes
+    // reported `false` for both and this fake did not, so it answered for Chunks production
+    // never described and ticket 16's tests could not fail. Keep the two halves apart here.
     const manifestFor = (url) => {
       const query = new URL(url, 'https://test.example').searchParams;
       const from = Number(query.get('from') ?? 0);

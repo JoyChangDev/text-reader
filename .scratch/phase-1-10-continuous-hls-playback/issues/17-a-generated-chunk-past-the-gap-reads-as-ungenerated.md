@@ -6,10 +6,9 @@ Redis path, where it is free, and delete the Blob-scan fallback rather than pay 
 
 **Blocked by:** —
 
-**Status:** ready-for-agent — reproduced against the running app on 2026-08-16 with the two routes
-contradicting each other about the same Chunk. The removal of the fallback is Joy's decision, taken
-knowing what it costs; the consequences are recorded under "What removing the fallback gives up",
-and one of them needs a deliberate answer before this ships.
+**Status:** ready-for-human — built and green 2026-08-16, and confirmed against the real store:
+Chunk 1047 now reports generated, and the playlist it feeds is byte-for-byte unchanged. Needs the
+device run in the last criterion, shared with tickets 07, 15 and 16.
 
 Found while diagnosing why [ticket 16](16-resuming-past-a-gap-never-re-points.md)'s fix did nothing
 on a real device. It is not a defect in 16, and 16 cannot work until this lands.
@@ -52,34 +51,34 @@ exists.** Ticket 07's own note — "Chunks before the start are still reported w
 
 ## Acceptance criteria
 
-- [ ] `isGenerated` is accurate for **every** Chunk in the Book, at any `from`, on the Redis path.
-- [ ] The playlist's segments are **unchanged**: it still starts at `from`, still truncates at the
+- [x] `isGenerated` is accurate for **every** Chunk in the Book, at any `from`, on the Redis path.
+- [x] The playlist's segments are **unchanged**: it still starts at `from`, still truncates at the
       first gap, still withholds `#EXT-X-ENDLIST`. The truncation lives in `buildEventPlaylist`,
       which slices and stops at the first `null` on its own, so the `break` above is redundant for
       the playlist and wrong only for the manifest.
-- [ ] No additional storage or Redis operations per request. The durations hash is already read in
+- [x] No additional storage or Redis operations per request. The durations hash is already read in
       full; this is a loop bound, not a fetch.
-- [ ] The Blob-scan fallback (`readCachedChunks` / `getCachedChunks` on the read path) is removed,
+- [x] The Blob-scan fallback (`readCachedChunks` / `getCachedChunks` on the read path) is removed,
       along with the code that chooses between it and the index.
-- [ ] A Book whose Chunk index is **unreachable** fails in a way a Listener can act on — the
+- [x] A Book whose Chunk index is **unreachable** fails in a way a Listener can act on — the
       reader's existing 無法載入這本書，請稍後再試 with its retry — rather than reading as a Book
       with nothing narrated.
-- [ ] A Book whose index is **present but empty** still opens, and still generates from where
+- [x] A Book whose index is **present but empty** still opens, and still generates from where
       reading is. An outage and a Book nobody has listened to yet must not produce the same answer.
-- [ ] **`readIndexedRun` stops discarding a whole index because one Chunk is missing.** Its
+- [x] **`readIndexedRun` stops discarding a whole index because one Chunk is missing.** Its
       `toDurationSeconds(durations[from]) === undefined` guard returns `undefined` for the entire
       read when the Chunk at `from` is not narrated, which the routes then cannot tell from "there
       is no index". A valid index must yield a run — even an entirely empty one — so the
       unreachable/empty distinction above survives as far as the route. See "The Book that cannot
       open" below.
-- [ ] **A Book whose Chunk 0 was never narrated opens and plays.** Reachable today: upload a Book
+- [x] **A Book whose Chunk 0 was never narrated opens and plays.** Reachable today: upload a Book
       and seek somewhere far before playing from the start, and ticket 15 generates only the target.
-- [ ] **A script rebuilds the Chunk index from what is in the bucket**, so an evicted Redis is
+- [x] **A script rebuilds the Chunk index from what is in the bucket**, so an evicted Redis is
       recoverable without re-synthesising audio that already exists. See "There is no way back"
       below; without it this ticket is a one-way door.
-- [ ] `readIndexedRun`'s tests cover a Book with a gap: Chunks past it report generated when they
+- [x] `readIndexedRun`'s tests cover a Book with a gap: Chunks past it report generated when they
       are, and the playlist built from the same data still truncates.
-- [ ] Ticket 08's "Redis is a cache, not the source of truth" is marked superseded in place, with a
+- [x] Ticket 08's "Redis is a cache, not the source of truth" is marked superseded in place, with a
       pointer here — the same way [ticket 04](04-segment-origin-becomes-configuration.md) superseded
       its origin decision.
 - [ ] Re-verified on a physical iPhone together with tickets 07, 15 and 16.
@@ -187,3 +186,46 @@ A rebuild script closes it: walk the bucket's prefix for a Book and voice, read 
 duration the way `mp3Frames.js` already does, and write the durations hash back. It needs no new
 concepts and it is the only thing that makes this decision reversible, which is why it is a
 criterion here rather than a nice-to-have filed elsewhere.
+
+### What it turned out to also be
+
+The ticket described Chunks _past_ the first gap. The manifest route's own test caught a second
+half nobody had noticed: Chunks _before_ `from` were equally invisible, because the loop started
+there. Ticket 07 states the opposite as fact — "Chunks before the start are still reported with
+their real `isGenerated`, which is what the client's reachability check reads" — and it was not
+true either.
+
+It matters for ticket 07's own backward seek. A target before the playlist's start is unreachable
+by definition, so it can only be re-pointed to, and the client can only decide to do that if it is
+told the Chunk exists. So `from` now decides where the timeline begins and nothing else;
+`buildEventPlaylist` was always the thing that ignored everything earlier.
+
+### Confirmed against the real store
+
+The Book the bug was found on, read through the fixed routes:
+
+- `chunks[1047].isGenerated` is now **true**.
+- The narrated runs are `0–16`, `1047–1057`, `1414–1424`, `1482–1492`, `1626–1636`, `1896–1906`,
+  `2100–2110` — **six long seeks that each narrated audio the app then could not see**. All of it
+  was in R2 the whole time.
+- `playlist.m3u8` from 0 still serves 17 segments. The truncation is untouched.
+
+### The way back, and why it drives the app
+
+`scripts/reindex-book.mjs` lists a Book's prefix, keeps the Chunks that already have metadata in
+the bucket, and asks `/api/audio-chunks` for exactly those. A playable cached Chunk is answered by
+indexing it and returning, with no TTS call, so this repairs an index without re-synthesising
+anything — and requesting only what the listing found is what stops it generating a 2,372-Chunk
+Book from scratch.
+
+It goes through the running app rather than writing to Redis directly because the cues half of the
+index is derived from the Chunk text, and a plain Node script cannot import that module. Copying
+the derivation would mean a second implementation whose output must match the first exactly — the
+same shape of mistake that let this ticket hide behind a green suite for a day. The app owns it.
+
+### The fake, corrected in intent rather than in code
+
+`fakeRoutes` reports `isGenerated` for every Chunk and `startSeconds`/`sentences` only for placed
+ones. That was wrong against the old routes and is right against the new ones, so no assertion
+changed — but the split is now stated in a comment, because "the fixture happened to describe the
+behaviour we were about to build" is not something the next reader should have to infer.
