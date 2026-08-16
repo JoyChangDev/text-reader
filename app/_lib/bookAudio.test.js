@@ -1,20 +1,13 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { getCachedChunks } from './audioGenerationService';
 import { getBookSummary, readBookChunks } from './libraryService';
 
 vi.mock('./libraryService', () => ({ getBookSummary: vi.fn(), readBookChunks: vi.fn() }));
-vi.mock('./audioGenerationService', () => ({ getCachedChunks: vi.fn() }));
 
 const { readBookAudio } = await import('./bookAudio');
 
-const SECOND = 10_000_000;
-// Two Sentences of one word each, so a derived span is exactly its boundary.
+// Two Sentences of one word each.
 const TEXT = '你好。世界。';
-const boundaries = [
-  { text: '你好', offset: 0, duration: SECOND },
-  { text: '世界', offset: 2 * SECOND, duration: SECOND },
-];
 const spans = [
   { startSeconds: 0, endSeconds: 1 },
   { startSeconds: 2, endSeconds: 3 },
@@ -24,13 +17,6 @@ const BASE = 'https://abc.public.blob.vercel-storage.com/';
 const chunks = [TEXT, TEXT, TEXT];
 const summary = { bookId: 'book-1', title: 'A Book', totalChunks: 3 };
 const request = { bookId: 'book-1', voice: 'voice-a' };
-
-// The Blob shape: raw word boundaries, no spans.
-const fromBlob = (index, durationSeconds = 5) => ({
-  url: `${BASE}book-1/${index}/voice-a.mp3`,
-  boundaries,
-  durationSeconds,
-});
 
 function indexClient({ durations, base = BASE, cues } = {}) {
   return {
@@ -43,7 +29,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   getBookSummary.mockResolvedValue(summary);
   readBookChunks.mockResolvedValue(chunks);
-  getCachedChunks.mockResolvedValue([undefined, undefined, undefined]);
 });
 
 describe('readBookAudio', () => {
@@ -55,7 +40,6 @@ describe('readBookAudio', () => {
 
     const result = await readBookAudio(request, { chunkIndexClient });
 
-    expect(getCachedChunks).not.toHaveBeenCalled();
     expect(result.chunkAudio[0]).toEqual({
       url: `${BASE}book-1/0/voice-a.mp3`,
       durationSeconds: 12.5,
@@ -64,34 +48,35 @@ describe('readBookAudio', () => {
     expect(result.chunkAudio[2]).toBeUndefined();
   });
 
-  // The index is a cache, so it has to be able to not answer without anything breaking -
-  // an unwritten one, an evicted one and an unreachable one are all the same case.
-  test('falls back to the Blob scan when the index misses', async () => {
-    getCachedChunks.mockResolvedValue([fromBlob(0), undefined, undefined]);
-    const chunkIndexClient = indexClient();
+  // Ticket 17 removed the Blob scan behind the index, so a read that cannot answer has
+  // nowhere to fall back to and must not be mistaken for a Book with no audio. The routes
+  // turn this into a 502; an empty Book gets an empty playlist, which is a different thing.
+  test('reports the lookup unavailable when the index cannot be read', async () => {
+    const result = await readBookAudio(request, { chunkIndexClient: indexClient() });
 
-    const result = await readBookAudio(request, { chunkIndexClient });
-
-    expect(getCachedChunks).toHaveBeenCalledWith({
-      bookId: 'book-1',
-      voice: 'voice-a',
-      chunkCount: 3,
-      from: 0,
-    });
-    expect(result.chunkAudio[0]).toMatchObject({ durationSeconds: 5 });
+    expect(result).toEqual({ unavailable: true });
   });
 
-  test('threads `from` to whichever source answers', async () => {
+  // The other half of that distinction: Redis answered, and the answer is that this Book has
+  // never been narrated. That is an ordinary state - every Book is in it once - and it has to
+  // read as an empty run rather than as a failure.
+  test('is an empty run, not unavailable, for a Book with nothing narrated', async () => {
+    const result = await readBookAudio(request, {
+      chunkIndexClient: indexClient({ durations: {} }),
+    });
+
+    expect(result.unavailable).toBeUndefined();
+    expect(result.chunkAudio).toHaveLength(3);
+    expect(result.chunkAudio.every((entry) => entry === undefined)).toBe(true);
+  });
+
+  test('threads `from` to the index read', async () => {
     const chunkIndexClient = indexClient({ durations: { 0: '12', 2: '11' } });
 
     const result = await readBookAudio({ ...request, from: '2' }, { chunkIndexClient });
 
-    // Scanned from 2, so the gap at 1 that the Listener jumped over does not truncate it.
     expect(result.from).toBe(2);
     expect(result.chunkAudio[2]).toBeDefined();
-
-    await readBookAudio({ ...request, from: '2' }, { chunkIndexClient: indexClient() });
-    expect(getCachedChunks).toHaveBeenCalledWith(expect.objectContaining({ from: 2 }));
   });
 
   // The Book's text is the largest thing either route can read - 1.6 MB on a 4,962-Chunk
@@ -165,10 +150,11 @@ describe('readBookAudio', () => {
     });
 
     // A placed Chunk with no cues would otherwise render as a stretch of Book that plays
-    // with no highlighting and no way to notice. Durations and cues are written together,
-    // so the two disagreeing means the index is damaged, not that the Chunk is silent.
-    test('send the whole lookup back to Blob when a placed Chunk has none', async () => {
-      getCachedChunks.mockResolvedValue([fromBlob(0), fromBlob(1), undefined]);
+    // with no highlighting and no way to notice. Durations and cues are written together, so
+    // the two disagreeing means the index is damaged. It used to send the lookup back to
+    // Blob, which carried the raw boundaries the spans could be rebuilt from; nothing carries
+    // them now, so damage is reported rather than papered over.
+    test('report the lookup unavailable when a placed Chunk has none', async () => {
       const chunkIndexClient = indexClient({
         durations: { 0: '12.5', 1: '11' },
         cues: { 0: spans },
@@ -176,29 +162,7 @@ describe('readBookAudio', () => {
 
       const result = await readBookAudio({ ...request, needsCues: true }, { chunkIndexClient });
 
-      expect(getCachedChunks).toHaveBeenCalled();
-      expect(result.chunkAudio[1].spans).toEqual(spans);
-    });
-
-    // bookManifest only ever sees spans, so the Blob path has to derive what the index
-    // path stored at generation time - otherwise a fallback silently drops every cue.
-    test('are derived from stored boundaries on the Blob path', async () => {
-      getCachedChunks.mockResolvedValue([fromBlob(0), undefined, undefined]);
-
-      const result = await readBookAudio(
-        { ...request, needsCues: true },
-        { chunkIndexClient: indexClient() },
-      );
-
-      expect(result.chunkAudio[0].spans).toEqual(spans);
-    });
-
-    test('are not derived on the Blob path for the playlist, which would not read them', async () => {
-      getCachedChunks.mockResolvedValue([fromBlob(0), undefined, undefined]);
-
-      const result = await readBookAudio(request, { chunkIndexClient: indexClient() });
-
-      expect(result.chunkAudio[0]).not.toHaveProperty('spans');
+      expect(result).toEqual({ unavailable: true });
     });
   });
 
@@ -209,7 +173,6 @@ describe('readBookAudio', () => {
 
       expect(await readBookAudio(request, { chunkIndexClient })).toBeNull();
       expect(chunkIndexClient.readIndex).not.toHaveBeenCalled();
-      expect(getCachedChunks).not.toHaveBeenCalled();
     });
 
     test('returns an error for a `from` that names no Chunk, before reading anything', async () => {
@@ -219,7 +182,6 @@ describe('readBookAudio', () => {
 
       expect(result.error).toBeTruthy();
       expect(chunkIndexClient.readIndex).not.toHaveBeenCalled();
-      expect(getCachedChunks).not.toHaveBeenCalled();
       expect(readBookChunks).not.toHaveBeenCalled();
     });
   });

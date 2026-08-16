@@ -1,13 +1,19 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { getCachedChunks } from '@/app/_lib/audioGenerationService';
 import { getBookSummary, readBookChunks } from '@/app/_lib/libraryService';
 
 vi.mock('@/app/_lib/libraryService', () => ({
   getBookSummary: vi.fn(),
   readBookChunks: vi.fn(),
 }));
-vi.mock('@/app/_lib/audioGenerationService', () => ({ getCachedChunks: vi.fn() }));
+// bookAudio builds its default client once, at module load, so the fake has to be the same
+// object for the whole file rather than something swapped in per test.
+const { chunkIndexClient } = vi.hoisted(() => ({
+  chunkIndexClient: { readIndex: vi.fn(), readCues: vi.fn() },
+}));
+vi.mock('@/app/_lib/redisChunkIndex', () => ({
+  createChunkIndexClient: () => chunkIndexClient,
+}));
 
 const { GET } = await import('./route');
 
@@ -19,11 +25,21 @@ function paramsFor(bookId) {
   return { params: Promise.resolve({ bookId }) };
 }
 
-const chunkAudio = (index, durationSeconds) => ({
-  url: `https://blob.example/book-1/${index}/zh-TW-default.mp3`,
-  boundaries: [],
-  durationSeconds,
-});
+// The Chunk index as Redis holds it: a durations hash keyed by Chunk index, and the segment
+// origin the URLs are derived from. Since ticket 17 this is the route's only source, so the
+// fixture is the real shape rather than a convenient stand-in - a fake that reports more than
+// the routes do is what hid ticket 17 for a day.
+const SEGMENT_ORIGIN = 'https://blob.example/';
+
+function indexed(durations) {
+  chunkIndexClient.readIndex.mockResolvedValue({ base: SEGMENT_ORIGIN, durations });
+  chunkIndexClient.readCues.mockImplementation(async (unused, indexes) => indexes.map(() => []));
+}
+
+// No index at all: since ticket 17 that is an outage rather than an empty Book.
+function indexUnavailable() {
+  chunkIndexClient.readIndex.mockResolvedValue(undefined);
+}
 
 // How long the Book is, and nothing else. The playlist reads its length off the Library
 // index entry and never touches the Chunk text (see ticket 12), so a Book here is a count.
@@ -42,7 +58,7 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
   describe('?from', () => {
     test('serves the Book from the given Chunk', async () => {
       bookOfLength(3);
-      getCachedChunks.mockResolvedValueOnce([chunkAudio(0, 5), chunkAudio(1, 4), chunkAudio(2, 3)]);
+      indexed({ 0: 5, 1: 4, 2: 3 });
 
       const response = await GET(
         requestFor('book-1', '?voice=zh-TW-default&from=1'),
@@ -59,7 +75,7 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
     // not truncate the stream they are now listening to.
     test('is unaffected by a gap before the given Chunk', async () => {
       bookOfLength(3);
-      getCachedChunks.mockResolvedValueOnce([undefined, chunkAudio(1, 4), chunkAudio(2, 3)]);
+      indexed({ 1: 4, 2: 3 });
 
       const response = await GET(
         requestFor('book-1', '?voice=zh-TW-default&from=1'),
@@ -71,8 +87,8 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
       expect(body).toContain('#EXT-X-ENDLIST');
     });
 
-    // No getCachedChunks mock: the Chunk audio is never read, which is the point - an
-    // unusable start is rejected before anything touches the store.
+    // No index mock: the Chunk audio is never read, which is the point - an unusable start
+    // is rejected before anything touches the store.
     test('rejects a start that names no Chunk in this Book with 400', async () => {
       bookOfLength(2);
 
@@ -82,13 +98,12 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
       );
 
       expect(response.status).toBe(400);
-      expect(getCachedChunks).not.toHaveBeenCalled();
     });
   });
 
   test('serves the EVENT playlist for the Book and voice as an HLS media playlist', async () => {
     bookOfLength(2);
-    getCachedChunks.mockResolvedValueOnce([chunkAudio(0, 5.5), chunkAudio(1, 4)]);
+    indexed({ 0: 5.5, 1: 4 });
 
     const response = await GET(requestFor('book-1'), paramsFor('book-1'));
     const body = await response.text();
@@ -100,11 +115,9 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
     // Absolute blob URLs, fetched cross-origin by the media stack (verified in ticket 01).
     expect(body).toContain('https://blob.example/book-1/0/zh-TW-default.mp3');
     expect(body).toContain('#EXT-X-ENDLIST');
-    expect(getCachedChunks).toHaveBeenCalledWith({
+    expect(chunkIndexClient.readIndex).toHaveBeenCalledWith({
       bookId: 'book-1',
       voice: 'zh-TW-default',
-      chunkCount: 2,
-      from: 0,
     });
   });
 
@@ -114,7 +127,7 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
   // (see ticket 12).
   test('never reads the Book’s text, however many polls it serves', async () => {
     bookOfLength(2);
-    getCachedChunks.mockResolvedValue([chunkAudio(0, 5.5), chunkAudio(1, 4)]);
+    indexed({ 0: 5.5, 1: 4 });
 
     await GET(requestFor('book-1'), paramsFor('book-1'));
 
@@ -125,7 +138,7 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
   // copy would freeze playback at whatever the Book's length was on the first request.
   test('forbids caching so the media stack sees the playlist grow', async () => {
     bookOfLength(1);
-    getCachedChunks.mockResolvedValueOnce([undefined]);
+    indexed({});
 
     const response = await GET(requestFor('book-1'), paramsFor('book-1'));
 
@@ -134,22 +147,20 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
 
   test('keys the lookup by the requested voice', async () => {
     bookOfLength(1);
-    getCachedChunks.mockResolvedValueOnce([chunkAudio(0, 3)]);
+    indexed({ 0: 3 });
 
     await GET(requestFor('book-1', '?voice=zh-TW-HsiaoYuNeural'), paramsFor('book-1'));
 
-    expect(getCachedChunks).toHaveBeenCalledWith({
+    expect(chunkIndexClient.readIndex).toHaveBeenCalledWith({
       bookId: 'book-1',
       voice: 'zh-TW-HsiaoYuNeural',
-      chunkCount: 1,
-      from: 0,
     });
   });
 
   // The client points <audio> at this URL before any Chunk has finished generating.
   test('returns a valid, segment-free playlist for a Book with nothing generated yet', async () => {
     bookOfLength(2);
-    getCachedChunks.mockResolvedValueOnce([undefined, undefined]);
+    indexed({});
 
     const response = await GET(requestFor('book-1'), paramsFor('book-1'));
     const body = await response.text();
@@ -164,7 +175,18 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
     const response = await GET(requestFor('book-1', ''), paramsFor('book-1'));
 
     expect(response.status).toBe(400);
-    expect(getCachedChunks).not.toHaveBeenCalled();
+  });
+
+  // Ticket 17: with the Blob scan gone there is no second opinion, so an index that cannot be
+  // read must not serve what a Book with no audio would serve. An empty playlist is truthful
+  // for an unnarrated Book and a lie for a store that is down.
+  test('returns 502 when the Chunk index cannot be read at all', async () => {
+    bookOfLength(2);
+    indexUnavailable();
+
+    const response = await GET(requestFor('book-1'), paramsFor('book-1'));
+
+    expect(response.status).toBe(502);
   });
 
   test('returns 404 when the book does not exist', async () => {
@@ -183,9 +205,9 @@ describe('GET /api/books/[bookId]/playlist.m3u8', () => {
     expect(response.status).toBe(502);
   });
 
-  test('returns a 502 when reading the cached Chunks fails', async () => {
+  test('returns a 502 when reading the Chunk index fails', async () => {
     bookOfLength(1);
-    getCachedChunks.mockRejectedValueOnce(new Error('blob get failed'));
+    chunkIndexClient.readIndex.mockRejectedValue(new Error('redis read failed'));
 
     const response = await GET(requestFor('book-1'), paramsFor('book-1'));
 

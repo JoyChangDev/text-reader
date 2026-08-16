@@ -23,10 +23,7 @@ describe('readIndexedRun', () => {
   const book = { bookId: 'book-1', voice: 'voice-a', chunkCount: 5 };
 
   test('returns one entry per Chunk index, undefined where not indexed', () => {
-    const run = readIndexedRun(
-      { base, durations: { 0: '12.5', 1: '11.25' } },
-      { ...book, from: 0 },
-    );
+    const run = readIndexedRun({ base, durations: { 0: '12.5', 1: '11.25' } }, book);
 
     expect(run).toHaveLength(5);
     expect(run[0]).toEqual({
@@ -39,65 +36,78 @@ describe('readIndexedRun', () => {
   // The client returns hash values as strings from HGETALL and as numbers from HMGET, so
   // the coercion has to be explicit - a string reaching the playlist becomes #EXTINF:"12.5".
   test('coerces durations to numbers whichever way the client returned them', () => {
-    const run = readIndexedRun({ base, durations: { 0: '12.5', 1: 11.25 } }, { ...book, from: 0 });
+    const run = readIndexedRun({ base, durations: { 0: '12.5', 1: 11.25 } }, book);
 
     expect(run[0].durationSeconds).toBe(12.5);
     expect(run[1].durationSeconds).toBe(11.25);
   });
 
-  test('stops at the first gap, matching what the playlist does with one', () => {
-    const run = readIndexedRun(
-      { base, durations: { 0: '12', 1: '12', 3: '12' } },
-      { ...book, from: 0 },
-    );
+  // It used to stop here, on the reasoning that the playlist truncates at a gap anyway. True
+  // of the playlist and false of the manifest, which reports isGenerated for the whole Book -
+  // so a narrated Chunk past a gap read as never narrated, and no seek could ever be told it
+  // existed (ticket 17). The playlist is unaffected: buildEventPlaylist does its own
+  // truncation on the first null.
+  test('reports Chunks past a gap, leaving the truncation to the playlist', () => {
+    const run = readIndexedRun({ base, durations: { 0: '12', 1: '12', 3: '12' } }, book);
 
     expect(run[1]).toBeDefined();
     expect(run[2]).toBeUndefined();
-    expect(run[3]).toBeUndefined();
+    expect(run[3]).toBeDefined();
   });
 
-  test('scans from `from`, so a Listener who jumped a gap still gets a run', () => {
-    const run = readIndexedRun(
-      { base, durations: { 0: '12', 3: '12', 4: '12' } },
-      { ...book, from: 3 },
-    );
+  // `from` decides where the timeline begins, not what counts as narrated. Ticket 07 always
+  // said Chunks before the start report their real isGenerated - the client needs it, because
+  // a backward seek to a Chunk before the playlist's start is unreachable by definition and can
+  // only be re-pointed to if the client is told it exists. The code did not do it until
+  // ticket 17; buildEventPlaylist is what ignores everything before `from`.
+  test('reports the whole Book, including Chunks before the playlist would start', () => {
+    const run = readIndexedRun({ base, durations: { 0: '12', 3: '12', 4: '12' } }, book);
 
     expect(run[3]).toBeDefined();
     expect(run[4]).toBeDefined();
-    // Behind the start: not scanned, so not reported, exactly as the Blob scan behaves.
-    expect(run[0]).toBeUndefined();
+    expect(run[0]).toBeDefined();
+    expect(run[1]).toBeUndefined();
   });
 
-  // A value that can't be a duration is treated as absent, so where it sits decides what
-  // happens: at the start it is a miss (ask Blob), mid-run it is a gap like any other.
-  test('is a miss when the Chunk at `from` has a non-numeric or zero duration', () => {
-    expect(
-      readIndexedRun({ base, durations: { 0: 'nonsense', 1: '12' } }, { ...book, from: 0 }),
-    ).toBeUndefined();
-    expect(
-      readIndexedRun({ base, durations: { 0: '0', 1: '12' } }, { ...book, from: 0 }),
-    ).toBeUndefined();
+  // A value that can't be a duration is treated as absent wherever it sits. It used to be a
+  // miss at `from` specifically, meaning "ask Blob" - but since ticket 17 removed the Blob
+  // scan, a miss means "Redis said nothing", and a Book that is merely narrated somewhere
+  // other than its start must not be able to say that. Upload a Book, seek far before playing
+  // from the beginning, and ticket 15 narrates the target alone: Chunk 0 stays empty forever.
+  test('is still a run when the Chunk at `from` has a non-numeric or zero duration', () => {
+    const nonsense = readIndexedRun({ base, durations: { 0: 'nonsense', 1: '12' } }, book);
+    expect(nonsense[0]).toBeUndefined();
+    expect(nonsense[1]).toBeDefined();
+
+    const zero = readIndexedRun({ base, durations: { 0: '0', 1: '12' } }, book);
+    expect(zero[0]).toBeUndefined();
+    expect(zero[1]).toBeDefined();
   });
 
-  test('truncates at a non-numeric or zero duration found mid-run', () => {
-    const run = readIndexedRun(
-      { base, durations: { 0: '12', 1: '0', 2: '12' } },
-      { ...book, from: 0 },
-    );
+  test('treats a non-numeric or zero duration mid-run as an ungenerated Chunk', () => {
+    const run = readIndexedRun({ base, durations: { 0: '12', 1: '0', 2: '12' } }, book);
 
     expect(run[0]).toBeDefined();
     expect(run[1]).toBeUndefined();
-    expect(run[2]).toBeUndefined();
+    expect(run[2]).toBeDefined();
   });
 
   test('is a miss when the store base was never recorded', () => {
-    expect(
-      readIndexedRun({ base: null, durations: { 0: '12' } }, { ...book, from: 0 }),
-    ).toBeUndefined();
+    expect(readIndexedRun({ base: null, durations: { 0: '12' } }, book)).toBeUndefined();
   });
 
-  test('is a miss when nothing is indexed at all, so the caller falls back to Blob', () => {
-    expect(readIndexedRun({ base, durations: {} }, { ...book, from: 0 })).toBeUndefined();
-    expect(readIndexedRun({ base, durations: null }, { ...book, from: 0 })).toBeUndefined();
+  // The two halves of the distinction ticket 17 rests on. An empty hash is Redis answering
+  // about a Book nobody has narrated; a missing hash is Redis not answering. With no Blob
+  // scan behind them the routes serve an empty playlist for one and a 502 for the other, so
+  // collapsing them would report an outage as a Book that simply has no audio.
+  test('is a run of nothing when the index is empty, which is not the same as a miss', () => {
+    const run = readIndexedRun({ base, durations: {} }, book);
+
+    expect(run).toHaveLength(5);
+    expect(run.every((entry) => entry === undefined)).toBe(true);
+  });
+
+  test('is a miss when there is no durations hash at all', () => {
+    expect(readIndexedRun({ base, durations: null }, book)).toBeUndefined();
   });
 });

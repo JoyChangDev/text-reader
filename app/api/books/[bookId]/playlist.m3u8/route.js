@@ -24,6 +24,13 @@ export async function GET(request, { params }) {
     if (book.error) {
       return NextResponse.json({ error: book.error }, { status: 400 });
     }
+    // The Chunk index could not be read, which since ticket 17 has no second opinion behind
+    // it. Answering 502 rather than serving what an unnarrated Book would serve: an empty
+    // playlist is a truthful answer for a Book with no audio and a lie for a store that is
+    // down, and the Listener can act on one of those.
+    if (book.unavailable) {
+      return NextResponse.json({ error: 'the Chunk index could not be read' }, { status: 502 });
+    }
 
     return new NextResponse(
       buildEventPlaylist(toPlaylistSegments(book.chunkAudio), { from: book.from }),

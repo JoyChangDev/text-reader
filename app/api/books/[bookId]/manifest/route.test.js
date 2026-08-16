@@ -1,13 +1,19 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { getCachedChunks } from '@/app/_lib/audioGenerationService';
 import { getBookSummary, readBookChunks } from '@/app/_lib/libraryService';
 
 vi.mock('@/app/_lib/libraryService', () => ({
   getBookSummary: vi.fn(),
   readBookChunks: vi.fn(),
 }));
-vi.mock('@/app/_lib/audioGenerationService', () => ({ getCachedChunks: vi.fn() }));
+// bookAudio builds its default client once, at module load, so the fake has to be the same
+// object for the whole file rather than something swapped in per test.
+const { chunkIndexClient } = vi.hoisted(() => ({
+  chunkIndexClient: { readIndex: vi.fn(), readCues: vi.fn() },
+}));
+vi.mock('@/app/_lib/redisChunkIndex', () => ({
+  createChunkIndexClient: () => chunkIndexClient,
+}));
 
 const { GET } = await import('./route');
 
@@ -21,18 +27,32 @@ function paramsFor(bookId) {
   return { params: Promise.resolve({ bookId }) };
 }
 
-// One word per sentence, so each derived span is exactly one boundary.
-const chunkAudio = (index, durationSeconds) => ({
-  url: `https://blob.example/book-1/${index}/zh-TW-default.mp3`,
-  boundaries: [
-    { text: '你好', offset: 0, duration: SECOND },
-    { text: '世界', offset: 2 * SECOND, duration: SECOND },
-  ],
-  durationSeconds,
-});
+// The Chunk index as Redis holds it: a durations hash, and spans stored per Chunk at
+// generation time rather than derived here. Since ticket 17 this is the route's only source,
+// so the fixture is the real shape - a fake that knows more than the routes do is what hid
+// ticket 17 for a day.
+const SEGMENT_ORIGIN = 'https://blob.example/';
+
+// One word per Sentence, relative to the Chunk's own start, which is what the index stores.
+const CHUNK_SPANS = [
+  { startSeconds: 0, endSeconds: 1 },
+  { startSeconds: 2, endSeconds: 3 },
+];
+
+function indexed(durations, { spansFor = () => CHUNK_SPANS } = {}) {
+  chunkIndexClient.readIndex.mockResolvedValue({ base: SEGMENT_ORIGIN, durations });
+  chunkIndexClient.readCues.mockImplementation(async (unused, indexes) =>
+    indexes.map((index) => spansFor(index)),
+  );
+}
+
+// No index at all: since ticket 17 that is an outage rather than an empty Book.
+function indexUnavailable() {
+  chunkIndexClient.readIndex.mockResolvedValue(undefined);
+}
 
 // Unlike the playlist, the manifest genuinely needs the Chunk text: bookManifest counts
-// Sentence ordinals from it, and the Blob fallback derives spans from it (see ticket 12).
+// Sentence ordinals from it (see ticket 12).
 function bookWithText(chunks) {
   getBookSummary.mockResolvedValueOnce({
     bookId: 'book-1',
@@ -49,7 +69,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
 
   test("returns each Chunk's timeline position and its Sentences as absolute spans", async () => {
     bookWithText(['你好。世界。', '你好。世界。']);
-    getCachedChunks.mockResolvedValueOnce([chunkAudio(0, 7.5), chunkAudio(1, 4)]);
+    indexed({ 0: 7.5, 1: 4 });
 
     const response = await GET(requestFor('book-1'), paramsFor('book-1'));
     const body = await response.json();
@@ -76,25 +96,21 @@ describe('GET /api/books/[bookId]/manifest', () => {
         ],
       },
     ]);
-    expect(getCachedChunks).toHaveBeenCalledWith({
+    expect(chunkIndexClient.readIndex).toHaveBeenCalledWith({
       bookId: 'book-1',
       voice: 'zh-TW-default',
-      chunkCount: 2,
-      from: 0,
     });
   });
 
   test('keys the lookup by the requested voice', async () => {
     bookWithText(['你好。']);
-    getCachedChunks.mockResolvedValueOnce([chunkAudio(0, 3)]);
+    indexed({ 0: 3 });
 
     await GET(requestFor('book-1', '?voice=zh-TW-HsiaoYuNeural'), paramsFor('book-1'));
 
-    expect(getCachedChunks).toHaveBeenCalledWith({
+    expect(chunkIndexClient.readIndex).toHaveBeenCalledWith({
       bookId: 'book-1',
       voice: 'zh-TW-HsiaoYuNeural',
-      chunkCount: 1,
-      from: 0,
     });
   });
 
@@ -102,7 +118,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
   // permanently short of the Sentences it needs.
   test('forbids caching so a growing Book keeps yielding new cues', async () => {
     bookWithText(['你好。']);
-    getCachedChunks.mockResolvedValueOnce([undefined]);
+    indexed({});
 
     const response = await GET(requestFor('book-1'), paramsFor('book-1'));
 
@@ -111,7 +127,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
 
   test('returns an empty manifest, not an error, for a Book with nothing generated yet', async () => {
     bookWithText(['你好。', '世界。']);
-    getCachedChunks.mockResolvedValueOnce([undefined, undefined]);
+    indexed({});
 
     const response = await GET(requestFor('book-1'), paramsFor('book-1'));
     const body = await response.json();
@@ -129,11 +145,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
   describe('?from', () => {
     test('rebases the timeline on the given Chunk while leaving Sentence ids alone', async () => {
       bookWithText(['你好。世界。', '你好。世界。', '你好。世界。']);
-      getCachedChunks.mockResolvedValueOnce([
-        chunkAudio(0, 7.5),
-        chunkAudio(1, 4),
-        chunkAudio(2, 6),
-      ]);
+      indexed({ 0: 7.5, 1: 4, 2: 6 });
 
       const response = await GET(
         requestFor('book-1', '?voice=zh-TW-default&from=1'),
@@ -161,7 +173,7 @@ describe('GET /api/books/[bookId]/manifest', () => {
       expect(body.chunks[2].startSeconds).toBe(4);
     });
 
-    // No getCachedChunks mock: the Chunk audio is never read, which is the point - an
+    // No index mock: the Chunk audio is never read, which is the point - an
     // unusable start is rejected before anything touches the store.
     test('rejects a start that names no Chunk in this Book with 400', async () => {
       bookWithText(['你好。']);
@@ -172,7 +184,6 @@ describe('GET /api/books/[bookId]/manifest', () => {
       );
 
       expect(response.status).toBe(400);
-      expect(getCachedChunks).not.toHaveBeenCalled();
     });
   });
 
@@ -180,7 +191,6 @@ describe('GET /api/books/[bookId]/manifest', () => {
     const response = await GET(requestFor('book-1', ''), paramsFor('book-1'));
 
     expect(response.status).toBe(400);
-    expect(getCachedChunks).not.toHaveBeenCalled();
   });
 
   test('returns 404 when the book does not exist', async () => {
@@ -199,9 +209,20 @@ describe('GET /api/books/[bookId]/manifest', () => {
     expect(response.status).toBe(502);
   });
 
-  test('returns a 502 when reading the cached Chunks fails', async () => {
+  // Ticket 17: with the Blob scan gone there is no second opinion, so an index that cannot be
+  // read must not serve what a Book with no audio would serve.
+  test('returns 502 when the Chunk index cannot be read at all', async () => {
     bookWithText(['你好。']);
-    getCachedChunks.mockRejectedValueOnce(new Error('blob get failed'));
+    indexUnavailable();
+
+    const response = await GET(requestFor('book-1'), paramsFor('book-1'));
+
+    expect(response.status).toBe(502);
+  });
+
+  test('returns a 502 when reading the Chunk index fails', async () => {
+    bookWithText(['你好。']);
+    chunkIndexClient.readIndex.mockRejectedValue(new Error('redis read failed'));
 
     const response = await GET(requestFor('book-1'), paramsFor('book-1'));
 

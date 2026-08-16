@@ -68,31 +68,47 @@ function tryParse(value) {
   }
 }
 
-// One entry per Chunk index, `undefined` where the index doesn't place it - the same shape
-// readCachedChunks returns, so the routes can't tell which source answered them.
+// One entry per Chunk index, `undefined` where the index does not place it.
 //
-// Scans forward from `from` and stops at the first gap, matching the playlist: it truncates
-// there, so a Chunk beyond it has no knowable position however complete its audio is. `from`
-// is honoured for the same reason the Blob scan honours it - a Listener who jumped over an
-// ungenerated stretch (ticket 07) would otherwise stop at the gap they already jumped past.
+// **Every Chunk the index knows about, not just the run at `from`.** It used to stop at the
+// first gap, on the reasoning that the playlist truncates there anyway - true of the playlist
+// and false of the manifest, which reports `isGenerated` for the whole Book and is the
+// client's only authority on what exists. Stopping early made a narrated Chunk past a gap
+// indistinguishable from one that was never narrated, so `canPlaylistReach` could never be
+// told that a seek target existed and a re-point could never fire (ticket 17). The playlist is
+// unaffected: `buildEventPlaylist` slices from `from` and stops at its own first `null`, so
+// the truncation lives there and always did.
 //
-// Returns `undefined` for a miss, meaning "ask Blob", which is deliberately not the same as
-// an empty run meaning "nothing is generated". An index that has never been written must not
-// be able to convince a route that a fully-narrated Book is empty.
+// It reports the whole Book, including Chunks *before* `from`. Ticket 07 said it already did
+// - "Chunks before the start are still reported with their real isGenerated, which is what the
+// client's reachability check reads" - and it did not. That matters for the same ticket's
+// backward seek: a target before the playlist's start is unreachable by definition, so the
+// client has to re-point to it, and it can only know to do that if it is told the Chunk
+// exists. `from` decides where the timeline begins, not what counts as narrated;
+// `buildEventPlaylist` slices from it and ignores everything earlier.
+//
+// It costs nothing to look at the rest. `durations` is the whole hash, already in memory from
+// one HGETALL; this is a loop bound, not a fetch.
+//
+// Returns `undefined` only when there is no usable index at all - never merely because the
+// Chunk at `from` is missing. Since ticket 17 removed the Blob fallback, `undefined` is what
+// tells a route that Redis said nothing, and a Book narrated somewhere other than its start
+// must not be able to say that. A Book with nothing narrated yields a run of `undefined`s,
+// which is a different answer and reads as a different thing.
 //
 // `base` is still guarded even though it now comes from configuration and its reader throws:
 // this half is pure and takes whatever it is handed, and a run of URLs built on `undefined`
 // is exactly the wrong-but-plausible answer the guard exists to refuse.
-export function readIndexedRun({ base, durations }, { bookId, voice, chunkCount, from = 0 }) {
-  if (!base || !durations || toDurationSeconds(durations[from]) === undefined) {
+export function readIndexedRun({ base, durations }, { bookId, voice, chunkCount }) {
+  if (!base || !durations) {
     return undefined;
   }
 
   const run = new Array(chunkCount).fill(undefined);
 
-  for (let chunkIndex = from; chunkIndex < chunkCount; chunkIndex += 1) {
+  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
     const durationSeconds = toDurationSeconds(durations[chunkIndex]);
-    if (durationSeconds === undefined) break;
+    if (durationSeconds === undefined) continue;
 
     run[chunkIndex] = {
       url: deriveSegmentUrl(base, { bookId, chunkIndex, voice }),
