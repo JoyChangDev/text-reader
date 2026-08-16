@@ -7,10 +7,11 @@ while highlighting a Sentence hundreds of Chunks away.
 
 **Blocked by:** —
 
-**Status:** ready-for-human — built and green 2026-08-16. Needs the device check in the last
-criterion before it resolves; [ticket 15](15-the-re-point-races-the-generation-it-asked-for.md)
-landed first, as this ticket's own note recommended, and both should be re-verified together with
-[ticket 07](07-seeking-past-the-generated-region.md).
+**Status:** blocked — the code is written and its tests pass, but it **does not work on a device**,
+and the tests could not have caught that. It asks the manifest whether the resume target is
+narrated, and the manifest answers `false` for every Chunk past the first gap whether or not it is
+([ticket 17](17-a-generated-chunk-past-the-gap-reads-as-ungenerated.md)). Re-verify once 17 lands.
+Checked against the running app 2026-08-16 — see "Why the device still failed" below.
 
 Found verifying [ticket 07](07-seeking-past-the-generated-region.md) on the device. It is the
 reason that ticket cannot be verified on its own: whatever a long seek does, the next launch
@@ -44,18 +45,18 @@ the mount should have done.
 
 ## Acceptance criteria
 
-- [x] On mount, the playlist's start Chunk is derived from the resume position rather than being
+- [ ] On mount, the playlist's start Chunk is derived from the resume position rather than being
       fixed at 0, so a Book reopened past a gap plays from where reading is.
 - [x] A Book whose resume position is reachable from Chunk 0 — the ordinary case, no gap in between
       — still starts its playlist at 0 and still parks the resume seek exactly as it does today.
       This must not become a reload for every Book that has ever been opened.
 - [x] A Book with no resume position still starts at Chunk 0.
-- [x] The highlight and the audio agree from the first moment playback starts, with no tap needed.
+- [ ] The highlight and the audio agree from the first moment playback starts, with no tap needed.
 - [x] A resume position pointing past the end of the Book, or at a Chunk that no longer exists,
       falls back rather than producing a playlist with no segments — see
       [ticket 15](15-the-re-point-races-the-generation-it-asked-for.md), whose failure this would
       otherwise reproduce on launch.
-- [x] Tests: mounting with a resume position past a gap starts the playlist at that Chunk;
+- [ ] Tests: mounting with a resume position past a gap starts the playlist at that Chunk;
       mounting with a reachable resume position does not change `playlistStart`; mounting with no
       resume position starts at 0.
 - [ ] Verified on a physical iPhone: reopen a Book left at a position past an ungenerated stretch,
@@ -126,3 +127,34 @@ passes with and without: it exists to catch this ticket adding a reload to every
 so passing beforehand is the point of it.
 
 607 tests and `npm run lint` pass.
+
+### Why the device still failed, and why the tests said otherwise
+
+Reported by Joy on 2026-08-16 and reproduced locally against the real store the same day. The fix
+below is written, its tests pass, and on the device the Book still opened with the highlight in one
+place and the audio in another.
+
+**The signal it depends on is wrong.** This ticket's fix asks two questions of a parked seek: can
+the playlist reach it, and if not, does its Chunk exist? Both are answered by the manifest's
+`isGenerated`, and the manifest reports `false` for every Chunk past the first gap regardless of
+whether it is narrated — `readIndexedRun` stops walking there. So the re-point never fires and the
+seek waits for a Chunk the routes will not admit exists. Measured on the Book in the store: the
+manifest says Chunk 1047 is not generated; `playlist.m3u8?from=1047` serves eleven segments; and a
+generation request for it answers 200 from cache. [Ticket 17](17-a-generated-chunk-past-the-gap-reads-as-ungenerated.md).
+
+**The tests passed because the fake tells the truth and the route does not.** `fakeRoutes` builds
+`isGenerated: generated.has(index)` for every Chunk, unconditionally. The code under test therefore
+received a manifest that production never produces. Nothing is wrong with the assertions; the
+fixture was more honest than the thing it stands in for, which is the one kind of fake that cannot
+fail informatively.
+
+That is the second time today a green suite accompanied a broken app — the first was the popstate
+listener in [phase 1.9 ticket 01](../../phase-1-9-reader-route-restructure/issues/01-split-library-and-reader-into-routes.md),
+where the mechanism could not run in a browser at all. Both were caught only by driving the real
+thing. The fixture fix belongs with ticket 17, after the routes are truthful; correcting it first
+would just encode the bug.
+
+**What stays.** The code is not reverted: the decision it adds — a parked seek that can never be
+reached re-points, and a resume position is just such a seek — is right, and it is the only thing
+that will make a Book reopened past a gap work once the manifest stops lying. It is left in place,
+with these criteria unticked, so that 17 and 16 can be verified in one device run rather than two.
