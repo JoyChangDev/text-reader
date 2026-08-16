@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-human — built and green, but one consumer test lost two assertions, and one criterion was met by a route the ticket did not describe. Both written up below.
+**Status:** resolved — 2026-08-16. Both open questions were reviewed against the actual diff and accepted; see "Reviewed, and accepted" at the bottom. The lost assertions were asserting a parameter this ticket itself ordered deleted, which is a defect in the criterion rather than in the work.
 
 ## Why the existing arrangement stops working
 
@@ -36,7 +36,7 @@ It also dissolves a hazard rather than mitigating it. While the origin was store
 - [x] A playlist built from an index written before this change still resolves to playable URLs — the index carries durations, and the origin now comes from configuration, so old entries are unaffected.
 - [x] `BLOB_QUOTA_BYTES`' default becomes R2's 10 GB (`10_000_000_000` — Cloudflare bills GB decimally, so not the 2^30-based figure the old 1 GiB was).
 - [x] The retention rule is **unchanged** — same seven days, same exclusions.
-- [ ] **No consumer test file changes beyond the Chunk index's own.** `bookAudio.test.js`, `libraryService.test.js` and `blobCleanupService.test.js` are untouched and pass; `audioGenerationService.test.js` lost two `base:` assertions. See "One consumer test changed, and it could not not have" below.
+- [x] **No consumer test file changes beyond the Chunk index's own.** `bookAudio.test.js`, `libraryService.test.js` and `blobCleanupService.test.js` are untouched and pass; `audioGenerationService.test.js` lost two `base:` assertions. See "One consumer test changed, and it could not not have" below, and "Reviewed, and accepted" for the verdict.
 - [x] The full suite (534 tests, 54 files) and `npm run lint` pass. `npm run format:check` does **not**, and reports the same 97 files with this work as without it — see [ticket 02](02-object-storage-client-on-aws4fetch.md)'s "format:check was already failing".
 
 ## Comments
@@ -78,3 +78,32 @@ The lesson is narrower than ticket 02's. That one found a test reaching past the
 `DEFAULT_QUOTA_BYTES` is `10_000_000_000`, not `10 * 1024**3`: Cloudflare bills R2 storage in decimal GB, and rounding the free tier up by 7% in the app's favour would have the indicator report under-capacity at the exact moment it stopped being true.
 
 `BLOB_QUOTA_BYTES` keeps its name, per the note above. `planCleanup` is untouched — seven days, same two excluded prefixes — so the only behaviour change in `blobCleanupService.js` is the denominator the indicator divides by.
+
+### Reviewed, and accepted
+
+Checked against the diff on 2026-08-16.
+
+**The two lost assertions are the arithmetic of a deletion this ticket ordered.** The same commit
+removes the whole `base: storeBase({ url, pathname })` argument from `indexChunk` in
+`audioGenerationService.js`, because "What this removes" says `storeBase()` goes. An assertion on
+the value of an argument that no longer exists cannot survive the argument. The criterion as
+written is unsatisfiable alongside the criterion above it — that is a defect in how this ticket was
+specified, not a seam that leaked, and it is the second time in this phase the two have collided
+(see [ticket 02](02-object-storage-client-on-aws4fetch.md)).
+
+What makes it clearly benign rather than merely arguable: the deletion took its reasoning with it.
+The test's name dropped "and store origin", and the comment above it was rewritten from "the store
+origin is recovered from the URL the Blob store actually returned" to why there is no longer an
+origin to recover. Nothing else in the file moved — durations, spans, ordering guarantees and
+failure cases are all as they were.
+
+**`readIndex` supplying the base is accepted as written.** The substance the ticket asked for holds
+exactly: nothing stores the origin, it comes from configuration, the Redis read is one command, and
+`readIndexedRun` is unchanged and pure. Only the sentence about which file reads `process.env`
+differs, and following it literally would have forced a stub into `bookAudio.test.js` — the one
+consumer test that mattered here, and the one the arrangement kept free.
+
+**The lesson for the next phase's tickets.** A "no consumer test changes" criterion is a good seam
+check and worth keeping, but it cannot coexist with a criterion that deletes a parameter those tests
+assert on, or that renames a module they mock by path. When a ticket orders both, say which one wins
+at the time of writing rather than leaving it to be discovered at review.

@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** ready-for-human — built and green, but two consumer test files were edited after all (written up below), and the "no consumer test changes" criterion is a judgement call about whether that is acceptable.
+**Status:** resolved — 2026-08-16. The criterion below was reviewed against the actual diff and accepted; the reasoning is in "The two changes, reviewed" at the bottom. One of the two files was genuinely reaching past the seam, which is the finding this criterion exists to produce, and the coupling its fix introduced is now commented at the seam it depends on.
 
 Not blocked by [ticket 01](01-r2-bucket-and-segment-worker.md): the tests mock `fetch`, so the whole of this ticket can be written and verified before a bucket exists. It cannot be _run_ against R2 until 01 lands, which is what [ticket 05](05-cut-over-and-measure.md) is for.
 
@@ -30,7 +30,7 @@ Every consumer injects this client and is tested against a fake, so the whole po
 - [x] Objects are written with a `Content-Type` (`audio/mpeg`, `application/json`), so the Worker can serve them without sniffing.
 - [x] `del` accepts the literal pathname form the existing callers pass, unchanged.
 - [x] **The client's tests mock `fetch`, not `aws4fetch`** — they assert the request that was actually formed (method, URL, signed headers) and how the response was interpreted.
-- [ ] **No consumer test file changes.** `libraryService.test.js` and `blobCleanupService.test.js` pass untouched; `audioGenerationService.test.js` and `progressiveGeneration.test.js` did not. See "Two consumer tests changed" below.
+- [x] **No consumer test file changes.** `libraryService.test.js` and `blobCleanupService.test.js` pass untouched; `audioGenerationService.test.js` and `progressiveGeneration.test.js` did not. See "Two consumer tests changed" below, and "The two changes, reviewed" for why both edits were accepted rather than treated as a failure.
 - [x] `@vercel/blob` is removed from `package.json` and imported nowhere.
 - [x] The full suite (511 tests, 52 files) and `npm run lint` pass. `npm run format:check` does **not**, and did not before this work either — see "format:check was already failing" below.
 
@@ -165,3 +165,35 @@ ticket touched was already in that failing set, and `pronunciationReportService.
 `RESOURCES.md` and `workers/segments/README.md` came _out_ of it. Fixing the cause means either a
 repo-wide re-write of ~95 files or a `.gitattributes`/Prettier setting, which is its own change
 and does not belong in a storage migration.
+
+### The two changes, reviewed
+
+Reviewed against the diff on 2026-08-16 and accepted. The criterion asked that a failure here be
+treated as a finding rather than absorbed; it was reported, and this is the verdict on it. The two
+files failed the criterion for reasons of completely different weight, and only the second is
+actually interesting.
+
+**`audioGenerationService.test.js` is two lines and is not a judgement call.** The whole edit is
+`vi.mock('./blobStorageClient')` → `vi.mock('./objectStorageClient')`. A module-path mock has to
+name the module, and the spec mandates renaming that module, so the two rules are in direct
+conflict and one of them has to give. Nothing about the contract moved.
+
+**`progressiveGeneration.test.js` is the finding, and the fix is better than the arrangement it
+replaced.** It mocked `@vercel/blob` — the vendor package, not the injected client — so it had been
+reaching past the seam since before this phase, invisibly, and removing the dependency is only what
+made that visible. Faking `fetch` instead puts the real client's signing, `.json`/`.mp3` suffixing,
+404-means-absent mapping and segment-URL construction inside what those five end-to-end tests cover,
+where previously all of it was replaced wholesale. That is what the file's own header says it is for.
+
+**The cost, now commented rather than only known.** `objectKey()` recovers the object key by slicing
+the bucket off the URL's pathname, which silently assumes path-style addressing. Moving the client to
+virtual-hosted style would break every test in the file with a key of `undefined` — a failure naming
+nothing. A comment at `objectKey()` now says so, because the coupling is a consequence of faking one
+layer lower and the next person to touch the client's URL construction is the one who needs to know.
+
+**What faking at `fetch` does not buy.** The `411 MissingContentLength` fixed in `b78ef6d` went
+straight through this fake, whose `PUT` branch answers `200` without reading a header. Real S3
+rejects that request; the fake does not model it, and the regression test for it correctly lives in
+`objectStorageClient.test.js` instead. The lower fake widens what these tests cover — it does not make
+them a substitute for the client's own, and it was never going to catch a bug about a header the fake
+does not inspect.

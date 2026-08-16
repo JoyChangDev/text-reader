@@ -21,7 +21,11 @@ const R2_ENV = {
   SEGMENT_ORIGIN: 'https://segments.test/',
 };
 
-// The bucket-relative object key, back out of the signed URL the client formed.
+// The bucket-relative object key, back out of the signed URL the client formed. This is the
+// cost of faking at fetch rather than at the client: it assumes path-style addressing, where
+// the bucket is the URL's first path segment. Move objectStorageClient.js to virtual-hosted
+// style (bucket in the hostname) and every test in this file fails on a key of `undefined`
+// rather than on anything naming the real cause - so change this alongside it.
 function objectKey(url) {
   return decodeURIComponent(new URL(url).pathname).slice(`/${R2_ENV.R2_BUCKET}/`.length);
 }
