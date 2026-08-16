@@ -14,6 +14,13 @@ together with tickets 07, 15 and 16, which were all waiting on the same run.
 Found while diagnosing why [ticket 16](16-resuming-past-a-gap-never-re-points.md)'s fix did nothing
 on a real device. It is not a defect in 16, and 16 cannot work until this lands.
 
+> **One half of the fifth criterion did not hold, and is fixed by
+> [ticket 18](18-an-unnarrated-book-reads-as-a-redis-outage.md).** "An unreachable index and an
+> empty one must give different answers" was true of everything this ticket wrote and false at
+> the client underneath it: `hgetall` answers `null` for a key that is not there, so a Book
+> nobody had narrated came back as an outage. Green here for the same reason ticket 16 was green
+> on a broken app — the fixtures used `{}`, a shape the real client could not produce.
+
 ## The two routes disagree
 
 On the Book in the store — 2,372 Chunks, 0–16 narrated, reading position at Chunk 1047:

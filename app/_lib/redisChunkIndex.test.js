@@ -47,6 +47,25 @@ describe('createChunkIndexClient', () => {
       expect(index).toEqual({ base: SEGMENT_ORIGIN, durations: { 0: '12.5', 1: '11' } });
     });
 
+    // The shape @upstash/redis actually returns for a key that is not there, which is every
+    // Book before its first Chunk is narrated - Redis drops a hash when its last field goes,
+    // so an empty one cannot be observed. Handed on as `null` it fails readIndexedRun's
+    // `!durations` guard and both HLS routes call an index they read perfectly well an
+    // outage. `{}` for a Book with no narration and `undefined` for a Redis that could not
+    // answer are the two answers bookAudio.js is written against (see ticket 18).
+    //
+    // Asserted here rather than with the `{}` every other test in this suite passes around:
+    // `{}` is what this method promises its callers, not what Redis hands it, and a fixture
+    // that starts from the promise cannot catch it being broken.
+    test('reports a Book that has never been narrated as an index holding nothing', async () => {
+      const redis = fakeRedis([null]);
+
+      const index = await createChunkIndexClient({ redis }).readIndex(book);
+
+      expect(index).toEqual({ base: SEGMENT_ORIGIN, durations: {} });
+      expect(index.durations).not.toBeNull();
+    });
+
     // The index is a cache, so an unreachable or misbehaving Redis has to look exactly
     // like an index that was never written: a miss, which sends the caller to Blob.
     // Anything else would let a Redis outage take playback down with it.

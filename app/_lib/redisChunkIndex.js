@@ -48,7 +48,15 @@ export function createChunkIndexClient({ redis = redisFromEnv() } = {}) {
       return orMiss('the Chunk index could not be read', async () => {
         const durations = await redis.hgetall(durationsKey({ bookId, voice }));
 
-        return { base, durations };
+        // `?? {}` is the difference between "Redis answered and this Book has no narration
+        // yet" and "Redis said nothing", which is the distinction bookAudio.js is written
+        // against and the one ticket 17 gave up the Blob scan to keep. HGETALL deserializes
+        // to `null` for a key that is not there, and Redis has no empty hash - it drops one
+        // when its last field goes - so without this the first answer was unreachable and a
+        // Book nobody had narrated came back as an outage: 502 from both HLS routes for an
+        // index that had been read perfectly well. A failure is still `undefined`, from
+        // orMiss above. See ticket 18.
+        return { base, durations: durations ?? {} };
       });
     },
 

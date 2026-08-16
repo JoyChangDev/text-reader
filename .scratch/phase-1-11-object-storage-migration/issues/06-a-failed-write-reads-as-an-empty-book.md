@@ -281,8 +281,11 @@ was built to preserve, and its criterion says "a valid index must yield a run �
 entirely empty one". Its tests use `indexed({})`, a truthy empty object, which is a shape the
 real client cannot produce for a Book with nothing in it. Self-healing — the first generated
 Chunk creates the hash — so what it costs is the manifest read on a newly uploaded Book, which
-`useBookPlayer` logs and swallows. Recorded here because this is where it was found; it should
-be its own ticket.
+`useBookPlayer` logs and swallows. Recorded here because this is where it was found.
+
+**Now [ticket 18](../../phase-1-10-continuous-hls-playback/issues/18-an-unnarrated-book-reads-as-a-redis-outage.md),**
+filed and fixed the same day. The `null` was confirmed against the live Upstash rather than left
+as a reading of the types.
 
 ### Why this was worth its own ticket rather than a line in ticket 05
 
