@@ -6,9 +6,10 @@ Redis path, where it is free, and delete the Blob-scan fallback rather than pay 
 
 **Blocked by:** —
 
-**Status:** ready-for-human — built and green 2026-08-16, and confirmed against the real store:
-Chunk 1047 now reports generated, and the playlist it feeds is byte-for-byte unchanged. Needs the
-device run in the last criterion, shared with tickets 07, 15 and 16.
+**Status:** resolved — verified on an iPhone 2026-08-16. The Book opened at the position it was
+left, playing the right words; a forward seek and a backward seek both showed the wait and then
+played what was chosen; and a reload held the position with the audio still matching. Closed
+together with tickets 07, 15 and 16, which were all waiting on the same run.
 
 Found while diagnosing why [ticket 16](16-resuming-past-a-gap-never-re-points.md)'s fix did nothing
 on a real device. It is not a defect in 16, and 16 cannot work until this lands.
@@ -81,7 +82,7 @@ exists.** Ticket 07's own note — "Chunks before the start are still reported w
 - [x] Ticket 08's "Redis is a cache, not the source of truth" is marked superseded in place, with a
       pointer here — the same way [ticket 04](04-segment-origin-becomes-configuration.md) superseded
       its origin decision.
-- [ ] Re-verified on a physical iPhone together with tickets 07, 15 and 16.
+- [x] Re-verified on a physical iPhone together with tickets 07, 15 and 16. Done 2026-08-16 — see the four checks in the Status line.
 
 ## Comments
 

@@ -4,7 +4,16 @@
 
 **Blocked by:** 05
 
-**Status:** blocked — the device check was run on 2026-08-16 and **failed**. Re-pointing does not resume cleanly, for two reasons that are not this ticket's to fix: [ticket 15](15-the-re-point-races-the-generation-it-asked-for.md) (the re-point races the generation it just asked for, so the element is handed a segment-less playlist and errors unrecoverably) and [ticket 16](16-resuming-past-a-gap-never-re-points.md) (the next launch reopens the Book with the audio and the highlight in different places). Re-verify this ticket once both land. See "What the device check found" below.
+**Status:** resolved — 2026-08-16, on the second device run. The first one failed and produced
+[tickets 15](15-the-re-point-races-the-generation-it-asked-for.md),
+[16](16-resuming-past-a-gap-never-re-points.md) and
+[17](17-a-generated-chunk-past-the-gap-reads-as-ungenerated.md); with all three landed, a forward
+seek past an ungenerated stretch and a backward seek to an earlier one both play what was chosen,
+and reopening the Book holds the position with the audio matching. See "What the device check
+found" and "What the second run found" below.
+
+**Superseded status, kept for the record:** blocked — the device check was run on 2026-08-16 and
+**failed**. Re-pointing does not resume cleanly, for two reasons that are not this ticket's to fix: [ticket 15](15-the-re-point-races-the-generation-it-asked-for.md) (the re-point races the generation it just asked for, so the element is handed a segment-less playlist and errors unrecoverably) and [ticket 16](16-resuming-past-a-gap-never-re-points.md) (the next launch reopens the Book with the audio and the highlight in different places). Re-verify this ticket once both land. See "What the device check found" below.
 
 Ticket 05 rebuilt seeking around cue times and left one case unreachable. A playlist truncates at its first gap ([hlsPlaylist.js](../../../app/_lib/hlsPlaylist.js)) and the manifest follows it, so a Chunk past an ungenerated one has no `startSeconds` and gets no cues. `seekToSentence` generates only the target — a phase-1.5 rule, correct when each Chunk was its own audio file — so on a 20-Chunk Book, opening it generates 0–10, clicking into Chunk 15 generates 15 alone, and Chunks 11–14 are never requested by anything. The playlist stays 11 segments long, the parked seek waits forever, and playback stops at the end of Chunk 10 with the highlight sitting on a Sentence that never plays.
 
@@ -82,3 +91,21 @@ does not exist yet, so the case this ticket exists for is the case that was neve
 
 Re-run the same check once 15 and 16 land: jump past an ungenerated stretch, watch playback resume
 there, then reopen the Book and confirm the first thing heard matches the highlight.
+
+### What the second run found
+
+Re-run once 15, 16 and 17 had landed. All four checks passed: the Book opened where it was left and
+played the right words, a forward seek past an ungenerated stretch showed the wait and then played
+the chosen Sentence, a backward seek to an earlier stretch did the same, and a reload held the
+position with the audio still matching.
+
+**The backward seek is worth singling out.** This ticket has always had a criterion for it —
+"Seeking backwards after a re-point works, whether the target is inside the current playlist or
+before its start" — and it was ticked on the strength of a unit test against a fake that reported
+`isGenerated` for Chunks the real routes never described. In production it could not have worked:
+the manifest reported every Chunk before `from` as ungenerated, so the client was never told the
+target existed and could not decide to re-point to it. Ticket 17 is what made it true, and this run
+is the first time it has actually been observed.
+
+Three of this ticket's ticks were like that — right in the fake, unreachable in the app. The
+lesson is recorded in 17 rather than here, since that is where the fixture was corrected.

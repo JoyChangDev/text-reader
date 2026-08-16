@@ -6,10 +6,9 @@ generating it, so the element is handed an empty playlist, errors, and never rec
 
 **Blocked by:** —
 
-**Status:** ready-for-human — built and green 2026-08-16. The waiting behaviour was decided by Joy
-(pause + a visible loading state), and half of it turned out to already be the case — see "The
-decision, and what it turned out to cost". Needs the device check in the last criterion before it
-resolves.
+**Status:** resolved — verified on an iPhone 2026-08-16, twice: once when it was built, and again
+after tickets 16 and 17 landed. A long seek shows 正在準備這個段落… and then plays the Sentence that
+was chosen, forwards and backwards.
 
 Found verifying [ticket 07](07-seeking-past-the-generated-region.md) on the device, which is what
 that ticket's last open criterion was for. **Ticket 07 does not pass**: its fix is correct when the
@@ -84,8 +83,8 @@ fired, but its result had nowhere to go.
       via `pendingSeekRef`. Both are ticket 07's, and both work.
 - [x] Tests cover the race directly — a seek to an ungenerated Chunk, asserting the element is not
       pointed at a segment-less playlist, and that playback starts once generation resolves.
-- [ ] Verified on a physical iPhone: jump past an ungenerated stretch, and playback resumes there
-      on its own.
+- [x] Verified on a physical iPhone: jump past an ungenerated stretch, and playback resumes there
+      on its own. Done 2026-08-16, forwards and backwards, and re-checked after 16 and 17.
 
 ## Comments
 

@@ -7,11 +7,12 @@ while highlighting a Sentence hundreds of Chunks away.
 
 **Blocked by:** —
 
-**Status:** blocked — the code is written and its tests pass, but it **does not work on a device**,
-and the tests could not have caught that. It asks the manifest whether the resume target is
-narrated, and the manifest answers `false` for every Chunk past the first gap whether or not it is
-([ticket 17](17-a-generated-chunk-past-the-gap-reads-as-ungenerated.md)). Re-verify once 17 lands.
-Checked against the running app 2026-08-16 — see "Why the device still failed" below.
+**Status:** resolved — verified on an iPhone 2026-08-16, once
+[ticket 17](17-a-generated-chunk-past-the-gap-reads-as-ungenerated.md) made the manifest tell the
+truth. The Book opens at the position it was left with the audio matching the highlight, and a
+reload holds it. The code here never changed after the first attempt; what changed was the signal
+it reads — see "Why the device still failed" below, which is left in place because a fix that was
+right all along and still failed is the more useful half of the record.
 
 Found verifying [ticket 07](07-seeking-past-the-generated-region.md) on the device. It is the
 reason that ticket cannot be verified on its own: whatever a long seek does, the next launch
@@ -45,22 +46,23 @@ the mount should have done.
 
 ## Acceptance criteria
 
-- [ ] On mount, the playlist's start Chunk is derived from the resume position rather than being
+- [x] On mount, the playlist's start Chunk is derived from the resume position rather than being
       fixed at 0, so a Book reopened past a gap plays from where reading is.
 - [x] A Book whose resume position is reachable from Chunk 0 — the ordinary case, no gap in between
       — still starts its playlist at 0 and still parks the resume seek exactly as it does today.
       This must not become a reload for every Book that has ever been opened.
 - [x] A Book with no resume position still starts at Chunk 0.
-- [ ] The highlight and the audio agree from the first moment playback starts, with no tap needed.
+- [x] The highlight and the audio agree from the first moment playback starts, with no tap needed.
 - [x] A resume position pointing past the end of the Book, or at a Chunk that no longer exists,
       falls back rather than producing a playlist with no segments — see
       [ticket 15](15-the-re-point-races-the-generation-it-asked-for.md), whose failure this would
       otherwise reproduce on launch.
-- [ ] Tests: mounting with a resume position past a gap starts the playlist at that Chunk;
+- [x] Tests: mounting with a resume position past a gap starts the playlist at that Chunk;
       mounting with a reachable resume position does not change `playlistStart`; mounting with no
       resume position starts at 0.
-- [ ] Verified on a physical iPhone: reopen a Book left at a position past an ungenerated stretch,
-      and the first thing heard matches the highlighted Sentence.
+- [x] Verified on a physical iPhone: reopen a Book left at a position past an ungenerated stretch,
+      and the first thing heard matches the highlighted Sentence. Done 2026-08-16, and again after
+      a reload.
 
 ## Comments
 
