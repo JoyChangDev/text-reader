@@ -4,7 +4,7 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-human — the code landed with every criterion ticked. One thing is still unwatched, and ticket 06 did not cover it: whether re-pointing `src` resumes cleanly at the new timeline's zero on a real device. Ticket 06's runs were ordinary playback plus one manual Sentence seek, neither of which re-points — the spike log records no seek past the generated region at all. To close this, seek past an ungenerated stretch on the device and watch playback resume. Scoped 2026-08-12.
+**Status:** blocked — the device check was run on 2026-08-16 and **failed**. Re-pointing does not resume cleanly, for two reasons that are not this ticket's to fix: [ticket 15](15-the-re-point-races-the-generation-it-asked-for.md) (the re-point races the generation it just asked for, so the element is handed a segment-less playlist and errors unrecoverably) and [ticket 16](16-resuming-past-a-gap-never-re-points.md) (the next launch reopens the Book with the audio and the highlight in different places). Re-verify this ticket once both land. See "What the device check found" below.
 
 Ticket 05 rebuilt seeking around cue times and left one case unreachable. A playlist truncates at its first gap ([hlsPlaylist.js](../../../app/_lib/hlsPlaylist.js)) and the manifest follows it, so a Chunk past an ungenerated one has no `startSeconds` and gets no cues. `seekToSentence` generates only the target — a phase-1.5 rule, correct when each Chunk was its own audio file — so on a 20-Chunk Book, opening it generates 0–10, clicking into Chunk 15 generates 15 alone, and Chunks 11–14 are never requested by anything. The playlist stays 11 segments long, the parked seek waits forever, and playback stops at the end of Chunk 10 with the highlight sitting on a Sentence that never plays.
 
@@ -49,3 +49,36 @@ Seeking within the current timeline, and seeking just past its end into a Chunk 
 ### Not verified in a browser
 
 Unchanged from tickets 04 and 05: `/dev-preview` can't reach the reader, and a `window.fetch` mock can't serve HLS anyway. Coverage is 56 `AudioPlayer.test.jsx` cases driving the real component tree against a fake of the two routes that models their truncation rule, plus the routes' own tests. What no test here can tell you is how a real media stack behaves when `src` is re-pointed mid-session — whether playback resumes cleanly at the new timeline's zero on a device is worth watching during ticket 06's runs.
+
+### What the device check found
+
+Run on an iPhone, Safari, 2026-08-16, on a 2,372-Chunk Book. The check this ticket was held open
+for — seek past an ungenerated stretch and watch playback resume — did not pass, and the two causes
+are recorded as their own tickets rather than reopened here, because neither is a defect in what
+this ticket built.
+
+**The seek produced 播放時發生錯誤，請重新整理後再試。** Not the `SRC_NOT_SUPPORTED` message: this is
+iPhone Safari, which has native HLS. The re-point sets `playlistStart` to the target Chunk before
+`fetchChunk` has produced it, so the element is pointed at a playlist with no segments and no
+`ENDLIST`, and nothing reassigns `src` when the Chunk later arrives.
+Measured against the running route: `?from=0` → 200 with 17 segments, `?from=17` and `?from=500` →
+200 with **zero**. [Ticket 15](15-the-re-point-races-the-generation-it-asked-for.md).
+
+**Reloading then opened the Book with the audio and the highlight in different places.**
+`playlistStart` is `useState(0)` on mount, so the resume position past the gap parked forever and
+the audio played from Chunk 0. Tapping the highlighted Sentence fixed it, by doing the re-point the
+mount should have done. [Ticket 16](16-resuming-past-a-gap-never-re-points.md).
+
+**Corroboration that the jump never completed:** the Book's generated Chunks are 0–16, contiguous.
+The far Chunk was never produced. `fetchChunk` was called; its result had nowhere to go.
+
+### What this ticket got right, and why it still needs re-verifying
+
+The three-way decision is sound and is not what failed. `canPlaylistReach` correctly distinguishes
+a parked seek from a re-point, and the two non-re-pointing cases work. What ticket 15 exposes is
+that the re-pointing case was only ever exercised against a target that already existed — in tests,
+and in the one manual seek ticket 06 logged. A long seek is by definition a seek to a Chunk that
+does not exist yet, so the case this ticket exists for is the case that was never run end to end.
+
+Re-run the same check once 15 and 16 land: jump past an ungenerated stretch, watch playback resume
+there, then reopen the Book and confirm the first thing heard matches the highlight.
