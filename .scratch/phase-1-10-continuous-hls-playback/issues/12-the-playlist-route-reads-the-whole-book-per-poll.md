@@ -4,7 +4,7 @@
 
 **Blocked by:** —
 
-**Status:** resolved — except the deployed re-measurement, which is owed once this ships (see the third acceptance criterion, still open)
+**Status:** resolved — 2026-08-16. Every criterion is met, including the deployed measurement: the playlist poll went 1.32s → 0.72s and is now faster than `/api/library`, which reads the same index without a Book's text in front of it.
 
 This is [ticket 08](08-playlist-routes-read-one-blob-per-chunk.md)'s shape, in the one place it
 did not look. That ticket removed an O(Book) fan-out of one storage read per Chunk from the
@@ -86,14 +86,40 @@ playlist, 381,256 B for the manifest), which is the correctness half of the meas
 
 The deployed baseline was re-taken first and reproduced 2026-08-11's numbers exactly
 (library 0.74s, playlist 1.32s, manifest 1.71s), so the ~0.7s round-trip floor is the whole
-difference between the two tables. **Still owed: the same four requests against the deployed
-app once this ships**, to confirm the saving survives Vercel's own latency to R2.
+difference between the two tables. Still owed at the time of writing: the same four requests
+against the deployed app once this ships. Taken on 2026-08-16 — see below.
+
+## Measured on the deployed app — 2026-08-16
+
+Shipped, then measured the way the problem was found: same Book, same voice, warm, four
+requests each, from the same machine as every table above. The Book was untouched in
+between — the playlist body is byte-identical to the pre-change one, so the same Chunks were
+generated for both.
+
+| route               | before (2026-08-11) | after (2026-08-16) | saved     |
+| ------------------- | ------------------- | ------------------ | --------- |
+| `/api/library`      | 0.74s               | 0.77s              | —         |
+| `…/playlist.m3u8`   | **1.32s**           | **0.72s**          | **0.60s** |
+| `…/manifest?from=0` | 1.70s               | 1.52s              | 0.18s     |
+
+**0.60s per poll, against the 0.6s this ticket predicted.** The stronger reading is the one
+that needs no arithmetic about round-trip latency: **the playlist is now faster than
+`/api/library`** (0.72s against 0.77s). Both read the same 17 KB index; the playlist's extra
+Redis read is cheaper than the Library's `readAll`, and there is no longer 1.6 MB in front of
+it. There is nothing left on this path proportional to the Book's text, which is what the
+ticket set out to remove.
+
+The manifest's 0.18s is the Resume position lookup — one Redis command, plus the snapshot
+Blob read it fell back to whenever Redis held nothing. It keeps its 1.6 MB read, for the
+reason in the Comments below.
+
+Cold start was 2.83s for `/api/library` and is excluded; the four rows above are all warm.
 
 ## Acceptance criteria
 
 - [x] A playlist request for a Book with a large `chunks.json` does not transfer that blob. The Chunk count comes from somewhere cheap — `totalChunks` on the Library index entry is already written and already read. _With one carve-out the ticket did not anticipate: a Book whose index entry predates `totalChunks` still pays the read, because there is nowhere cheap to ask and an absent count reads as an empty Book rather than as a failure. The one Book in the deployed store has the field._
 - [x] The manifest's Blob-fallback path still gets the Chunk text it needs to derive spans, and is still correct when the Chunk index cannot answer. This is the reason the full read exists at all, and it must not become a path that silently returns no Sentences.
-- [ ] The saving is measured the same way it was found — request timings against the deployed app on a Book whose text is large — and recorded here. A change that only looks cheaper in a unit test has not been shown to do anything. _Half done: measured against a production build on the real store, recorded above. The deployed run is owed once this ships, and cannot be taken before then._
+- [x] The saving is measured the same way it was found — request timings against the deployed app on a Book whose text is large — and recorded here. A change that only looks cheaper in a unit test has not been shown to do anything. _Measured 2026-08-16 on the deployed app: 1.32s → 0.72s, a 0.60s saving per poll, and the playlist is now faster than `/api/library`. The local production-build run recorded above stands as the corroborating before/after._
 - [x] Whatever `readBookAudio` ends up needing is a named thing rather than "a Book minus its text", so the next reader can tell which callers pay for the text and which do not.
 
 ## Comments
