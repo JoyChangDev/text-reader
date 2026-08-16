@@ -632,6 +632,11 @@ export function useBookPlayer({
         // would hand the element an empty source it errors on and never recovers from
         // (ticket 15). The re-point waits for the Chunk this call is about to request,
         // and the effect below performs it.
+        //
+        // Specifically a re-point, on an element that has already loaded and played. The
+        // element's *first* load survives the same empty playlist - a never-narrated Book
+        // serves one and plays without a refresh (ticket 18, on the device). The two differ
+        // for reasons nobody has established, so that is not a reason to drop this wait.
         if (chunkAudio[chunkIndex]?.status === 'ready') {
           awaitedChunkRef.current = null;
           setPlaylistStart(chunkIndex);

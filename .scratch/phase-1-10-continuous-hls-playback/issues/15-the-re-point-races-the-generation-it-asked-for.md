@@ -14,6 +14,15 @@ Found verifying [ticket 07](07-seeking-past-the-generated-region.md) on the devi
 that ticket's last open criterion was for. **Ticket 07 does not pass**: its fix is correct when the
 target Chunk is already generated, and a long seek is by definition a seek to one that is not.
 
+> **Scope, narrowed by observation — 2026-08-16.** "An empty playlist is a source the element
+> errors on and never recovers from" holds for the **re-point**, which is what this ticket is
+> about: `src` reassigned on an element that has already loaded and played. It does **not** hold
+> for the element's **first** load. [Ticket 18](18-an-unnarrated-book-reads-as-a-redis-outage.md)
+> made a never-narrated Book serve an empty EVENT playlist instead of a 502, and on the device
+> such a Book plays without a refresh. Why the two differ is not established. What matters here is
+> that this ticket's wait is still load-bearing and must not be simplified away on the strength of
+> that.
+
 ## What happens
 
 [`useBookPlayer.js:580`](../../../app/_lib/useBookPlayer.js#L580), in `seekToSentence`'s re-point

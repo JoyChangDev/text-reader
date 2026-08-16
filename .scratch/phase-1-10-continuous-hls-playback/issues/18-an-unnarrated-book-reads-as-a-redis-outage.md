@@ -6,10 +6,11 @@ index that could not be read.
 
 **Blocked by:** —
 
-**Status:** ready-for-human — built, green, and **both routes measured against the live Upstash,
-before and after** (see "Measured, not inferred"). What is **not** answered is the last section,
-"What it costs today": the routes tell the truth now, and whether a brand-new Book's first
-playlist actually plays is a separate question that wants a device and an ear.
+**Status:** resolved — 2026-08-16. Both routes measured against the live Upstash, before and
+after (see "Measured, not inferred"), and the one question left open — whether a brand-new Book
+plays without a refresh — **was run on the device and passed**. See "The empty playlist at first
+load is fine" at the bottom, which is a finding in its own right and not only this ticket
+closing.
 
 Found on 2026-08-16 while closing
 [phase 1.11's ticket 06](../../phase-1-11-object-storage-migration/issues/06-a-failed-write-reads-as-an-empty-book.md),
@@ -76,6 +77,11 @@ under "The fake was more truthful than the route, which is why tests passed". Se
       so either way.
 
 ## What it costs today
+
+> **Answered on the device, 2026-08-16.** The question this section refused to settle — what a
+> brand-new Book's first playlist does — was run and passed: it plays, with no refresh. The
+> paragraph below stands as written because the caution was right at the time; see
+> "The empty playlist at first load is fine" for what was actually observed.
 
 Self-healing, which is why it has not been loud: the first Chunk to generate creates the hash,
 and every read after that is ordinary. What it costs is the window before that.
@@ -162,6 +168,28 @@ to `null` would push the defect down into the routes, which are entitled to trus
 `chunkIndex.test.js` already pins the other half —
 `readIndexedRun({ base, durations: null })` is asserted to be `undefined`. That test stays, and
 it is the reason the fix does not belong there.
+
+### The empty playlist at first load is fine — 2026-08-16, on the device
+
+The question the rest of this ticket deliberately refused to answer. **A newly uploaded Book
+plays without a refresh.** So the empty EVENT playlist this fix now serves is a source the
+element accepts and keeps re-fetching until segments appear — which is what an EVENT playlist
+with no `ENDLIST` is supposed to mean, and it turns out to be true in practice as well as on
+paper.
+
+That closes the ticket, and it also settles the worry in "What it costs today" the other way:
+turning the 502 into an empty playlist was not merely more correct, it was sufficient. No
+follow-up ticket about `preload="auto"` or the one-shot `src` assignment is needed.
+
+**It does not generalise to [ticket 15](15-the-re-point-races-the-generation-it-asked-for.md),
+and the difference is worth keeping.** That ticket found an empty playlist to be a source the
+element "errors on and never recovers from", and that finding stands — it was a **mid-session
+re-point**, where `src` is reassigned on an element that has already loaded and played something.
+This is the element's **first** load. The two behave differently, which is now observed rather
+than assumed; _why_ they differ is not established here and nobody should write it down as though
+it were. What follows for the code is only this: `seekToSentence`'s wait for the awaited Chunk is
+still load-bearing, and "an empty playlist is harmless, we saw it work" is not a reason to
+simplify it away.
 
 ## Do not fix this in `readIndexedRun`
 
